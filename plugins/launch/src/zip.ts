@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync, type Stats } from 'node:fs'
 import path from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 
@@ -11,6 +11,7 @@ interface ZipEntry {
   name: string
   method: number
   compressedSize: number
+  uncompressedSize: number
   localOffset: number
 }
 
@@ -33,12 +34,13 @@ function readEntries(buffer: Buffer): ZipEntry[] {
     if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== CENTRAL_SIGNATURE) break
     const method = buffer.readUInt16LE(offset + 10)
     const compressedSize = buffer.readUInt32LE(offset + 20)
+    const uncompressedSize = buffer.readUInt32LE(offset + 24)
     const nameLength = buffer.readUInt16LE(offset + 28)
     const extraLength = buffer.readUInt16LE(offset + 30)
     const commentLength = buffer.readUInt16LE(offset + 32)
     const localOffset = buffer.readUInt32LE(offset + 42)
     const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString('utf8')
-    entries.push({ name, method, compressedSize, localOffset })
+    entries.push({ name, method, compressedSize, uncompressedSize, localOffset })
     offset += 46 + nameLength + extraLength + commentLength
   }
 
@@ -47,38 +49,86 @@ function readEntries(buffer: Buffer): ZipEntry[] {
 
 const NATIVE_PATTERN = /\.(dll|so|dylib|jnilib)$/i
 
+export interface NativeSyncResult {
+  /** 本次同步后期望存在的 DLL 绝对路径，供调用方清理多余文件 */
+  files: string[]
+  /** 是否有文件因为被运行中的进程占用而跳过更新 */
+  locked: boolean
+}
+
+/** Windows 上被运行中的进程映射的 DLL 在删除/覆盖时会报这些错误码 */
+function isLockedFileError(cause: unknown): boolean {
+  const code = (cause as NodeJS.ErrnoException | undefined)?.code
+  return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
+}
+
+function entryData(buffer: Buffer, entry: ZipEntry): Buffer | null {
+  if (buffer.readUInt32LE(entry.localOffset) !== LOCAL_SIGNATURE) return null
+  const nameLength = buffer.readUInt16LE(entry.localOffset + 26)
+  const extraLength = buffer.readUInt16LE(entry.localOffset + 28)
+  const dataStart = entry.localOffset + 30 + nameLength + extraLength
+  const data = buffer.subarray(dataStart, dataStart + entry.compressedSize)
+
+  if (entry.method === 0) return data
+  if (entry.method === 8) {
+    try {
+      return inflateRawSync(data)
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
 /**
- * 把 native jar 里的动态库平铺解压到目标目录。
- * 只提取动态库文件，忽略 META-INF 与类文件。
+ * 把 native jar 里的动态库同步到目标目录，复用已有的同名文件。
+ *
+ * 与「先清空再解压」不同：
+ * - 目标文件已存在且大小与 jar 内条目一致 → 直接跳过，不读不写；
+ * - 大小不一致 → 先删后写；删除时报 EPERM/EBUSY，说明有实例正锁着 DLL，
+ *   本次跳过更新并沿用现有文件（调用方据此记日志）。
+ *
+ * 不整目录删除，因此「仍要启动」不会再因为运行中的实例而失败。
  */
-export function extractNativeLibraries(jarPath: string, destDir: string): string[] {
+export function syncNativeLibraries(jarPath: string, destDir: string): NativeSyncResult {
   const buffer = readFileSync(jarPath)
   const entries = readEntries(buffer)
   mkdirSync(destDir, { recursive: true })
 
-  const extracted: string[] = []
+  const files: string[] = []
+  let locked = false
+
   for (const entry of entries) {
     if (!NATIVE_PATTERN.test(entry.name) || entry.name.startsWith('META-INF/')) continue
     if (buffer.readUInt32LE(entry.localOffset) !== LOCAL_SIGNATURE) continue
 
-    const nameLength = buffer.readUInt16LE(entry.localOffset + 26)
-    const extraLength = buffer.readUInt16LE(entry.localOffset + 28)
-    const dataStart = entry.localOffset + 30 + nameLength + extraLength
-    const data = buffer.subarray(dataStart, dataStart + entry.compressedSize)
+    const target = path.join(destDir, path.basename(entry.name))
+    files.push(target)
 
-    let output: Buffer
-    if (entry.method === 0) {
-      output = data
-    } else if (entry.method === 8) {
-      output = inflateRawSync(data)
-    } else {
-      continue
+    let existing: Stats | null = null
+    try {
+      existing = statSync(target)
+    } catch {
+      existing = null
     }
 
-    const fileName = path.basename(entry.name)
-    writeFileSync(path.join(destDir, fileName), output)
-    extracted.push(fileName)
+    if (existing?.isFile() && existing.size === entry.uncompressedSize) continue
+
+    if (existing) {
+      try {
+        unlinkSync(target)
+      } catch (cause) {
+        if (isLockedFileError(cause)) {
+          locked = true
+          continue
+        }
+        throw cause
+      }
+    }
+
+    const data = entryData(buffer, entry)
+    if (data) writeFileSync(target, data)
   }
 
-  return extracted
+  return { files, locked }
 }

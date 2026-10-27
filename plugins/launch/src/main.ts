@@ -3,20 +3,87 @@ import type { Context } from 'cordis'
 import { defineMainPlugin } from '@mics/sdk/main'
 import { listInstances, markInstanceLaunched, resolveInstance } from './instances'
 import { launchInstance } from './launch'
-import type { LaunchRequest, LaunchResult } from './shared'
+import { waitForGameWindow } from './gameWindow'
+import { LaunchRuntime, isProcessAlive, type PersistedProcess } from './runtime'
+import type {
+  LaunchRequest,
+  LaunchSettings,
+  RepeatLaunchBehavior,
+  TerminateRequest,
+  TerminateResult,
+} from './shared'
+import { LAUNCH_STATE_TOPIC } from './shared'
 
 export const name = 'mics.launch'
 export const inject = ['ipc', 'storage']
+
+/** 运行中进程记录：用于重启后认领仍在运行的游戏 */
+const RUNNING_KEY = 'running'
+/** 重复启动行为 */
+const BEHAVIOR_KEY = 'repeatLaunchBehavior'
+/** 等待游戏窗口的上限；超时后按「已在运行」处理，避免按钮一直停在启动中 */
+const WINDOW_PROBE_TIMEOUT = 120_000
+/** 无法探测窗口的平台（非 Windows / 无 PowerShell）下，稍等片刻就恢复按钮 */
+const FALLBACK_RUNNING_DELAY = 4_000
 
 function sanitizeUsername(value: unknown): string {
   const name = typeof value === 'string' ? value.trim() : ''
   return name ? name.slice(0, 16) : 'Steve'
 }
 
+function normalizeBehavior(value: unknown): RepeatLaunchBehavior {
+  return value === 'launch' || value === 'ignore' ? value : 'prompt'
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export function apply(ctx: Context): void {
   const dataDir = app.getPath('userData')
 
+  const runtime = new LaunchRuntime({
+    load: () => ctx.storage.get<PersistedProcess[]>(RUNNING_KEY, []),
+    save: (records) => ctx.storage.set(RUNNING_KEY, records),
+    publish: (state) => ctx.ipc.broadcast(LAUNCH_STATE_TOPIC, state),
+  })
+  runtime.restore()
+  ctx.effect(() => () => runtime.dispose())
+
+  const readBehavior = (): RepeatLaunchBehavior =>
+    normalizeBehavior(ctx.storage.get<string>(BEHAVIOR_KEY, 'prompt'))
+
+  /** 正在准备（校验 / 下载 / spawn）的实例，避免页面重挂载后的重复点击 */
+  const preparing = new Set<string>()
+
+  /**
+   * 等游戏窗口出现后再把「启动中」恢复成「开始游戏」：
+   * 窗口一出现就尝试置前（AppActivate，失败也不阻塞状态恢复），然后广播
+   * running，渲染端因此不会在窗口还看不见时就提前结束启动状态。
+   */
+  const followLaunch = async (pid: number): Promise<void> => {
+    const result = await waitForGameWindow(pid, WINDOW_PROBE_TIMEOUT)
+    console.log(`[mics.launch] 窗口探测 pid=${pid} 结果=${result}`)
+
+    if (result === 'exited') {
+      // PowerShell 偶尔会因为拿不到进程信息而误报退出，以 Node 的存活判断为准。
+      if (runtime.hasPid(pid) && isProcessAlive(pid)) runtime.markRunning(pid)
+      else runtime.remove(pid)
+      return
+    }
+
+    if (result === 'unsupported') {
+      await delay(FALLBACK_RUNNING_DELAY)
+      if (runtime.hasPid(pid)) runtime.markRunning(pid)
+      return
+    }
+
+    runtime.markRunning(pid)
+  }
+
   ctx.ipc.handle('instances/list', () => listInstances(dataDir))
+
+  ctx.ipc.handle('instances/state', () => runtime.snapshot())
 
   ctx.ipc.handle('account/get', () => ({
     username: sanitizeUsername(ctx.storage.get<string>('username', 'Steve')),
@@ -31,18 +98,40 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle<LaunchRequest>('instances/launch', async ({ id, username }) => {
     const instance = resolveInstance(dataDir, id)
     if (!instance) throw new Error('实例不存在或缺少版本文件')
+    if (preparing.has(id)) throw new Error('该实例正在启动中')
 
-    const name = sanitizeUsername(username || ctx.storage.get<string>('username', 'Steve'))
-    const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
+    preparing.add(id)
+    try {
+      const name = sanitizeUsername(username || ctx.storage.get<string>('username', 'Steve'))
+      const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
 
-    const pid = await launchInstance(instance, {
-      username: name,
-      launcherVersion: app.getVersion(),
-      memoryMb: Number.isFinite(memory) ? memory : 4096,
-    })
-    markInstanceLaunched(instance, name)
+      const launched = await launchInstance(instance, {
+        username: name,
+        launcherVersion: app.getVersion(),
+        memoryMb: Number.isFinite(memory) ? memory : 4096,
+      })
+      markInstanceLaunched(instance, name)
 
-    return { pid } satisfies LaunchResult
+      runtime.add(instance.id, launched.pid, launched.child)
+      void followLaunch(launched.pid)
+
+      return { pid: launched.pid }
+    } finally {
+      preparing.delete(id)
+    }
+  })
+
+  ctx.ipc.handle<TerminateRequest>('instances/terminate', async ({ id }) => {
+    const terminated = await runtime.terminate(id)
+    return { terminated } satisfies TerminateResult
+  })
+
+  ctx.ipc.handle('settings/get', () => ({ repeatBehavior: readBehavior() } satisfies LaunchSettings))
+
+  ctx.ipc.handle<{ repeatBehavior: RepeatLaunchBehavior }>('settings/set', ({ repeatBehavior }) => {
+    const behavior = normalizeBehavior(repeatBehavior)
+    ctx.storage.set(BEHAVIOR_KEY, behavior)
+    return { repeatBehavior: behavior } satisfies LaunchSettings
   })
 }
 

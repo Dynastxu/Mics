@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   appendFileSync,
@@ -21,7 +21,7 @@ import { pipeline } from 'node:stream/promises'
 import { findJava } from './java'
 import type { ResolvedInstance } from './instances'
 import type { ArgumentEntry, Library, LibraryDownload, Rule } from './version'
-import { extractNativeLibraries } from './zip'
+import { syncNativeLibraries } from './zip'
 
 export interface LaunchOptions {
   username: string
@@ -35,6 +35,12 @@ export interface LaunchPlan {
   cwd: string
   logPath: string
   javaMajor: number
+}
+
+/** 已 spawn 的游戏进程；child 用于订阅退出事件与判断存活 */
+export interface LaunchedProcess {
+  pid: number
+  child: ChildProcess
 }
 
 const OS_NAME = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
@@ -259,19 +265,61 @@ async function resolveClientJar(instance: ResolvedInstance): Promise<string> {
   return ensureFile(located, client?.sha1, client?.url, 'client.jar')
 }
 
+/** 旧版实现为每次启动创建 run-* 目录；空闲超过这么久才回收 */
+const LEGACY_NATIVES_AGE = 10 * 60 * 1000
+
+/**
+ * 清理 natives 目录里不再需要的文件。
+ *
+ * - 只删文件；目录（旧版留下的 java/jna/lwjgl/netty、run-*）单独处理；
+ * - 旧版 run-* 目录超过 10 分钟才删，避免误伤正在启动的实例；
+ * - 删除被占用时直接放弃本轮清理，绝不阻塞启动。
+ */
+function pruneNatives(root: string, expected: Set<string>): void {
+  const normalize = (value: string): string =>
+    process.platform === 'win32' ? value.toLowerCase() : value
+  const wanted = new Set([...expected].map(normalize))
+  const now = Date.now()
+
+  try {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      const target = path.join(root, entry.name)
+      if (entry.isDirectory()) {
+        if (!entry.name.startsWith('run-')) continue
+        try {
+          if (now - statSync(target).mtimeMs < LEGACY_NATIVES_AGE) continue
+          rmSync(target, { recursive: true, force: true })
+        } catch { /* 仍被运行中的实例占用 */ }
+        continue
+      }
+      if (wanted.has(normalize(target))) continue
+      try {
+        rmSync(target, { force: true })
+      } catch {
+        return
+      }
+    }
+  } catch { /* 还没有 natives 目录 */ }
+}
+
+/**
+ * 同步 native 目录。
+ *
+ * 同一版本的所有启动共用一个 `natives` 目录，不会因为「仍要启动」而清空重建：
+ * 文件大小一致就复用；需要更新但被运行中的实例锁住时跳过，沿用现有 DLL。
+ */
 async function prepareNatives(
   instance: ResolvedInstance,
   libraries: Library[],
   librariesDir: string,
 ): Promise<{ dir: string; jars: string[] }> {
   const nativesDir = path.join(instance.versionDir, 'natives')
-  rmSync(nativesDir, { recursive: true, force: true })
   mkdirSync(nativesDir, { recursive: true })
-  for (const sub of ['java', 'jna', 'lwjgl', 'netty']) {
-    mkdirSync(path.join(nativesDir, sub), { recursive: true })
-  }
 
+  const expected = new Set<string>()
   const jars: string[] = []
+  let complete = true
+
   for (const library of libraries) {
     if (!rulesAllow(library.rules)) continue
     const native = nativeEntry(library)
@@ -280,13 +328,21 @@ async function prepareNatives(
     const file = locateFile(target) ?? target
     try {
       await ensureFile(file, native.artifact?.sha1, native.artifact?.url, library.name)
-      extractNativeLibraries(file, nativesDir)
+      const synced = syncNativeLibraries(file, nativesDir)
+      for (const entry of synced.files) expected.add(entry)
+      if (synced.locked) {
+        console.warn(`[mics.launch] natives 正被运行中的实例占用，跳过更新：${native.relative}`)
+      }
       jars.push(file)
     } catch (cause) {
       // 单个本地库损坏不应阻止启动；游戏可能只是缺少可选加速库。
+      complete = false
       console.warn(`[mics.launch] 本地库处理失败：${native.relative}（${(cause as Error).message}）`)
     }
   }
+
+  // 有 jar 读取失败时不做清理，避免把它的文件当成多余文件删掉。
+  if (complete && expected.size > 0) pruneNatives(nativesDir, expected)
   return { dir: nativesDir, jars }
 }
 
@@ -404,7 +460,7 @@ function quoteForLog(value: string): string {
   return /[\s"]/g.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value
 }
 
-export async function launchInstance(instance: ResolvedInstance, options: LaunchOptions): Promise<number> {
+export async function launchInstance(instance: ResolvedInstance, options: LaunchOptions): Promise<LaunchedProcess> {
   const plan = await buildLaunchPlan(instance, options)
   const line = `[${new Date().toISOString()}] ${quoteForLog(plan.java)} ${plan.args.map(quoteForLog).join(' ')}\n`
   appendFileSync(plan.logPath, line, 'utf8')
@@ -423,8 +479,13 @@ export async function launchInstance(instance: ResolvedInstance, options: Launch
       child.once('spawn', resolve)
       child.once('error', reject)
     })
+    if (!child.pid) {
+      child.kill()
+      throw new Error('未能创建游戏进程')
+    }
+    // 进程独立运行：应用退出不影响游戏；child 仍可用来订阅退出事件。
     child.unref()
-    return child.pid ?? 0
+    return { pid: child.pid, child }
   } finally {
     closeSync(logFd)
   }

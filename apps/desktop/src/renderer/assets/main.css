@@ -363,6 +363,17 @@ svg.mics-icon {
   color: var(--mics-accent);
 }
 
+.mics-button--danger {
+  border-color: color-mix(in srgb, var(--mics-danger) 55%, transparent);
+  background: color-mix(in srgb, var(--mics-danger) 14%, transparent);
+  color: var(--mics-danger);
+}
+
+.mics-button--danger:hover {
+  border-color: var(--mics-danger);
+  background: color-mix(in srgb, var(--mics-danger) 22%, transparent);
+}
+
 .mics-button--small {
   height: 28px;
   padding: 0 10px;

@@ -1,12 +1,34 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
+import { usePluginContext } from '@mics/sdk/renderer'
+import type { LaunchSettings, RepeatLaunchBehavior } from '../shared'
 
+const ctx = usePluginContext()
 const memory = ref('4096')
 const javaPath = ref('')
 const width = ref('1280')
 const height = ref('720')
 const jvmArgs = ref('')
 const isolation = ref('instance')
+const repeatBehavior = ref<RepeatLaunchBehavior>('prompt')
+
+async function load(): Promise<void> {
+  try {
+    const settings = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/get')
+    repeatBehavior.value = settings.repeatBehavior
+  } catch { /* 使用默认的「提示」 */ }
+}
+
+async function saveBehavior(): Promise<void> {
+  try {
+    const settings = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/set', {
+      repeatBehavior: repeatBehavior.value,
+    })
+    repeatBehavior.value = settings.repeatBehavior
+  } catch { /* 保存失败时保留当前选择 */ }
+}
+
+onMounted(load)
 </script>
 
 <template>
@@ -16,6 +38,20 @@ const isolation = ref('instance')
     </header>
 
     <div class="mics-form">
+      <div class="mics-field">
+        <div>
+          <div class="mics-field__label">重复启动行为</div>
+          <div class="mics-field__hint">实例已在运行时再次点击开始游戏</div>
+        </div>
+        <div class="mics-field__control">
+          <select v-model="repeatBehavior" class="mics-select" @change="saveBehavior">
+            <option value="prompt">提示</option>
+            <option value="launch">启动</option>
+            <option value="ignore">忽略</option>
+          </select>
+        </div>
+      </div>
+
       <div class="mics-field">
         <div>
           <div class="mics-field__label">最大内存</div>
@@ -63,6 +99,6 @@ const isolation = ref('instance')
       </div>
     </div>
 
-    <p class="mics-page__note">设置在骨架阶段只做界面，存储与启动参数生成尚未接入。</p>
+    <p class="mics-page__note">内存、Java 路径等设置尚未接入启动参数。</p>
   </div>
 </template>

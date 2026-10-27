@@ -1,16 +1,30 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
-import type { InstanceSummary, LaunchResult } from '../shared'
+import type {
+  InstanceSummary,
+  LaunchProcessInfo,
+  LaunchSettings,
+  LaunchState,
+  RepeatLaunchBehavior,
+} from '../shared'
+import { LAUNCH_STATE_TOPIC } from '../shared'
+import RepeatLaunchDialog from './RepeatLaunchDialog.vue'
 
 const ctx = usePluginContext()
 const instances = ref<InstanceSummary[]>([])
+const runtime = ref<LaunchState>({ instances: [] })
+const settings = ref<LaunchSettings>({ repeatBehavior: 'prompt' })
 const loading = ref(true)
 const error = ref('')
 const notice = ref('')
 const selected = ref('')
 const username = ref('Steve')
-const launching = ref('')
+/** 正在执行启动 IPC（准备依赖、spawn 进程）的实例 */
+const pending = ref<string[]>([])
+const conflict = ref<InstanceSummary | null>(null)
+
+let offState: (() => void) | null = null
 
 const ACCENTS = ['', 'mics-avatar--amber', 'mics-avatar--teal', 'mics-avatar--rose']
 
@@ -29,6 +43,28 @@ function formatPlayed(timestamp: number | null): string {
   }).format(new Date(timestamp))
 }
 
+function processesOf(id: string): LaunchProcessInfo[] {
+  return runtime.value.instances.find((entry) => entry.id === id)?.processes ?? []
+}
+
+function isStarting(instance: InstanceSummary): boolean {
+  if (pending.value.includes(instance.id)) return true
+  return processesOf(instance.id).some((process) => process.phase === 'starting')
+}
+
+function isAlive(id: string): boolean {
+  return processesOf(id).length > 0
+}
+
+/** 「忽略」重复启动时，运行期间不再提供启动入口；进程结束后自动恢复 */
+function isLaunchHidden(instance: InstanceSummary): boolean {
+  return (
+    settings.value.repeatBehavior === 'ignore' &&
+    isAlive(instance.id) &&
+    !isStarting(instance)
+  )
+}
+
 async function load(): Promise<void> {
   loading.value = true
   error.value = ''
@@ -39,6 +75,19 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+async function refreshState(): Promise<void> {
+  try {
+    runtime.value = await ctx.ipc.invoke<LaunchState>('mics.launch', 'instances/state')
+  } catch { /* 保留上一份状态 */ }
+}
+
+async function loadSettings(): Promise<void> {
+  try {
+    const value = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/get')
+    settings.value = { repeatBehavior: value.repeatBehavior }
+  } catch { /* 使用默认的「提示」 */ }
 }
 
 async function loadAccount(): Promise<void> {
@@ -61,29 +110,87 @@ async function saveUsername(): Promise<void> {
   }
 }
 
-async function play(instance: InstanceSummary): Promise<void> {
-  if (launching.value) return
+async function rememberBehavior(behavior: RepeatLaunchBehavior): Promise<void> {
+  settings.value = { repeatBehavior: behavior }
+  try {
+    const saved = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/set', {
+      repeatBehavior: behavior,
+    })
+    settings.value = { repeatBehavior: saved.repeatBehavior }
+  } catch { /* 保存失败时保留本次选择 */ }
+}
+
+async function startLaunch(instance: InstanceSummary): Promise<void> {
+  if (isStarting(instance)) return
   selected.value = instance.id
-  launching.value = instance.id
+  pending.value = [...pending.value, instance.id]
   notice.value = ''
   try {
     await saveUsername()
-    const result = await ctx.ipc.invoke<LaunchResult>('mics.launch', 'instances/launch', {
+    await ctx.ipc.invoke('mics.launch', 'instances/launch', {
       id: instance.id,
       username: username.value,
     })
-    notice.value = `已启动「${instance.name}」${result.pid ? `（PID ${result.pid}）` : ''}`
-    await load()
+    instance.lastPlayed = Date.now()
+    await refreshState()
   } catch (cause) {
     notice.value = `启动失败：${cause instanceof Error ? cause.message : String(cause)}`
   } finally {
-    launching.value = ''
+    pending.value = pending.value.filter((id) => id !== instance.id)
+  }
+}
+
+async function play(instance: InstanceSummary): Promise<void> {
+  if (isStarting(instance)) return
+
+  if (isAlive(instance.id)) {
+    const behavior = settings.value.repeatBehavior
+    if (behavior === 'ignore') return
+    if (behavior === 'prompt') {
+      conflict.value = instance
+      return
+    }
+  }
+
+  await startLaunch(instance)
+}
+
+async function confirmConflict(dontAsk: boolean): Promise<void> {
+  const instance = conflict.value
+  conflict.value = null
+  if (!instance) return
+  if (dontAsk) await rememberBehavior('launch')
+  await startLaunch(instance)
+}
+
+async function cancelConflict(dontAsk: boolean): Promise<void> {
+  conflict.value = null
+  if (dontAsk) await rememberBehavior('ignore')
+}
+
+async function terminate(instance: InstanceSummary): Promise<void> {
+  try {
+    await ctx.ipc.invoke('mics.launch', 'instances/terminate', { id: instance.id })
+    await refreshState()
+  } catch (cause) {
+    notice.value = `终止失败：${cause instanceof Error ? cause.message : String(cause)}`
   }
 }
 
 onMounted(() => {
+  offState = ctx.ipc.on(LAUNCH_STATE_TOPIC, (payload) => {
+    const state = payload as LaunchState | undefined
+    if (state && Array.isArray(state.instances)) runtime.value = state
+  })
   void load()
+  void refreshState()
+  void loadSettings()
   void loadAccount()
+})
+
+onUnmounted(() => {
+  offState?.()
+  offState = null
 })
 </script>
 
@@ -134,16 +241,33 @@ onMounted(() => {
             </div>
           </div>
           <span class="launch__played">{{ formatPlayed(instance.lastPlayed) }}</span>
-          <button
-            class="mics-button mics-button--primary mics-button--small"
-            :disabled="Boolean(launching)"
-            @click="play(instance)"
-          >
-            {{ launching === instance.id ? '启动中…' : '开始游戏' }}
-          </button>
+          <div class="launch__actions">
+            <button
+              v-if="!isLaunchHidden(instance)"
+              class="mics-button mics-button--primary mics-button--small"
+              :disabled="isStarting(instance)"
+              @click="play(instance)"
+            >
+              {{ isStarting(instance) ? '启动中…' : '开始游戏' }}
+            </button>
+            <button
+              v-if="isAlive(instance.id)"
+              class="mics-button mics-button--danger mics-button--small"
+              @click="terminate(instance)"
+            >
+              终止进程
+            </button>
+          </div>
         </div>
       </div>
     </section>
+
+    <RepeatLaunchDialog
+      :open="Boolean(conflict)"
+      :instance-name="conflict?.name ?? ''"
+      @confirm="confirmConflict"
+      @cancel="cancelConflict"
+    />
   </div>
 </template>
 
@@ -202,5 +326,14 @@ onMounted(() => {
   color: var(--mics-fg-muted);
   font-size: 11.5px;
   white-space: nowrap;
+}
+
+.launch__actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
 }
 </style>

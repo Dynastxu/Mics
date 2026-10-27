@@ -15,6 +15,42 @@ export interface LaunchRequest {
   username: string
 }
 
-export interface LaunchResult {
+/** 一次启动所处的阶段：等待游戏窗口出现 / 已在运行 */
+export type LaunchPhase = 'starting' | 'running'
+
+export interface LaunchProcessInfo {
   pid: number
+  startedAt: number
+  phase: LaunchPhase
 }
+
+export interface InstanceLaunchState {
+  id: string
+  processes: LaunchProcessInfo[]
+}
+
+/**
+ * 主进程持有的运行状态快照。
+ * 渲染端挂载时拉一次，之后通过 `mics.launch/state` 事件保持同步。
+ */
+export interface LaunchState {
+  instances: InstanceLaunchState[]
+}
+
+/** 实例已在运行时的行为：弹窗询问 / 直接启动 / 忽略点击 */
+export type RepeatLaunchBehavior = 'prompt' | 'launch' | 'ignore'
+
+export interface LaunchSettings {
+  repeatBehavior: RepeatLaunchBehavior
+}
+
+export interface TerminateRequest {
+  id: string
+}
+
+export interface TerminateResult {
+  terminated: number
+}
+
+/** 主进程广播运行状态的事件主题 */
+export const LAUNCH_STATE_TOPIC = 'mics.launch/state'
