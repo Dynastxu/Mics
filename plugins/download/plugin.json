@@ -5,9 +5,18 @@
   "description": "下载分类的导航分组与下载设置；各分类页面由独立插件提供。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "dependencies": ["mics.download.manager"],
   "contributes": {
     "navGroups": [{ "id": "download", "title": "下载", "icon": "download", "order": 20 }],
     "nav": [
+      {
+        "id": "download.progress",
+        "group": "download",
+        "title": "下载进度",
+        "icon": "activity",
+        "order": 10
+      },
       {
         "id": "settings.download",
         "group": "settings",

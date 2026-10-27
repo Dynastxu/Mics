@@ -1,0 +1,9 @@
+{
+  "id": "mics.download.manager",
+  "name": "下载管线",
+  "version": "0.1.0",
+  "description": "下载队列管理、进度追踪、SHA1 校验与断点续传。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "dependencies": ["mics.kernel"]
+}

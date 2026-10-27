@@ -49,6 +49,7 @@ const ICONS: Record<string, string> = {
     '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.5l6.1-.9L12 3Z"/>',
+  activity: '<path d="M22 12h-2.5a2 2 0 0 0-1.9 1.5l-2.4 8.3a.25.25 0 0 1-.48 0L9.2 2.2a.25.25 0 0 0-.48 0L6.4 10.5A2 2 0 0 1 4.5 12H2"/>',
 }
 
 const props = withDefaults(defineProps<{ name?: string; size?: number }>(), {

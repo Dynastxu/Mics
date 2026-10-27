@@ -1,43 +1,49 @@
+import { app } from 'electron'
 import type { Context } from 'cordis'
 import { defineMainPlugin } from '@mics/sdk/main'
-import type { InstanceSummary } from './shared'
-
-const INSTANCES: InstanceSummary[] = [
-  {
-    id: 'fabric-adventure',
-    name: '冒险生存',
-    minecraft: '1.21.4',
-    loader: 'Fabric 0.16.9',
-    mods: 42,
-    lastPlayed: '2 小时前',
-  },
-  {
-    id: 'forge-tech',
-    name: '机械纪元',
-    minecraft: '1.20.1',
-    loader: 'Forge 47.3.0',
-    mods: 186,
-    lastPlayed: '昨天',
-  },
-  {
-    id: 'vanilla',
-    name: '原版生存',
-    minecraft: '1.21.5',
-    loader: '原版',
-    mods: 0,
-    lastPlayed: '3 天前',
-  },
-]
+import { listInstances, markInstanceLaunched, resolveInstance } from './instances'
+import { launchInstance } from './launch'
+import type { LaunchRequest, LaunchResult } from './shared'
 
 export const name = 'mics.launch'
-export const inject = ['ipc']
+export const inject = ['ipc', 'storage']
 
-/**
- * 骨架阶段只提供实例清单，真正的版本隔离、Java 探测与启动流程都不在这里。
- * 数据放主进程，渲染端通过 ctx.ipc.invoke('mics.launch', 'instances/list') 读取。
- */
+function sanitizeUsername(value: unknown): string {
+  const name = typeof value === 'string' ? value.trim() : ''
+  return name ? name.slice(0, 16) : 'Steve'
+}
+
 export function apply(ctx: Context): void {
-  ctx.ipc.handle('instances/list', () => INSTANCES)
+  const dataDir = app.getPath('userData')
+
+  ctx.ipc.handle('instances/list', () => listInstances(dataDir))
+
+  ctx.ipc.handle('account/get', () => ({
+    username: sanitizeUsername(ctx.storage.get<string>('username', 'Steve')),
+  }))
+
+  ctx.ipc.handle<{ username: string }>('account/set', ({ username }) => {
+    const name = sanitizeUsername(username)
+    ctx.storage.set('username', name)
+    return { username: name }
+  })
+
+  ctx.ipc.handle<LaunchRequest>('instances/launch', async ({ id, username }) => {
+    const instance = resolveInstance(dataDir, id)
+    if (!instance) throw new Error('实例不存在或缺少版本文件')
+
+    const name = sanitizeUsername(username || ctx.storage.get<string>('username', 'Steve'))
+    const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
+
+    const pid = await launchInstance(instance, {
+      username: name,
+      launcherVersion: app.getVersion(),
+      memoryMb: Number.isFinite(memory) ? memory : 4096,
+    })
+    markInstanceLaunched(instance, name)
+
+    return { pid } satisfies LaunchResult
+  })
 }
 
 export default defineMainPlugin({ name, inject, apply })

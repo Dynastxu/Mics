@@ -5,5 +5,16 @@ export interface InstanceSummary {
   minecraft: string
   loader: string
   mods: number
-  lastPlayed: string
+  /** 上次启动时间戳；从未启动为 null */
+  lastPlayed: number | null
+  versionId: string
+}
+
+export interface LaunchRequest {
+  id: string
+  username: string
+}
+
+export interface LaunchResult {
+  pid: number
 }

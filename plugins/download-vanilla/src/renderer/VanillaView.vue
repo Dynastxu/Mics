@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { DataBrowser, defaultSelection } from '@mics/ui'
 import type { FilterGroup, FilterOption, FilterSelection, ListRow } from '@mics/ui'
+import { usePluginContext } from '@mics/sdk/renderer'
+import type { GameVersion, LoaderKind } from '@mics/sdk'
 
-type VersionType = '正式版' | '快照' | '预览'
+const ctx = usePluginContext()
+
+type VersionType = '正式版' | '快照' | '预览' | '旧版'
 type LoaderChannel = '稳定版' | '测试版'
 type SortOrder = 'type' | 'newest' | 'oldest'
 
@@ -22,23 +26,11 @@ interface LoaderVersion {
 interface LoaderOption {
   id: string
   label: string
-  /** 原版没有加载器版本 */
   versions: LoaderVersion[]
 }
 
-const VERSIONS: VersionItem[] = [
-  { id: '1.21.5', type: '正式版', date: '2025-03-25' },
-  { id: '1.21.4', type: '正式版', date: '2024-12-03' },
-  { id: '1.21.1', type: '正式版', date: '2024-08-08' },
-  { id: '1.20.6', type: '正式版', date: '2024-04-29' },
-  { id: '1.20.1', type: '正式版', date: '2023-06-12' },
-  { id: '25w14a', type: '快照', date: '2025-04-02' },
-  { id: '25w10a', type: '快照', date: '2025-03-05' },
-  { id: '1.21.6-pre1', type: '预览', date: '2025-04-15' },
-]
-
-const VERSION_TYPES: VersionType[] = ['正式版', '快照', '预览']
-const TYPE_RANK: Record<VersionType, number> = { 正式版: 0, 快照: 1, 预览: 2 }
+const VERSION_TYPES: VersionType[] = ['正式版', '快照', '预览', '旧版']
+const TYPE_RANK: Record<VersionType, number> = { 正式版: 0, 快照: 1, 预览: 2, 旧版: 3 }
 
 const CHANNELS: LoaderChannel[] = ['稳定版', '测试版']
 const CHANNEL_RANK: Record<LoaderChannel, number> = { 稳定版: 0, 测试版: 1 }
@@ -49,7 +41,6 @@ const SORTS: FilterOption[] = [
   { value: 'oldest', label: '最早发布' },
 ]
 
-/** 两个列表共用的排序组：只影响排序，不参与行过滤 */
 const SORT_GROUP: FilterGroup = {
   key: 'sort',
   label: '排序方式',
@@ -58,7 +49,6 @@ const SORT_GROUP: FilterGroup = {
   options: SORTS,
 }
 
-/** 列表页：排序方式 + 游戏版本性质 */
 const LIST_FILTER_GROUPS: FilterGroup[] = [
   SORT_GROUP,
   {
@@ -73,7 +63,6 @@ const LIST_FILTER_GROUPS: FilterGroup[] = [
   },
 ]
 
-/** 安装页：排序方式 + 加载器版本性质 */
 const LOADER_FILTER_GROUPS: FilterGroup[] = [
   SORT_GROUP,
   {
@@ -124,19 +113,21 @@ const LOADERS: LoaderOption[] = [
   },
 ]
 
-/** 列表页的搜索与筛选：受控保存，进出安装页后仍保持 */
+/** 从 Mojang API 拉取的原始版本数据 */
+const rawVersions = ref<GameVersion[]>([])
+const versionsLoading = ref(true)
+const versionsError = ref('')
+
 const listQuery = ref('')
 const listFilter = ref<FilterSelection>(defaultSelection(LIST_FILTER_GROUPS))
 const notice = ref('')
+const installing = ref(false)
 
-/** 页面根节点：切换列表/安装页时把滚动位置带回顶部 */
 const pageEl = ref<HTMLElement | null>(null)
 
-/** 当前打开的安装页；null 时显示版本列表 */
 const installTarget = ref<VersionItem | null>(null)
 const loaderId = ref(VANILLA_LOADER.id)
 const loaderVersion = ref('')
-/** 版本名称（选择指纹）；为空时回退到默认值 */
 const nameDraft = ref('')
 
 const currentLoader = computed(
@@ -144,7 +135,6 @@ const currentLoader = computed(
 )
 const allLoaderVersions = computed(() => currentLoader.value.versions)
 
-/** 默认版本名称：原版版本-加载器-加载器版本 */
 const defaultName = computed(() => {
   const target = installTarget.value
   if (!target) return ''
@@ -153,23 +143,34 @@ const defaultName = computed(() => {
   return parts.join('-')
 })
 
-/** 实际使用的名称：自填优先，为空回退到默认指纹 */
 const effectiveName = computed(() => {
   const custom = nameDraft.value.trim().replace(/[. ]+$/, '')
   return custom || defaultName.value
 })
 
-/** 列表页的行数据；nature 供「版本性质」筛选匹配 */
-const VERSION_ROWS: ListRow[] = VERSIONS.map((version) => ({
-  id: version.id,
-  label: version.id,
-  badge: version.type,
-  badgeAccent: version.type === '正式版',
-  meta: version.date,
-  tags: { nature: version.type },
-}))
+/** Mojang type -> 中文类型 */
+function mapType(type: GameVersion['type']): VersionType {
+  switch (type) {
+    case 'release': return '正式版'
+    case 'snapshot': return '快照'
+    case 'old_alpha':
+    case 'old_beta': return '旧版'
+    default: return '快照'
+  }
+}
 
-/** 安装页的行数据 */
+/** 原始版本 -> 列表行 */
+const VERSION_ROWS = computed<ListRow[]>(() =>
+  rawVersions.value.map((version) => ({
+    id: version.id,
+    label: version.id,
+    badge: mapType(version.type),
+    badgeAccent: version.type === 'release',
+    meta: version.releaseTime.slice(0, 10),
+    tags: { nature: mapType(version.type) },
+  })),
+)
+
 const loaderRows = computed<ListRow[]>(() =>
   allLoaderVersions.value.map((item) => ({
     id: item.id,
@@ -181,12 +182,10 @@ const loaderRows = computed<ListRow[]>(() =>
   })),
 )
 
-/** 搜索只匹配版本号，与改造前一致 */
 function versionSearchText(row: ListRow): string {
   return row.label
 }
 
-/** 排序规则：先按性质分组或直接按日期，列表页与安装页共用 */
 function bySort(rank: (row: ListRow) => number) {
   return (a: ListRow, b: ListRow, selection: FilterSelection): number => {
     const order = (selection.sort?.[0] as SortOrder) ?? 'type'
@@ -201,10 +200,13 @@ function bySort(rank: (row: ListRow) => number) {
   }
 }
 
-const versionSort = bySort((row) => TYPE_RANK[(row.badge ?? '') as VersionType] ?? 0)
-const loaderSort = bySort((row) => CHANNEL_RANK[(row.badge ?? '') as LoaderChannel] ?? 0)
+const versionSort = bySort(
+  (row) => TYPE_RANK[(row.badge ?? '') as VersionType] ?? 0,
+)
+const loaderSort = bySort(
+  (row) => CHANNEL_RANK[(row.badge ?? '') as LoaderChannel] ?? 0,
+)
 
-/** Windows 文件夹名不支持的字符：输入时直接剔除 */
 const INVALID_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/g
 
 function onNameInput(event: Event): void {
@@ -222,7 +224,6 @@ function normalizeName(): void {
   nameDraft.value = nameDraft.value.trim().replace(/[. ]+$/, '')
 }
 
-/** 选择变化时，只有未手动改过的名称才跟着更新 */
 function syncNameDraft(previousDefault: string): void {
   if (nameDraft.value === previousDefault) nameDraft.value = defaultName.value
 }
@@ -245,9 +246,9 @@ function scrollToTop(): void {
 }
 
 function openInstall(id: string): void {
-  const version = VERSIONS.find((item) => item.id === id)
+  const version = VERSION_ROWS.value.find((item) => item.id === id)
   if (!version) return
-  installTarget.value = version
+  installTarget.value = { id: version.id, type: version.badge as VersionType, date: version.meta ?? '' }
   loaderId.value = VANILLA_LOADER.id
   loaderVersion.value = ''
   nameDraft.value = defaultName.value
@@ -261,15 +262,59 @@ function closeInstall(): void {
   scrollToTop()
 }
 
-function install(): void {
-  if (!installTarget.value) return
-  notice.value = `「${effectiveName.value}」的安装流程尚未接入。`
+async function install(): Promise<void> {
+  if (!installTarget.value || installing.value) return
+  installing.value = true
+  notice.value = ''
+
+  try {
+    const loader: LoaderKind | undefined =
+      loaderId.value !== 'vanilla' ? (loaderId.value as LoaderKind) : undefined
+
+    const result = await ctx.ipc.invoke<{ jobId: string; error?: string }>(
+      'mics.download.manager',
+      'install/start',
+      {
+        gameVersion: installTarget.value.id,
+        instanceName: effectiveName.value,
+        ...(loader && loaderVersion.value
+          ? { loader: { kind: loader, version: loaderVersion.value } }
+          : {}),
+      },
+    )
+
+    if (result.error) {
+      notice.value = `安装失败：${result.error}`
+    } else {
+      notice.value = `「${effectiveName.value}」已加入下载队列（任务 ${result.jobId}）。`
+    }
+  } catch (cause) {
+    notice.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    installing.value = false
+  }
 }
+
+async function loadVersions(): Promise<void> {
+  versionsLoading.value = true
+  versionsError.value = ''
+  try {
+    rawVersions.value = await ctx.ipc.invoke<GameVersion[]>(
+      'mics.download.vanilla',
+      'versions/list',
+    )
+  } catch (cause) {
+    versionsError.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+onMounted(loadVersions)
 </script>
 
 <template>
   <div ref="pageEl" class="mics-page">
-    <!-- 安装页：列表里点一下版本进来，左上角返回 -->
     <template v-if="installTarget">
       <header class="install__header">
         <button class="mics-button mics-button--ghost mics-button--small" @click="closeInstall">
@@ -313,8 +358,12 @@ function install(): void {
           @blur="normalizeName"
         />
 
-        <button class="mics-button mics-button--primary install__submit" @click="install">
-          安装
+        <button
+          class="mics-button mics-button--primary install__submit"
+          :disabled="installing"
+          @click="install"
+        >
+          {{ installing ? '提交中…' : '安装' }}
         </button>
       </header>
 
@@ -337,7 +386,6 @@ function install(): void {
         </div>
       </section>
 
-      <!-- 加载器版本：行样式与筛选都跟原版版本列表一致 -->
       <DataBrowser
         v-if="allLoaderVersions.length"
         :items="loaderRows"
@@ -351,13 +399,16 @@ function install(): void {
       />
     </template>
 
-    <!-- 版本列表 -->
     <template v-else>
       <header class="mics-page__header">
         <h1 class="mics-page__title">原版</h1>
       </header>
 
+      <div v-if="versionsLoading" class="mics-empty">正在获取版本列表…</div>
+      <div v-else-if="versionsError" class="mics-empty mics-empty--error">{{ versionsError }}</div>
+
       <DataBrowser
+        v-else
         :items="VERSION_ROWS"
         :groups="LIST_FILTER_GROUPS"
         title="版本"
@@ -400,5 +451,9 @@ function install(): void {
   margin: 2px 0 0;
   color: var(--mics-fg-muted);
   font-size: 12px;
+}
+
+.mics-empty--error {
+  color: var(--mics-accent, #ef4444);
 }
 </style>
