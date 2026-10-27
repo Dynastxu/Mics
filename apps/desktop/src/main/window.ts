@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron'
 import path from 'node:path'
 import { trackWindowState } from './windowControls'
+import { initialWindowSize, MIN_WINDOW_SIZE } from './windowSizing'
 
 /** 没有系统菜单后，开发期常用快捷键在这里补回来（生产构建不注册） */
 function registerDevShortcuts(window: BrowserWindow): void {
@@ -21,11 +22,12 @@ function registerDevShortcuts(window: BrowserWindow): void {
 }
 
 export function createMainWindow(): BrowserWindow {
+  const size = initialWindowSize()
   const window = new BrowserWindow({
-    width: 1320,
-    height: 860,
-    minWidth: 960,
-    minHeight: 600,
+    width: size.width,
+    height: size.height,
+    minWidth: MIN_WINDOW_SIZE.width,
+    minHeight: MIN_WINDOW_SIZE.height,
     show: false,
     // 标题栏与窗口按钮由渲染器自绘（shell/WindowTitleBar.vue）
     frame: false,

@@ -136,11 +136,15 @@ app.whenReady()
 | 标题栏 | `shell/WindowTitleBar.vue`；拖动区用 `-webkit-app-region: drag` 交给系统，双击最大化、贴边吸附都是系统行为 |
 | 窗口按钮 | 按钮区 `-webkit-app-region: no-drag`，点击经 `window.mics.windowControls` → IPC → 主进程 `BrowserWindow` |
 | 最大化状态 | 主进程监听 `maximize` / `unmaximize` 推给渲染进程，标题栏据此在「最大化 / 还原」之间切换图标 |
+| 窗口尺寸 | `main/windowSizing.ts`：最小 640×420，启动尺寸不超过当前工作区；状态栏「命令」右侧有一个拖动区，按住拖动即可缩放窗口（左上角固定，只受最小尺寸限制） |
 
 壳专用的 IPC 通道：
 
 - `mics:window-control`：渲染 → 主，`minimize` / `toggle-maximize` / `close`；
   主进程用 `BrowserWindow.fromWebContents(event.sender)` 只操作发消息的那个窗口。
+- `mics:window-resize`：渲染 → 主，`{ phase: 'start' | 'move' | 'end', x, y }`；
+  指针用屏幕坐标，主进程以按下时的 bounds 加上位移算出新宽高，左上角保持不动，
+  只夹最小尺寸；最大化时先还原再继续。
 - `mics:window-state`：主 → 渲染，`{ maximized }`；渲染进程挂载时再 `invoke` 拉一次，
   因为窗口重载时状态事件可能早于监听。
 

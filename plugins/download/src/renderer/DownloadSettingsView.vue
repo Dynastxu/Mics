@@ -351,6 +351,7 @@ onUnmounted(() => {
 <style scoped>
 .settings-sources__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -371,6 +372,7 @@ onUnmounted(() => {
 .settings-sources__actions {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -470,5 +472,18 @@ onUnmounted(() => {
 
 .settings-target__input {
   width: 100%;
+}
+
+/* 窄窗口：缩进让给输入框 */
+@media (max-width: 900px) {
+  .settings-source__targets {
+    padding-left: 0;
+  }
+
+  .settings-target {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    align-items: start;
+  }
 }
 </style>

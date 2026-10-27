@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   MicsBridge,
   MicsWindowControl,
+  MicsWindowResizeGesture,
   MicsWindowState,
   PluginId,
   RpcResponse,
@@ -41,6 +42,8 @@ const bridge: MicsBridge = {
     minimize: () => sendWindowControl('minimize'),
     toggleMaximize: () => sendWindowControl('toggle-maximize'),
     close: () => sendWindowControl('close'),
+    resizeWindow: (gesture: MicsWindowResizeGesture) =>
+      ipcRenderer.send('mics:window-resize', gesture),
     getState: async () => (await ipcRenderer.invoke('mics:window-state')) as MicsWindowState,
     onStateChange(listener: WindowStateListener): () => void {
       windowStateListeners.add(listener)

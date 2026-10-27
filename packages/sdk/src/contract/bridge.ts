@@ -4,6 +4,21 @@ import type { RuntimeEventEnvelope } from './runtime'
 /** 自定义标题栏发出的窗口控制指令 */
 export type MicsWindowControl = 'minimize' | 'toggle-maximize' | 'close'
 
+/** 拖动缩放的阶段：按下 / 拖动 / 松开 */
+export type MicsWindowResizePhase = 'start' | 'move' | 'end'
+
+/**
+ * 状态栏拖动缩放的指针位置。
+ *
+ * 使用屏幕坐标（DIP）：百分比与像素都不需要渲染进程参与计算，
+ * 主进程拿它和窗口的起始 bounds 相加即可，指针跑出窗口也不会漂移。
+ */
+export interface MicsWindowResizeGesture {
+  phase: MicsWindowResizePhase
+  x: number
+  y: number
+}
+
 /** 窗口状态：标题栏据此在「最大化 / 还原」之间切换图标 */
 export interface MicsWindowState {
   maximized: boolean
@@ -19,6 +34,8 @@ export interface MicsWindowControls {
   minimize(): void
   toggleMaximize(): void
   close(): void
+  /** 按住状态栏右下角的拖动区缩放窗口：按下发 start，移动发 move，松开发 end */
+  resizeWindow(gesture: MicsWindowResizeGesture): void
   /** 读取当前状态：渲染进程重载时事件可能早于监听，需要主动拉一次 */
   getState(): Promise<MicsWindowState>
   /** 订阅最大化状态变化；返回取消订阅函数 */
