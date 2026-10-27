@@ -1,0 +1,19 @@
+{
+  "id": "mics.download.modpack",
+  "name": "整合包下载",
+  "version": "0.1.0",
+  "description": "整合包目录：按游戏版本与玩法筛选。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "contributes": {
+    "nav": [
+      {
+        "id": "download.modpack",
+        "group": "download",
+        "title": "整合包",
+        "icon": "archive",
+        "order": 30
+      }
+    ]
+  }
+}

@@ -2,17 +2,14 @@
   "id": "mics.core-workbench",
   "name": "Workbench",
   "version": "0.1.0",
-  "description": "默认布局、主题与欢迎页：连工作台的外观也是插件提供的。",
+  "description": "默认布局与主题：工作台的外观本身也由插件声明，不需要任何代码。",
   "author": "mics",
-  "renderer": "dist/renderer.mjs",
-  "styles": ["dist/style.css"],
-  "activation": ["onStartup"],
   "contributes": {
     "layout": {
       "id": "mics.layout.default",
       "label": "默认布局",
       "regions": {
-        "sidebar": { "width": 300, "defaultView": "workbench.welcome" }
+        "nav": { "width": 232, "defaultView": "launch" }
       }
     },
     "themes": [
@@ -47,15 +44,6 @@
           "--mics-accent-fg": "#ffffff",
           "--mics-danger": "#d64545"
         }
-      }
-    ],
-    "views": [
-      {
-        "id": "workbench.welcome",
-        "title": "欢迎",
-        "region": "sidebar",
-        "icon": "👋",
-        "order": 0
       }
     ]
   }

@@ -1,0 +1,19 @@
+{
+  "id": "mics.download.resourcepack",
+  "name": "资源包下载",
+  "version": "0.1.0",
+  "description": "资源包目录：按游戏版本与分辨率筛选。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "contributes": {
+    "nav": [
+      {
+        "id": "download.resourcepack",
+        "group": "download",
+        "title": "资源包",
+        "icon": "image",
+        "order": 50
+      }
+    ]
+  }
+}

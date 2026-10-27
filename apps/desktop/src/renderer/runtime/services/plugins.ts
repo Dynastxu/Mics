@@ -8,7 +8,7 @@ import { applySnapshot, ensureStyle, store } from '../store'
  * 渲染进程的插件宿主。
  *
  * 启动时拉取内核快照（清单层面的贡献点立刻可用），
- * 某个视图第一次被打开时才真正 import 插件产物、创建 cordis fiber。
+ * 某个页面第一次被打开时才真正 import 插件产物、创建 cordis fiber。
  *
  * 禁用状态以内核为准（持久化），渲染端只负责同步与卸载。
  * 兄弟服务统一走自身上下文（owner）：cordis 的追踪上下文属于调用方，
@@ -104,7 +104,6 @@ export class PluginsService extends Service {
     }
     this.loaded.delete(id)
     this.scopes.delete(id)
-    delete store.activated[id]
     await this.owner.ipc.invoke('mics.kernel', 'plugins/disable', { id })
     await this.refresh()
   }
@@ -122,9 +121,9 @@ export class PluginsService extends Service {
     store.activating[info.id] = true
     delete store.errors[info.id]
     try {
-      if (info.hasMain) {
-        await this.owner.ipc.invoke('mics.kernel', 'plugins/activate', { id: info.id })
-      }
+      // 渲染端插件也在内核侧标记为已激活：插件管理页显示的是内核快照，
+      // 不这样做，纯渲染插件会一直显示「未激活」。
+      await this.owner.ipc.invoke('mics.kernel', 'plugins/activate', { id: info.id })
 
       if (info.hasRenderer && info.rendererUrl) {
         for (const href of info.styles) ensureStyle(href)
@@ -146,7 +145,6 @@ export class PluginsService extends Service {
       }
 
       this.loaded.add(info.id)
-      store.activated[info.id] = true
     } catch (error) {
       store.errors[info.id] = error instanceof Error ? error.message : String(error)
       throw error

@@ -1,4 +1,4 @@
-import { app, dialog } from 'electron'
+import { app, dialog, Menu } from 'electron'
 import { Context } from 'cordis'
 import { PLUGIN_ID } from '@mics/sdk'
 import type { KernelConfig, KernelModule } from '@mics/sdk'
@@ -6,6 +6,7 @@ import { importPluginEntry, scanPlugins } from '@mics/plugin-loader'
 import { createAppInfo, loadBootConfig, resolvePluginRoots } from './config'
 import { registerPluginProtocol, registerPrivilegedSchemes } from './protocol'
 import { createMainWindow, loadRenderer } from './window'
+import { registerWindowControls } from './windowControls'
 
 
 // 自定义协议必须在 app ready 之前注册
@@ -18,9 +19,13 @@ registerPrivilegedSchemes()
  *   1. 找到并解析插件目录（读 plugin.json）
  *   2. 创建 cordis 根 Context
  *   3. 把「内核插件」挂上去（内核也是插件）
- *   4. 打开窗口
+ *   4. 打开窗口（窗口装饰由渲染器自绘，这里只提供控制通道）
  */
 async function start(): Promise<void> {
+  // 窗口装饰（标题栏 / 菜单栏 / 窗口按钮）全部由渲染器自绘，不要系统菜单
+  Menu.setApplicationMenu(null)
+  registerWindowControls()
+
   const boot = loadBootConfig()
   const pluginRoots = resolvePluginRoots(boot.pluginRoots)
 

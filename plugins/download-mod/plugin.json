@@ -1,0 +1,19 @@
+{
+  "id": "mics.download.mod",
+  "name": "Mod 下载",
+  "version": "0.1.0",
+  "description": "Mod 目录：按游戏版本与加载器筛选。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "contributes": {
+    "nav": [
+      {
+        "id": "download.mod",
+        "group": "download",
+        "title": "Mod",
+        "icon": "blocks",
+        "order": 20
+      }
+    ]
+  }
+}

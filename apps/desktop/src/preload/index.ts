@@ -1,15 +1,33 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { MicsBridge, PluginId, RpcResponse, RuntimeEventEnvelope } from '@mics/sdk'
+import type {
+  MicsBridge,
+  MicsWindowControl,
+  MicsWindowState,
+  PluginId,
+  RpcResponse,
+  RuntimeEventEnvelope,
+} from '@mics/sdk'
 
 type Listener = (envelope: RuntimeEventEnvelope) => void
+type WindowStateListener = (state: MicsWindowState) => void
 
 const listeners = new Map<string, Set<Listener>>()
+const windowStateListeners = new Set<WindowStateListener>()
 
 ipcRenderer.on('mics:event', (_event, envelope: RuntimeEventEnvelope) => {
   if (!envelope || typeof envelope.topic !== 'string') return
   for (const listener of listeners.get(envelope.topic) ?? []) listener(envelope)
   for (const listener of listeners.get('*') ?? []) listener(envelope)
 })
+
+ipcRenderer.on('mics:window-state', (_event, state: MicsWindowState) => {
+  if (!state || typeof state.maximized !== 'boolean') return
+  for (const listener of windowStateListeners) listener(state)
+})
+
+function sendWindowControl(action: MicsWindowControl): void {
+  ipcRenderer.send('mics:window-control', action)
+}
 
 const bridge: MicsBridge = {
   versions: {
@@ -19,6 +37,18 @@ const bridge: MicsBridge = {
     v8: process.versions.v8 ?? '',
   },
   platform: process.platform,
+  windowControls: {
+    minimize: () => sendWindowControl('minimize'),
+    toggleMaximize: () => sendWindowControl('toggle-maximize'),
+    close: () => sendWindowControl('close'),
+    getState: async () => (await ipcRenderer.invoke('mics:window-state')) as MicsWindowState,
+    onStateChange(listener: WindowStateListener): () => void {
+      windowStateListeners.add(listener)
+      return () => {
+        windowStateListeners.delete(listener)
+      }
+    },
+  },
   rpc: {
     invoke: async <T,>(
       target: PluginId,

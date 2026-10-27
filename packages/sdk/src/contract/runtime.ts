@@ -21,13 +21,13 @@ export interface PluginInfo {
   author?: string
   state: PluginState
   core: boolean
-  /** 完整清单，渲染端据此生成视图、命令、主题等 */
+  /** 完整清单，渲染端据此生成导航、命令、主题等 */
   manifest: PluginManifest
   hasMain: boolean
   hasRenderer: boolean
-  /** 形如 mics-plugin://mics.hello-world/dist/renderer.mjs */
+  /** 形如 mics-plugin://mics.download.mod/dist/renderer.mjs */
   rendererUrl?: string
-  /** 形如 mics-plugin://mics.hello-world/dist/style.css */
+  /** 形如 mics-plugin://mics.download.mod/dist/style.css */
   styles: string[]
   error?: string
 }

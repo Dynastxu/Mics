@@ -8,6 +8,7 @@
       "@mics/sdk": ["../packages/sdk/src/index.ts"],
       "@mics/sdk/main": ["../packages/sdk/src/main.ts"],
       "@mics/sdk/renderer": ["../packages/sdk/src/renderer.ts"],
+      "@mics/ui": ["../packages/ui/src/index.ts"],
       "@mics/plugin-loader": ["../packages/plugin-loader/src/index.ts"],
       "electron": ["../apps/desktop/node_modules/electron/electron.d.ts"]
     }
@@ -15,7 +16,11 @@
   "include": [
     "**/*.ts",
     "**/*.vue",
-    "../packages/sdk/src/global.d.ts"
+    "../packages/sdk/src/global.d.ts",
+    "../packages/ui/src/**/*.ts",
+    "../packages/ui/src/**/*.vue",
+    "../packages/ui/demo/**/*.ts",
+    "../packages/ui/demo/**/*.vue"
   ],
   "exclude": ["**/dist/**"]
 }

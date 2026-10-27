@@ -1,0 +1,19 @@
+{
+  "id": "mics.download.shader",
+  "name": "光影包下载",
+  "version": "0.1.0",
+  "description": "光影包目录：按游戏版本与光影加载器筛选。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "contributes": {
+    "nav": [
+      {
+        "id": "download.shader",
+        "group": "download",
+        "title": "光影包",
+        "icon": "sparkles",
+        "order": 60
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "mics.settings",
+  "name": "设置",
+  "version": "0.1.0",
+  "description": "设置分组与通用设置页；其余设置页由各插件自行贡献。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "contributes": {
+    "navGroups": [{ "id": "settings", "title": "设置", "icon": "settings", "order": 30 }],
+    "nav": [
+      {
+        "id": "settings.general",
+        "group": "settings",
+        "title": "通用",
+        "icon": "sliders",
+        "order": 10
+      }
+    ]
+  }
+}

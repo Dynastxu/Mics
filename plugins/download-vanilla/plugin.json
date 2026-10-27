@@ -1,0 +1,20 @@
+{
+  "id": "mics.download.vanilla",
+  "name": "原版下载",
+  "version": "0.1.0",
+  "description": "原版游戏版本列表、版本性质筛选与排序、安装入口。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "contributes": {
+    "nav": [
+      {
+        "id": "download.vanilla",
+        "group": "download",
+        "title": "原版",
+        "icon": "cube",
+        "order": 10
+      }
+    ]
+  }
+}

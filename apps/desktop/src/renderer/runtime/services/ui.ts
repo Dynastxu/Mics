@@ -6,7 +6,7 @@ import { pluginIdOf } from '@mics/sdk'
 import { store, viewComponents } from '../store'
 
 /**
- * 渲染进程 UI 服务：视图与状态栏的注册表。
+ * 渲染进程 UI 服务：导航页面与状态栏的注册表。
  * 注册调用发生在插件 fiber 内，因此 dispose 插件即可把 UI 一并摘掉。
  */
 export class UiService extends Service {

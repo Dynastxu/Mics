@@ -1,10 +1,9 @@
 import path from 'node:path'
-import type { PluginContributions, PluginManifest, ViewRegion } from '@mics/sdk'
+import type { PluginContributions, PluginManifest } from '@mics/sdk'
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
 const ACTIVATION_PATTERN = /^(\*|onStartup|onView:.+|onCommand:.+)$/
-const REGIONS: ViewRegion[] = ['sidebar', 'main', 'panel']
 
 export interface ValidationResult {
   manifest?: PluginManifest
@@ -41,31 +40,46 @@ function validateContributions(
 
   const contributions: PluginContributions = {}
 
-  if (raw.views !== undefined) {
-    if (!Array.isArray(raw.views)) {
-      errors.push('contributes.views 必须是数组')
+  if (raw.nav !== undefined) {
+    if (!Array.isArray(raw.nav)) {
+      errors.push('contributes.nav 必须是数组')
     } else {
-      const views: NonNullable<PluginContributions['views']> = []
-      for (const view of raw.views) {
-        if (!isRecord(view) || typeof view.id !== 'string' || typeof view.title !== 'string') {
-          errors.push('contributes.views 条目需要 id 与 title 字符串')
+      const nav: NonNullable<PluginContributions['nav']> = []
+      for (const item of raw.nav) {
+        if (!isRecord(item) || typeof item.id !== 'string' || typeof item.title !== 'string') {
+          errors.push('contributes.nav 条目需要 id 与 title 字符串')
           continue
         }
-        const region = view.region
-        if (region !== undefined && !REGIONS.includes(region as ViewRegion)) {
-          errors.push(`视图 ${view.id} 的 region 必须是 sidebar/main/panel`)
-          continue
-        }
-        views.push({
-          id: view.id,
-          title: view.title,
-          region: region as ViewRegion | undefined,
-          icon: typeof view.icon === 'string' ? view.icon : undefined,
-          order: typeof view.order === 'number' ? view.order : undefined,
-          group: typeof view.group === 'string' ? view.group : undefined,
+        nav.push({
+          id: item.id,
+          title: item.title,
+          icon: typeof item.icon === 'string' ? item.icon : undefined,
+          order: typeof item.order === 'number' ? item.order : undefined,
+          group: typeof item.group === 'string' ? item.group : undefined,
         })
       }
-      contributions.views = views
+      contributions.nav = nav
+    }
+  }
+
+  if (raw.navGroups !== undefined) {
+    if (!Array.isArray(raw.navGroups)) {
+      errors.push('contributes.navGroups 必须是数组')
+    } else {
+      const navGroups: NonNullable<PluginContributions['navGroups']> = []
+      for (const group of raw.navGroups) {
+        if (!isRecord(group) || typeof group.id !== 'string' || typeof group.title !== 'string') {
+          errors.push('contributes.navGroups 条目需要 id 与 title 字符串')
+          continue
+        }
+        navGroups.push({
+          id: group.id,
+          title: group.title,
+          icon: typeof group.icon === 'string' ? group.icon : undefined,
+          order: typeof group.order === 'number' ? group.order : undefined,
+        })
+      }
+      contributions.navGroups = navGroups
     }
   }
 
@@ -162,12 +176,12 @@ function validateContributions(
         label: typeof raw.layout.label === 'string' ? raw.layout.label : undefined,
         regions: isRecord(regions)
           ? {
-              sidebar: isRecord(regions.sidebar)
+              nav: isRecord(regions.nav)
                 ? {
-                    width: typeof regions.sidebar.width === 'number' ? regions.sidebar.width : undefined,
+                    width: typeof regions.nav.width === 'number' ? regions.nav.width : undefined,
                     defaultView:
-                      typeof regions.sidebar.defaultView === 'string'
-                        ? regions.sidebar.defaultView
+                      typeof regions.nav.defaultView === 'string'
+                        ? regions.nav.defaultView
                         : undefined,
                   }
                 : undefined,

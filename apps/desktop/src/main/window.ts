@@ -1,5 +1,24 @@
-import { BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import path from 'node:path'
+import { trackWindowState } from './windowControls'
+
+/** 没有系统菜单后，开发期常用快捷键在这里补回来（生产构建不注册） */
+function registerDevShortcuts(window: BrowserWindow): void {
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const key = input.key.toLowerCase()
+
+    if (input.key === 'F12' || ((input.control || input.meta) && input.shift && key === 'i')) {
+      event.preventDefault()
+      window.webContents.toggleDevTools()
+      return
+    }
+    if ((input.control || input.meta) && key === 'r') {
+      event.preventDefault()
+      window.webContents.reload()
+    }
+  })
+}
 
 export function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -8,6 +27,8 @@ export function createMainWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     show: false,
+    // 标题栏与窗口按钮由渲染器自绘（shell/WindowTitleBar.vue）
+    frame: false,
     backgroundColor: '#0f1115',
     title: 'Mics',
     webPreferences: {
@@ -21,6 +42,8 @@ export function createMainWindow(): BrowserWindow {
   })
 
   window.once('ready-to-show', () => window.show())
+  trackWindowState(window)
+  if (!app.isPackaged) registerDevShortcuts(window)
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)

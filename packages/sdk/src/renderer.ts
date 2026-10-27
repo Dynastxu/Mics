@@ -3,15 +3,15 @@ import type { Context, Plugin } from 'cordis'
 import './contract/services'
 
 /**
- * 渲染进程插件的视图组件里，通过 usePluginContext() 拿到所属插件的作用域。
- * ctx 由 shell 在挂载视图时通过 provide 注入（见 PluginScope.vue）。
+ * 渲染进程插件的页面组件里，通过 usePluginContext() 拿到所属插件的作用域。
+ * ctx 由 shell 在挂载页面时通过 provide 注入（见 PluginScope.vue）。
  */
 export const PLUGIN_CONTEXT_KEY = Symbol.for('mics.plugin-context') as InjectionKey<Context>
 
 export function usePluginContext(): Context {
   const ctx = inject(PLUGIN_CONTEXT_KEY, null)
   if (!ctx) {
-    throw new Error('[mics] usePluginContext() 只能在插件提供的视图组件内使用')
+    throw new Error('[mics] usePluginContext() 只能在插件提供的页面组件内使用')
   }
   return ctx
 }

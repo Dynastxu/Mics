@@ -21,6 +21,7 @@ const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const pluginsDir = path.join(root, 'plugins')
 const sdkDir = path.join(root, 'packages', 'sdk', 'src')
 const loaderDir = path.join(root, 'packages', 'plugin-loader', 'src')
+const uiEntry = path.join(root, 'packages', 'ui', 'src', 'index.ts')
 const shimDir = path.join(root, 'node_modules', '.mics')
 const watch = process.argv.includes('--watch')
 
@@ -45,6 +46,7 @@ function resolveSdkSpecifier(specifier) {
 function makeViteAliases() {
   const alias = [
     { find: /^@mics\/plugin-loader$/, replacement: path.join(loaderDir, 'index.ts') },
+    { find: /^@mics\/ui$/, replacement: uiEntry },
     { find: /^vue$/, replacement: path.join(shimDir, 'vue-shim.js') },
     { find: /^cordis$/, replacement: path.join(shimDir, 'cordis-shim.js') },
   ]

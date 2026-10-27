@@ -1,19 +1,19 @@
 {
   "id": "mics.plugin-inspector",
-  "name": "Plugin Inspector",
+  "name": "插件管理",
   "version": "0.1.0",
-  "description": "插件管理面板：查看清单、状态，并按需激活/停用插件。",
+  "description": "插件管理页：查看清单、状态，并按需激活、禁用与启用插件。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
   "contributes": {
-    "views": [
+    "nav": [
       {
         "id": "inspector.view",
-        "title": "插件",
-        "region": "main",
-        "icon": "🧩",
-        "order": 1
+        "group": "settings",
+        "title": "插件管理",
+        "icon": "plugin",
+        "order": 20
       }
     ]
   }

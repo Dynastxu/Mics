@@ -94,7 +94,7 @@ export interface PluginsServiceApi {
   /** 渲染端实现：重新拉取内核快照 */
   refresh?(): Promise<void>
   snapshot(): RuntimeSnapshot
-  /** 渲染端实现：插件作用域上下文，供视图组件通过 provide 使用 */
+  /** 渲染端实现：插件作用域上下文，供页面组件通过 provide 使用 */
   contextOf?(id: PluginId): Context | undefined
   onDidChange(listener: () => void): Disposable
 }
@@ -130,6 +130,7 @@ export interface RendererStatusBarItem {
 }
 
 export interface UiServiceApi {
+  /** 注册导航项对应的页面组件；viewId 与清单里 contributes.nav[].id 一致 */
   registerView(viewId: string, component: Component): Disposable
   registerStatusBarItem(item: RendererStatusBarItem): Disposable
   componentOf(viewId: string): Component | undefined

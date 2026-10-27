@@ -2,12 +2,11 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { getContext } from '../runtime/context'
 import { store } from '../runtime/store'
-import ActivityBar from './ActivityBar.vue'
 import CommandPalette from './CommandPalette.vue'
 import MainArea from './MainArea.vue'
-import PanelArea from './PanelArea.vue'
-import SidebarPane from './SidebarPane.vue'
+import NavPanel from './NavPanel.vue'
 import StatusBar from './StatusBar.vue'
+import WindowTitleBar from './WindowTitleBar.vue'
 
 /** 解析 ctrl+shift+p 这类组合键 */
 function matchesBinding(binding: string, event: KeyboardEvent): boolean {
@@ -39,12 +38,7 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
     event.preventDefault()
-    store.sidebarVisible = !store.sidebarVisible
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') {
-    event.preventDefault()
-    store.panelVisible = !store.panelVisible
+    store.navVisible = !store.navVisible
     return
   }
   if (event.key === 'Escape' && store.paletteOpen) {
@@ -69,6 +63,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <template>
   <div class="mics-workbench">
+    <WindowTitleBar />
     <div v-if="store.bootError" class="mics-boot mics-boot--error">
       <h1>启动失败</h1>
       <pre>{{ store.bootError }}</pre>
@@ -79,11 +74,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     </div>
     <template v-else>
       <div class="mics-body">
-        <ActivityBar />
-        <SidebarPane v-if="store.sidebarVisible" />
+        <NavPanel v-if="store.navVisible" />
         <MainArea />
       </div>
-      <PanelArea v-if="store.panelVisible" />
       <StatusBar />
       <CommandPalette v-if="store.paletteOpen" />
     </template>

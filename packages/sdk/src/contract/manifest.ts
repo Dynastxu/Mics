@@ -11,16 +11,28 @@ export type ActivationEvent = '*' | 'onStartup' | `onView:${string}` | `onComman
 
 export type Permission = 'shell:openExternal' | 'dialog:open' | 'clipboard:write' | 'notifications:show'
 
-export type ViewRegion = 'sidebar' | 'main' | 'panel'
-
-export interface ViewContribution {
+/**
+ * 左侧导航里的一个页面。
+ *
+ * `id` 同时是渲染器里 `ctx.ui.registerView(id, component)` 的注册键：
+ * 清单先声明入口，组件按需加载。
+ */
+export interface NavContribution {
   id: string
   title: string
-  region?: ViewRegion
-  /** 简单图标，M0 阶段使用 emoji 或单个字符 */
+  /** 图标名（见 shell 的图标表）或单个字符 */
   icon?: string
   order?: number
+  /** 所属分组 id；缺省表示顶层导航项（例如「启动」） */
   group?: string
+}
+
+/** 导航分组：只提供标题与图标，子项由各插件用 `nav` + `group` 自行挂载 */
+export interface NavGroupContribution {
+  id: string
+  title: string
+  icon?: string
+  order?: number
 }
 
 export interface CommandContribution {
@@ -53,13 +65,15 @@ export interface LayoutContribution {
   id: string
   label?: string
   regions?: {
-    sidebar?: { width?: number; defaultView?: string }
+    nav?: { width?: number; defaultView?: string }
   }
 }
 
 export interface PluginContributions {
+  /** 左侧导航项（顶层或分组的子项），每个 id 对应一个页面 */
+  nav?: NavContribution[]
+  navGroups?: NavGroupContribution[]
   commands?: CommandContribution[]
-  views?: ViewContribution[]
   statusBar?: StatusBarContribution[]
   themes?: ThemeContribution[]
   layout?: LayoutContribution

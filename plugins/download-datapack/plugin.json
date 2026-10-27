@@ -1,0 +1,19 @@
+{
+  "id": "mics.download.datapack",
+  "name": "数据包下载",
+  "version": "0.1.0",
+  "description": "数据包目录：按游戏版本筛选。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "contributes": {
+    "nav": [
+      {
+        "id": "download.datapack",
+        "group": "download",
+        "title": "数据包",
+        "icon": "database",
+        "order": 40
+      }
+    ]
+  }
+}

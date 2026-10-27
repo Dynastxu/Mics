@@ -56,7 +56,7 @@ function resolvePlugin(
  * 插件里通过 ctx.effect 注册的一切都会自动回收。
  *
  * 禁用是「持久化」的：写入 userData/disabled-plugins.json，
- * 之后无论视图打开、命令执行还是启动事件都不会再激活它，只有 enable() 能解除。
+ * 之后无论页面打开、命令执行还是启动事件都不会再激活它，只有 enable() 能解除。
  */
 export class PluginsService extends Service {
   static inject: string[] = []

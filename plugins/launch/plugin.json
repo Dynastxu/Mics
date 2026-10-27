@@ -1,0 +1,23 @@
+{
+  "id": "mics.launch",
+  "name": "启动",
+  "version": "0.1.0",
+  "description": "实例列表与启动入口：页面走 IPC 读取实例，启动流程尚未接入。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "dependencies": ["mics.kernel"],
+  "contributes": {
+    "nav": [
+      { "id": "launch", "title": "启动", "icon": "play", "order": 10 },
+      {
+        "id": "settings.launch",
+        "group": "settings",
+        "title": "启动设置",
+        "icon": "sliders",
+        "order": 30
+      }
+    ]
+  }
+}

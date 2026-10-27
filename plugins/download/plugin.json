@@ -1,0 +1,20 @@
+{
+  "id": "mics.download",
+  "name": "下载",
+  "version": "0.1.0",
+  "description": "下载分类的导航分组与下载设置；各分类页面由独立插件提供。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "contributes": {
+    "navGroups": [{ "id": "download", "title": "下载", "icon": "download", "order": 20 }],
+    "nav": [
+      {
+        "id": "settings.download",
+        "group": "settings",
+        "title": "下载设置",
+        "icon": "sliders",
+        "order": 40
+      }
+    ]
+  }
+}
