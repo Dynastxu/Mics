@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"]
+  },
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.vue",
+    "src/renderer/env.d.ts",
+    "../../packages/sdk/src/**/*.ts",
+    "../../packages/sdk/src/**/*.d.ts"
+  ]
+}

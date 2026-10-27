@@ -1,0 +1,412 @@
+/* 主题变量由插件的 theme 贡献提供，这里只给一份兜底 */
+:root {
+  --mics-bg: #0f1115;
+  --mics-bg-elevated: #161a21;
+  --mics-bg-hover: #1d232c;
+  --mics-border: #262d38;
+  --mics-fg: #e6e9ef;
+  --mics-fg-muted: #8b93a1;
+  --mics-accent: #4c8dff;
+  --mics-accent-fg: #ffffff;
+  --mics-danger: #ff6b6b;
+  --mics-radius: 8px;
+  --mics-font: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system,
+    sans-serif;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--mics-font);
+  font-size: 13px;
+  background: var(--mics-bg);
+  color: var(--mics-fg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--mics-border);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mics-fg-muted);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mics-workbench {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--mics-bg);
+}
+
+.mics-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* 活动栏 */
+.mics-activity {
+  flex: none;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--mics-bg-elevated);
+  border-right: 1px solid var(--mics-border);
+}
+
+.mics-activity__item {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mics-radius);
+  color: var(--mics-fg-muted);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.mics-activity__item:hover {
+  background: var(--mics-bg-hover);
+  color: var(--mics-fg);
+}
+
+.mics-activity__item.is-active {
+  background: var(--mics-bg-hover);
+  color: var(--mics-accent);
+}
+
+.mics-activity__item.is-active::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--mics-accent);
+}
+
+.mics-activity__icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* 侧边栏 */
+.mics-sidebar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--mics-bg-elevated);
+  border-right: 1px solid var(--mics-border);
+}
+
+.mics-sidebar__header {
+  padding: 14px 16px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mics-fg-muted);
+}
+
+.mics-sidebar__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 16px;
+}
+
+/* 主区域 */
+.mics-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mics-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--mics-border);
+  background: var(--mics-bg);
+  overflow-x: auto;
+}
+
+.mics-tabs__spacer {
+  flex: 1;
+}
+
+.mics-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid transparent;
+  color: var(--mics-fg-muted);
+  white-space: nowrap;
+}
+
+.mics-tab:hover {
+  color: var(--mics-fg);
+  background: var(--mics-bg-hover);
+}
+
+.mics-tab.is-active {
+  color: var(--mics-fg);
+  background: var(--mics-bg-elevated);
+  border-bottom-color: var(--mics-accent);
+}
+
+.mics-tab--action {
+  padding: 8px 10px;
+  color: var(--mics-fg-muted);
+}
+
+.mics-main__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 24px;
+}
+
+/* 面板 */
+.mics-panel {
+  flex: none;
+  height: 240px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--mics-border);
+  background: var(--mics-bg-elevated);
+}
+
+.mics-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+/* 状态栏 */
+.mics-status {
+  flex: none;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  background: var(--mics-bg-elevated);
+  border-top: 1px solid var(--mics-border);
+  color: var(--mics-fg-muted);
+  font-size: 12px;
+}
+
+.mics-status__group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mics-status__item {
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: inherit;
+}
+
+.mics-status__item:hover {
+  background: var(--mics-bg-hover);
+  color: var(--mics-fg);
+}
+
+.mics-status__select {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.mics-status__select:hover {
+  background: var(--mics-bg-hover);
+}
+
+/* 空状态 / 启动态 */
+.mics-empty {
+  padding: 18px;
+  color: var(--mics-fg-muted);
+  font-size: 12px;
+}
+
+.mics-empty--error {
+  color: var(--mics-danger);
+}
+
+.mics-empty__action {
+  margin-left: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--mics-border);
+  border-radius: 6px;
+  color: var(--mics-fg);
+  background: var(--mics-bg-elevated);
+}
+
+.mics-empty__action:hover {
+  border-color: var(--mics-accent);
+  color: var(--mics-accent);
+}
+
+.mics-boot {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--mics-fg-muted);
+}
+
+.mics-boot--error {
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 32px;
+  color: var(--mics-danger);
+}
+
+.mics-boot--error pre {
+  white-space: pre-wrap;
+  color: var(--mics-fg);
+  opacity: 0.8;
+}
+
+.mics-boot__spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--mics-border);
+  border-top-color: var(--mics-accent);
+  animation: mics-spin 0.8s linear infinite;
+}
+
+@keyframes mics-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 命令面板 */
+.mics-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.mics-palette__box {
+  width: min(760px, 92vw);
+  overflow: hidden;
+  border: 1px solid var(--mics-border);
+  border-radius: 12px;
+  background: var(--mics-bg-elevated);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.5);
+}
+
+.mics-palette__input {
+  width: 100%;
+  padding: 14px 18px;
+  border: 0;
+  border-bottom: 1px solid var(--mics-border);
+  background: transparent;
+  color: var(--mics-fg);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+
+.mics-palette__list {
+  max-height: 46vh;
+  overflow: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+
+.mics-palette__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.mics-palette__item.is-active {
+  background: var(--mics-bg-hover);
+}
+
+.mics-palette__title {
+  color: var(--mics-fg);
+}
+
+.mics-palette__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--mics-fg-muted);
+  font-size: 11px;
+}
+
+.mics-palette__category {
+  padding: 1px 6px;
+  border: 1px solid var(--mics-border);
+  border-radius: 4px;
+}
+
+.mics-palette__empty {
+  padding: 16px;
+  color: var(--mics-fg-muted);
+  text-align: center;
+}

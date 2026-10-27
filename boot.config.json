@@ -1,0 +1,5 @@
+{
+  "kernel": "mics.kernel",
+  "pluginRoots": ["plugins"],
+  "disabled": []
+}

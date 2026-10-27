@@ -1,0 +1,62 @@
+{
+  "id": "mics.core-workbench",
+  "name": "Workbench",
+  "version": "0.1.0",
+  "description": "默认布局、主题与欢迎页：连工作台的外观也是插件提供的。",
+  "author": "mics",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "layout": {
+      "id": "mics.layout.default",
+      "label": "默认布局",
+      "regions": {
+        "sidebar": { "width": 300, "defaultView": "workbench.welcome" }
+      }
+    },
+    "themes": [
+      {
+        "id": "mics.theme.dark",
+        "label": "Mics Dark",
+        "type": "dark",
+        "variables": {
+          "--mics-bg": "#0f1115",
+          "--mics-bg-elevated": "#161a21",
+          "--mics-bg-hover": "#1d232c",
+          "--mics-border": "#262d38",
+          "--mics-fg": "#e6e9ef",
+          "--mics-fg-muted": "#8b93a1",
+          "--mics-accent": "#4c8dff",
+          "--mics-accent-fg": "#ffffff",
+          "--mics-danger": "#ff6b6b"
+        }
+      },
+      {
+        "id": "mics.theme.light",
+        "label": "Mics Light",
+        "type": "light",
+        "variables": {
+          "--mics-bg": "#f6f7f9",
+          "--mics-bg-elevated": "#ffffff",
+          "--mics-bg-hover": "#eceff4",
+          "--mics-border": "#d8dde5",
+          "--mics-fg": "#1f2430",
+          "--mics-fg-muted": "#5c6573",
+          "--mics-accent": "#2f6fed",
+          "--mics-accent-fg": "#ffffff",
+          "--mics-danger": "#d64545"
+        }
+      }
+    ],
+    "views": [
+      {
+        "id": "workbench.welcome",
+        "title": "欢迎",
+        "region": "sidebar",
+        "icon": "👋",
+        "order": 0
+      }
+    ]
+  }
+}

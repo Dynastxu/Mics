@@ -1,0 +1,45 @@
+{
+  "id": "mics.hello-world",
+  "name": "Hello World",
+  "version": "0.1.0",
+  "description": "示例全栈插件：主进程服务 + RPC + Vue 视图 + 命令 + 状态栏。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "dependencies": ["mics.kernel"],
+  "contributes": {
+    "views": [
+      {
+        "id": "hello.view",
+        "title": "Hello World",
+        "region": "main",
+        "icon": "🎈",
+        "order": 10
+      }
+    ],
+    "commands": [
+      {
+        "id": "hello.greet",
+        "title": "Hello：打个招呼",
+        "category": "Hello",
+        "keybinding": "ctrl+alt+h"
+      },
+      {
+        "id": "hello.reset",
+        "title": "Hello：重置计数",
+        "category": "Hello"
+      }
+    ],
+    "statusBar": [
+      {
+        "id": "hello.status",
+        "text": "Hello",
+        "alignment": "left",
+        "order": 10,
+        "tooltip": "调用 hello.greet 命令",
+        "command": "hello.greet"
+      }
+    ]
+  }
+}

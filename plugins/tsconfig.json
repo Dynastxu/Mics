@@ -1,0 +1,21 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "typeRoots": ["../apps/desktop/node_modules/@types"],
+    "paths": {
+      "@mics/sdk": ["../packages/sdk/src/index.ts"],
+      "@mics/sdk/main": ["../packages/sdk/src/main.ts"],
+      "@mics/sdk/renderer": ["../packages/sdk/src/renderer.ts"],
+      "@mics/plugin-loader": ["../packages/plugin-loader/src/index.ts"],
+      "electron": ["../apps/desktop/node_modules/electron/electron.d.ts"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.vue",
+    "../packages/sdk/src/global.d.ts"
+  ],
+  "exclude": ["**/dist/**"]
+}

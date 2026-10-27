@@ -1,0 +1,28 @@
+{
+  "name": "@mics/desktop",
+  "productName": "Mics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.mjs",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview"
+  },
+  "dependencies": {
+    "@mics/plugin-loader": "workspace:*",
+    "@mics/sdk": "workspace:*",
+    "cordis": "4.0.0-rc.12",
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "electron": "^45.0.0",
+    "electron-vite": "^6.0.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.5",
+    "vue-tsc": "^3.3.13"
+  }
+}

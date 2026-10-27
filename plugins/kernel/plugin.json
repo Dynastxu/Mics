@@ -1,0 +1,11 @@
+{
+  "id": "mics.kernel",
+  "name": "Mics Kernel",
+  "version": "0.1.0",
+  "description": "插件运行时内核：清单发现、生命周期、服务容器、IPC 路由、命令与存储。",
+  "main": "dist/main.mjs",
+  "activation": ["*"],
+  "core": true,
+  "permissions": ["shell:openExternal"],
+  "contributes": {}
+}
