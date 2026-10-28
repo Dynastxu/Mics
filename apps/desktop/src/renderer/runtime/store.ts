@@ -85,13 +85,23 @@ function byOrder(a: { order?: number; id: string }, b: { order?: number; id: str
 
 export function applySnapshot(snapshot: RuntimeSnapshot): void {
   store.app = snapshot.app
+  // 插件管理需要看到全部插件（包括已禁用的），因此列表本身不过滤
   store.plugins = snapshot.plugins
-  store.commands = snapshot.commands
+
+  // 禁用的插件视同未安装：不再贡献导航、命令、主题、布局与状态栏
+  const disabled = new Set(
+    snapshot.plugins.filter((plugin) => plugin.state === 'disabled').map((plugin) => plugin.id),
+  )
+  const visiblePlugins = snapshot.plugins.filter((plugin) => !disabled.has(plugin.id))
+
+  store.commands = snapshot.commands.filter(
+    (command) => !command.pluginId || !disabled.has(command.pluginId),
+  )
 
   const nav: NavItem[] = []
   const groups: NavGroup[] = []
 
-  for (const plugin of snapshot.plugins) {
+  for (const plugin of visiblePlugins) {
     const contributes = plugin.manifest.contributes
     for (const item of contributes?.nav ?? []) {
       nav.push({ ...item, pluginId: plugin.id })
@@ -112,11 +122,11 @@ export function applySnapshot(snapshot: RuntimeSnapshot): void {
   // 没有任何子项的分组不渲染（例如它的分类插件全被禁用/未安装）
   store.navGroups = groups.filter((group) => group.items.length > 0)
 
-  store.themes = snapshot.plugins.flatMap(
+  store.themes = visiblePlugins.flatMap(
     (plugin) => plugin.manifest.contributes?.themes ?? [],
   )
 
-  store.layout = snapshot.plugins
+  store.layout = visiblePlugins
     .flatMap((plugin) =>
       plugin.manifest.contributes?.layout ? [plugin.manifest.contributes.layout] : [],
     )
@@ -152,9 +162,11 @@ function firstPageId(): string {
 
 /** 左侧导航的渲染顺序：顶层页面与分组按 order 混排 */
 export function navRoots(): NavRoot[] {
+  const groupIds = new Set(store.navGroups.map((group) => group.id))
   const roots: NavRoot[] = [
+    // 分组插件被禁用/卸载后，它的子页面退回顶层，避免其他插件的页面跟着消失
     ...store.nav
-      .filter((item) => !item.group)
+      .filter((item) => !item.group || !groupIds.has(item.group))
       .map((item): NavRoot => ({ kind: 'item', item })),
     ...store.navGroups.map((group): NavRoot => ({ kind: 'group', group })),
   ]
@@ -179,13 +191,15 @@ export function toggleGroup(id: string): void {
 }
 
 export function statusBarItems(): StatusItem[] {
-  const declared: StatusItem[] = store.plugins.flatMap((plugin) =>
-    (plugin.manifest.contributes?.statusBar ?? []).map((item) => ({
-      ...item,
-      pluginId: plugin.id,
-      source: 'manifest' as const,
-    })),
-  )
+  const declared: StatusItem[] = store.plugins
+    .filter((plugin) => plugin.state !== 'disabled')
+    .flatMap((plugin) =>
+      (plugin.manifest.contributes?.statusBar ?? []).map((item) => ({
+        ...item,
+        pluginId: plugin.id,
+        source: 'manifest' as const,
+      })),
+    )
   return [...declared, ...store.runtimeStatus].sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
 }
 
@@ -198,8 +212,14 @@ export function ensureStyle(href: string): void {
   document.head.append(link)
 }
 
+export function removeStyle(href: string): void {
+  document.head.querySelector(`link[data-mics-style="${CSS.escape(href)}"]`)?.remove()
+}
+
 export function isDeclaredCommand(id: string): boolean {
-  return store.plugins.some((plugin) =>
-    plugin.manifest.contributes?.commands?.some((command) => command.id === id),
+  return store.plugins.some(
+    (plugin) =>
+      plugin.state !== 'disabled' &&
+      plugin.manifest.contributes?.commands?.some((command) => command.id === id),
   )
 }

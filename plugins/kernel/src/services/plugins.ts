@@ -76,7 +76,8 @@ export class PluginsService extends Service {
   [Service.init](): void {
     for (const record of this.config.plugins) {
       const id = record.manifest.id
-      if (this.config.disabled.includes(id)) continue
+      // 必需插件必须始终出现在插件管理里，否则用户没有入口把它启用回来
+      if (this.config.disabled.includes(id) && !record.manifest.essential) continue
       this.entries.set(id, {
         record,
         state: id === this.config.kernel ? 'active' : 'discovered',
@@ -86,7 +87,7 @@ export class PluginsService extends Service {
     for (const id of this.readDisabled()) {
       const entry = this.entries.get(id)
       if (!entry) continue
-      if (entry.record.manifest.core) continue
+      if (this.isUndeletable(entry)) continue
       this.disabled.add(id)
       entry.state = 'disabled'
     }
@@ -147,6 +148,9 @@ export class PluginsService extends Service {
     if (entry.record.manifest.core) {
       throw new Error(`内核插件 ${id} 不可禁用`)
     }
+    if (entry.record.manifest.essential) {
+      throw new Error(`插件 ${id} 是必需插件，不可禁用`)
+    }
     this.disabled.add(id)
     this.persistDisabled()
     await this.stop(entry)
@@ -164,6 +168,11 @@ export class PluginsService extends Service {
     this.persistDisabled()
     this.notify()
     await this.activate(id)
+  }
+
+  /** core 与 essential 都不允许禁用；后者用于插件管理这类自锁风险插件 */
+  private isUndeletable(entry: Entry): boolean {
+    return Boolean(entry.record.manifest.core || entry.record.manifest.essential)
   }
 
   private async stop(entry: Entry): Promise<void> {
@@ -226,6 +235,7 @@ export class PluginsService extends Service {
       author: manifest.author,
       state: entry.state,
       core: manifest.core ?? false,
+      essential: manifest.essential ?? false,
       manifest,
       hasMain: Boolean(entry.record.entryMain),
       hasRenderer: Boolean(entry.record.entryRenderer),

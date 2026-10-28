@@ -225,6 +225,7 @@ export function validateManifest(raw: unknown): ValidationResult {
   if (typeof raw.homepage === 'string') manifest.homepage = raw.homepage
   if (isStringArray(raw.keywords)) manifest.keywords = raw.keywords
   if (raw.core === true) manifest.core = true
+  if (raw.essential === true) manifest.essential = true
 
   for (const field of ['main', 'renderer'] as const) {
     const value = raw[field]

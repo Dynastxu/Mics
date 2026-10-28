@@ -63,5 +63,8 @@ export interface ListRow {
   imgAlt?: string
 }
 
-/** 行语义：button = 整行点击进入；radio = 单选列表；checkbox = 多选列表 */
-export type ListRowRole = 'button' | 'radio' | 'checkbox'
+/**
+ * 行语义：button = 整行点击进入；radio = 单选列表；checkbox = 多选列表；
+ * static = 纯展示，不响应整行点击（操作放在 #actions 插槽里）。
+ */
+export type ListRowRole = 'button' | 'radio' | 'checkbox' | 'static'

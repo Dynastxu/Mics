@@ -102,4 +102,11 @@ export interface PluginManifest {
   contributes?: PluginContributions
   /** 内核级插件：不可通过界面禁用 */
   core?: boolean
+  /**
+   * 必需插件：同样不可禁用。
+   *
+   * 与 core 的区别是语义：essential 用于「缺少它就无法从界面恢复自身」的插件，
+   * 例如插件管理页本身；core 用于内核级插件。
+   */
+  essential?: boolean
 }

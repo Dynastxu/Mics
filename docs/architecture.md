@@ -181,8 +181,9 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 | --- | --- |
 | `FilterButton` | 漏斗按钮 + 非默认筛选圆点，`v-model:open` 控制面板 |
 | `FilterPanel` | 按 `FilterGroup[]` 渲染分组胶囊；`single` 单选、`multi` 多选，`exclusive` 选项（「全部」）与其它互斥 |
-| `DataList` | 通用行渲染（主文本 + 徽标 + 次要文本）；`role="button"` 整行进入，`role="radio"` 单选并显示勾；`#row` 插槽自定义行 |
+| `DataList` | 通用行渲染（主文本 + 徽标 + 次要文本）；`role="button"` 整行进入，`role="radio"` 单选并显示勾，`role="static"` 仅展示；`#row` 插槽自定义行 |
 | `DataBrowser` | 搜索 + 筛选 + 计数标题 + `DataList`；内部持有查询与筛选状态，调用方只给 `items` 与 `@select` |
+| `ToggleSwitch` | 开关按钮，`v-model` 布尔值；用 `role="switch"` 与 `aria-checked` 表达状态 |
 
 为什么是包而不是「组件插件」：插件各自独立打包，运行时组件注册表拿不到 props 类型，
 也保证不了加载顺序；静态引入让编译期就能校验，每个插件也只打包用到的组件。
@@ -194,11 +195,13 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 - `activation: ["*"] | ["onStartup"]`：随内核启动。
 - 缺省：按需。打开页面时激活，或执行命令时由命令服务按 manifest 找到归属插件后激活。
 - 渲染器先按清单渲染导航 / 状态栏 / 主题；插件被激活时才 import 产物、创建 fiber、注册页面组件。
-- 渲染端插件激活时也会同步内核状态（`plugins/activate`），因此插件管理页看到的
-  「已激活」与页面实际加载情况一致。
+- 渲染端插件激活时也会同步内核状态（`plugins/activate`），保持主进程与渲染进程的生命周期一致。
 - **禁用**（`ctx.plugins.disable(id)`）：写入 `userData/disabled-plugins.json` 并卸载 fiber；
   之后页面打开、命令执行、启动事件都不会再激活它，只有 `enable(id)` 能解除。
-  `core: true` 的内核插件拒绝禁用（renderer 与 kernel 两侧都会校验）。
+  禁用后视同未安装：不再贡献导航 / 命令 / 主题 / 布局 / 状态栏与样式，只保留在插件管理页。
+  插件管理页用开关表达禁用与启用。
+- `core: true` 的内核插件与 `essential: true` 的必需插件拒绝禁用（renderer 与 kernel 两侧都会校验）；
+  插件管理自身标记为 essential，避免禁用后失去恢复入口。
 
 ## 11. 路线图
 

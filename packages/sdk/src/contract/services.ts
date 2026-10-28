@@ -140,6 +140,8 @@ export interface ThemeServiceApi {
   apply(themeId: string): void
   /** 渲染端：启动时从 localStorage 恢复主题 */
   restore(): void
+  /** 渲染端：插件禁用后当前主题可能已不存在，回退到仍可用的主题 */
+  reconcile(): void
   current(): string | undefined
   available(): { id: string; label: string }[]
 }

@@ -2,7 +2,7 @@ import type { Context, Fiber, Plugin } from 'cordis'
 import { Service } from 'cordis'
 import type { Disposable, PluginId, PluginInfo, RuntimeSnapshot } from '@mics/sdk'
 import { PLUGIN_ID } from '@mics/sdk'
-import { applySnapshot, ensureStyle, store } from '../store'
+import { applySnapshot, ensureStyle, removeStyle, store } from '../store'
 
 /**
  * 渲染进程的插件宿主。
@@ -75,6 +75,8 @@ export class PluginsService extends Service {
   async refresh(): Promise<void> {
     const snapshot = await this.owner.ipc.invoke<RuntimeSnapshot>('mics.kernel', 'runtime/snapshot')
     applySnapshot(snapshot)
+    // 当前主题可能随插件禁用而消失，需要回退到仍可用的主题
+    this.owner.theme.reconcile()
   }
 
   onDidChange(listener: () => void): Disposable {
@@ -95,8 +97,16 @@ export class PluginsService extends Service {
     return task
   }
 
-  /** 禁用：卸载渲染端 fiber，并由内核持久化禁用状态 */
+  /** 禁用：由内核持久化禁用状态，再卸载渲染端 fiber 与样式 */
   async disable(id: PluginId): Promise<void> {
+    const info = this.get(id)
+    if (!info) throw new Error(`未知插件 ${id}`)
+    if (info.core) throw new Error(`内核插件 ${id} 不可禁用`)
+    if (info.essential) throw new Error(`插件 ${id} 是必需插件，不可禁用`)
+
+    // 先让内核落地状态；失败时渲染端仍保持原样
+    await this.owner.ipc.invoke('mics.kernel', 'plugins/disable', { id })
+
     const fiber = this.fibers.get(id)
     if (fiber) {
       await fiber.dispose()
@@ -104,7 +114,8 @@ export class PluginsService extends Service {
     }
     this.loaded.delete(id)
     this.scopes.delete(id)
-    await this.owner.ipc.invoke('mics.kernel', 'plugins/disable', { id })
+    for (const href of info.styles) removeStyle(href)
+
     await this.refresh()
   }
 
@@ -121,8 +132,7 @@ export class PluginsService extends Service {
     store.activating[info.id] = true
     delete store.errors[info.id]
     try {
-      // 渲染端插件也在内核侧标记为已激活：插件管理页显示的是内核快照，
-      // 不这样做，纯渲染插件会一直显示「未激活」。
+      // 渲染端插件也在内核侧标记为已激活，保持主进程与渲染进程的生命周期一致。
       await this.owner.ipc.invoke('mics.kernel', 'plugins/activate', { id: info.id })
 
       if (info.hasRenderer && info.rendererUrl) {

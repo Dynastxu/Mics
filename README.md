@@ -154,7 +154,7 @@ export default defineMainPlugin({
 下载页里的「筛选按钮 / 筛选面板 / 通用列表」是同一种 UI，抽在 `@mics/ui`：
 
 ```ts
-import { DataBrowser, DataList, FilterButton, FilterPanel } from '@mics/ui'
+import { DataBrowser, DataList, FilterButton, FilterPanel, ToggleSwitch } from '@mics/ui'
 import type { FilterGroup, FilterSelection, ListRow } from '@mics/ui'
 ```
 
@@ -162,10 +162,11 @@ import type { FilterGroup, FilterSelection, ListRow } from '@mics/ui'
 - `FilterPanel`：按 `FilterGroup[]` 渲染分组胶囊，`v-model` 的形状是 `Record<string, string[]>`；
   `mode: 'single'` 单选，`multi` 多选，`exclusive` 选项（如「全部」）与其它选项互斥；
 - `DataList`：纯行渲染（主文本 + 徽标 + 次要文本），`role="button"` 整行进入、
-  `role="radio"` 单选并显示勾；`#row` 插槽可整行自定义（头像、操作按钮等）；
+  `role="radio"` 单选并显示勾、`role="static"` 仅展示（操作放 `#actions`）；`#row` 插槽可整行自定义；
 - `DataBrowser`：搜索框 + 筛选按钮/面板 + 计数标题 + 列表，内部持有查询与筛选状态。
   调用方只提供 `items: ListRow[]` 与 `@select`；筛选分组用 `FilterGroup[]`，
-  排序用 `sort(a, b, selection)`，需要跨页面保留状态时再传 `v-model:query` / `v-model:filter`。
+  排序用 `sort(a, b, selection)`，需要跨页面保留状态时再传 `v-model:query` / `v-model:filter`；
+- `ToggleSwitch`：布尔开关，`v-model` 绑定状态。
 
 `ListRow` 的 `tags` 是筛选值（key 与 `FilterGroup.key` 对应），`keywords` 参与默认搜索；
 「排序方式」这类组在 `FilterGroup` 上标记 `affects: 'order'`，值交给 `sort` 读取而不参与行过滤；
@@ -191,7 +192,7 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
   第一次打开页面 / 执行命令时才加载代码。
 - `ctx.effect()`、`ctx.ipc.handle()`、`ctx.ui.registerView()` 等注册都绑定在调用方插件
   的 fiber 上，插件禁用或卸载时自动清理；禁用状态会持久化到 `userData/disabled-plugins.json`，
-  之后不会被页面/命令/启动事件自动重新激活。
+  之后不会被页面/命令/启动事件自动重新激活，其导航、命令与样式也会从界面上移除。
 - 快捷键：`Ctrl+Shift+P` 命令面板，`Ctrl+B` 显示/隐藏左侧导航。
 - 窗口无边框，标题栏由 `apps/desktop/src/renderer/shell/WindowTitleBar.vue` 自绘；
   系统菜单已移除，开发/预览构建下用 `F12` 打开 DevTools、`Ctrl+R` 重载渲染进程。

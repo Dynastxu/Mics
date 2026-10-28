@@ -25,7 +25,7 @@ const props = withDefaults(
     match?: (row: ListRow, selection: FilterSelection) => boolean
     /** 过滤后排序；selection 让「排序方式」分组可用 */
     sort?: (a: ListRow, b: ListRow, selection: FilterSelection) => number
-    /** 行语义：button = 整行点击进入；radio = 单选列表；checkbox = 多选列表 */
+    /** 行语义：button = 整行点击进入；radio = 单选列表；checkbox = 多选列表；static = 纯展示 */
     role?: ListRowRole
     /** radio 模式下当前选中的行 */
     selectedId?: string

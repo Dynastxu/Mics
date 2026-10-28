@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "插件共用的 UI 组件：筛选按钮/面板、通用可搜索列表。",
+  "description": "插件共用的 UI 组件：筛选按钮/面板、通用可搜索列表与开关。",
   "exports": {
     ".": "./src/index.ts"
   },

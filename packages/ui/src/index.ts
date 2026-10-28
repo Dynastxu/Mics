@@ -12,6 +12,7 @@ export { default as DataBrowser } from './DataBrowser.vue'
 export { default as DataList } from './DataList.vue'
 export { default as FilterButton } from './FilterButton.vue'
 export { default as FilterPanel } from './FilterPanel.vue'
+export { default as ToggleSwitch } from './ToggleSwitch.vue'
 export { defaultSelection, filterRows, isFilterActive, matchesQuery } from './list'
 export type { FilterRowsOptions } from './list'
 export type {

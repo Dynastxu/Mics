@@ -42,6 +42,8 @@ export class CommandsService extends Service {
   list(): CommandInfo[] {
     const result = new Map<string, CommandInfo>()
     for (const info of this.owner.plugins.list()) {
+      // 禁用的插件视同未安装：它的清单命令不出现在命令面板里
+      if (info.state === 'disabled') continue
       for (const command of info.manifest.contributes?.commands ?? []) {
         result.set(command.id, {
           id: command.id,
@@ -80,6 +82,7 @@ export class CommandsService extends Service {
 
   private declaredOwner(id: string): PluginId | undefined {
     for (const info of this.owner.plugins.list()) {
+      if (info.state === 'disabled') continue
       if (info.manifest.contributes?.commands?.some((command) => command.id === id)) {
         return info.id
       }

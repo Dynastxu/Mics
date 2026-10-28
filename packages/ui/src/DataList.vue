@@ -5,7 +5,7 @@ import type { ListRow, ListRowRole } from './types'
 const props = withDefaults(
   defineProps<{
     items: ListRow[]
-    /** button = 整行可点击进入；radio = 单选列表并显示勾；checkbox = 多选列表 */
+    /** button = 整行可点击进入；radio = 单选列表并显示勾；checkbox = 多选列表；static = 纯展示 */
     role?: ListRowRole
     /** radio 模式下当前选中的行 */
     selectedId?: string
@@ -30,10 +30,22 @@ const props = withDefaults(
 const emit = defineEmits<{ select: [id: string] }>()
 
 const hasAnyImg = computed(() => props.items.some((item) => item.img))
+const interactive = computed(() => props.role !== 'static')
+const ariaRole = computed(() => (props.role === 'static' ? undefined : props.role))
 
 function isSelected(id: string): boolean {
   if (props.role === 'checkbox') return props.selectedIds.includes(id)
   return props.selectedId === id
+}
+
+function select(id: string): void {
+  if (interactive.value) emit('select', id)
+}
+
+function selectByKey(event: KeyboardEvent, id: string): void {
+  if (!interactive.value) return
+  event.preventDefault()
+  emit('select', id)
 }
 
 function actionText(item: ListRow): string {
@@ -47,15 +59,15 @@ function actionText(item: ListRow): string {
       v-for="(item, index) in items"
       :key="item.id"
       class="mics-list__row"
-      :class="{ 'is-selected': role !== 'button' && isSelected(item.id) }"
-      :role="role"
-      :tabindex="0"
-      :aria-checked="role === 'radio' ? isSelected(item.id) : role === 'checkbox' ? isSelected(item.id) : undefined"
+      :class="{ 'is-selected': interactive && role !== 'button' && isSelected(item.id) }"
+      :role="ariaRole"
+      :tabindex="interactive ? 0 : undefined"
+      :aria-checked="role === 'radio' || role === 'checkbox' ? isSelected(item.id) : undefined"
       :aria-label="role === 'button' ? actionText(item) : undefined"
       :title="role === 'button' ? actionText(item) : undefined"
-      @click="emit('select', item.id)"
-      @keydown.enter.prevent="emit('select', item.id)"
-      @keydown.space.prevent="emit('select', item.id)"
+      @click="select(item.id)"
+      @keydown.enter="selectByKey($event, item.id)"
+      @keydown.space="selectByKey($event, item.id)"
     >
       <slot name="row" :item="item" :index="index">
         <!-- 左侧：自定义插槽 > 图片/占位（保证行间对齐） -->

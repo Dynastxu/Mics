@@ -21,6 +21,8 @@ export interface PluginInfo {
   author?: string
   state: PluginState
   core: boolean
+  /** 必需插件：不可禁用（例如插件管理页自身） */
+  essential: boolean
   /** 完整清单，渲染端据此生成导航、命令、主题等 */
   manifest: PluginManifest
   hasMain: boolean
