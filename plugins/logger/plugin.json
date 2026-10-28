@@ -1,0 +1,24 @@
+{
+  "id": "mics.logger",
+  "name": "日志",
+  "version": "0.1.0",
+  "description": "按启动分文件的日志服务：其它插件通过 ctx.logs 写入，设置中可调整保留数量。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "activation": ["*"],
+  "essential": true,
+  "dependencies": ["mics.kernel"],
+  "contributes": {
+    "nav": [
+      {
+        "id": "settings.logger",
+        "group": "settings",
+        "title": "日志设置",
+        "icon": "activity",
+        "order": 50
+      }
+    ]
+  }
+}

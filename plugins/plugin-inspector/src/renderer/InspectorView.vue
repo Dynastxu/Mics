@@ -76,7 +76,7 @@ function busyOf(id: string): boolean {
 function switchTitle(id: string): string {
   const plugin = pluginOf(id)
   if (!plugin) return ''
-  if (plugin.essential) return '插件管理自身不可禁用'
+  if (plugin.essential) return '必需插件不可禁用'
   if (plugin.core) return '内核插件不可禁用'
   return plugin.state === 'disabled' ? '启用插件' : '禁用插件'
 }

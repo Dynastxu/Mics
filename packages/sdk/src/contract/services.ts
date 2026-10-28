@@ -1,5 +1,6 @@
 import type { Component } from 'vue'
 import type { Context } from 'cordis'
+import type { LogsServiceApi } from './logs'
 import type { Permission, PluginId } from './manifest'
 import type { AppInfo, CommandInfo, PluginInfo, RuntimeEventEnvelope, RuntimeSnapshot } from './runtime'
 
@@ -170,6 +171,8 @@ declare module 'cordis' {
     commands: CommandsServiceApi
     storage: StorageServiceApi
     permissions: PermissionsServiceApi
+    /** 由 mics.logger 插件提供；其它插件通过 inject: ['logs'] 使用 */
+    logs: LogsServiceApi
     ui: UiServiceApi
     theme: ThemeServiceApi
     bridge: BridgeApi

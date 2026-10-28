@@ -46,7 +46,7 @@
 | `ctx.plugin(plugin, config)` | 插件激活；返回 `Fiber`，await 即等待激活完成 |
 | `ctx.effect(() => cleanup)` | 注册页面/命令/IPC 时的回收钩子；插件卸载自动执行 |
 | `ctx.inject(deps, cb)` | 依赖多个服务后再执行（内核注册系统 RPC 时用到） |
-| `Service` 子类 | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions` |
+| `Service` 子类 | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions`；插件也能提供（`mics.logger` → `ctx.logs`） |
 | `ctx.isolate()` | 后续用于单插件服务隔离（例如独立日志命名空间） |
 | `ctx.on/emit` | 主进程内部事件；跨进程事件走 `ctx.ipc` |
 | `ctx.registry` | 插件面板可据此列出所有 fiber（后续扩展点） |
@@ -68,6 +68,11 @@ Cordis 的 Service 方法在被插件调用时，`this.ctx` 会指向**调用方
 > 同理，**从插件上下文访问任何服务都必须在 `inject` 里声明**。内核/渲染器的服务内部
 > 在需要访问兄弟服务时，一律使用自己构造时的上下文（`owner`），而不是被追踪到调用方的
 > `this.ctx`——调用方未必声明了那个 inject。
+>
+> 插件也能提供 Service：`mics.logger` 在启动时提供 `ctx.logs`，按启动把日志写入文件。
+> 服务名与插件 id 一样是全局契约，其它插件用 `inject: ['logs']` 获取；提供方卸载时
+> cordis 会等待依赖方先释放，因此日志插件标记为 `essential`，避免禁用后让依赖它的
+> 插件停在未激活状态。
 
 ## 3. 启动时序
 
@@ -79,7 +84,7 @@ app.whenReady()
   ├─ root.extend({ [PLUGIN_ID]: 'mics.kernel' }).plugin(kernel, config)
   │    ├─ 内核注册 plugins/ipc/commands/storage/permissions 服务
   │    ├─ 注入完成后注册系统 RPC
-  │    └─ activateStartup()（不阻塞）
+  │    └─ activateStartup()（不阻塞；mics.logger 在这里创建本次启动的日志文件）
   ├─ createMainWindow()
   └─ loadRenderer(window)
         └─ 渲染进程 boot()
@@ -201,7 +206,8 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
   禁用后视同未安装：不再贡献导航 / 命令 / 主题 / 布局 / 状态栏与样式，只保留在插件管理页。
   插件管理页用开关表达禁用与启用。
 - `core: true` 的内核插件与 `essential: true` 的必需插件拒绝禁用（renderer 与 kernel 两侧都会校验）；
-  插件管理自身标记为 essential，避免禁用后失去恢复入口。
+  插件管理自身标记为 essential，避免禁用后失去恢复入口；日志插件同样标记为 essential，
+  避免禁用后让 inject `logs` 的插件停在未激活状态。
 
 ## 11. 路线图
 

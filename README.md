@@ -47,7 +47,8 @@ pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
    ├─ 通用                  mics.settings
    ├─ 插件管理               mics.plugin-inspector
    ├─ 启动设置               mics.launch
-   └─ 下载设置               mics.download
+   ├─ 下载设置               mics.download
+   └─ 日志设置               mics.logger
 ```
 
 每一个叶子节点都是一个 `nav` 贡献，对应一个页面。分组本身由 `navGroups` 声明，
@@ -78,7 +79,8 @@ mics/
 │  ├─ download-resourcepack/# 资源包目录
 │  ├─ download-shader/      # 光影包目录
 │  ├─ settings/             # 设置分组 + 通用设置页
-│  └─ plugin-inspector/     # 插件管理页
+│  ├─ plugin-inspector/     # 插件管理页
+│  └─ logger/               # 按启动分文件的日志服务 + 日志设置
 ├─ scripts/build-plugins.mjs
 ├─ boot.config.json         # {"kernel": "mics.kernel", "pluginRoots": ["plugins"]}
 └─ docs/architecture.md
@@ -148,6 +150,37 @@ export default defineMainPlugin({
 ```
 
 页面里用 `usePluginContext()` 拿到所属插件的作用域，再通过 `ctx.ipc.invoke('mics.my-plugin', 'ping')` 调用主进程。
+
+## 日志
+
+`mics.logger` 是主进程插件，提供 `ctx.logs`；其它插件在清单里声明依赖，再注入即可：
+
+```ts
+import { defineMainPlugin } from '@mics/sdk/main'
+
+export const name = 'mics.my-plugin'
+export const inject = ['logs']
+
+export default defineMainPlugin({
+  name,
+  inject,
+  apply(ctx) {
+    // 作用域自动取调用方插件 id：mics.my-plugin
+    ctx.logs.info('开始处理 %s', 'download')
+
+    // 需要固定标签时显式指定
+    ctx.logs.scope('download').warn('镜像不可用，回退到官方源')
+  },
+})
+```
+
+- 每次启动创建一个 `<userData>/logs/mics-<时间>.log`；默认保留最近 5 个，
+  可在「设置 → 日志设置」中调整（1–50）；
+- 正文沿用 cordis 的 `%s` / `%d` / `%o` 占位符，传 `Error` 时记录堆栈；
+- 已有 `ctx.logger(...)` 的输出也会写进同一个文件，存量插件不需要改代码；
+- `ctx.logs` 只在主进程可用；渲染进程插件写日志请经自己的主进程插件转发；
+- `mics.logger` 是必需插件（其它插件可能依赖 `logs` 服务），不可在插件管理里禁用，
+  清单里声明 `"dependencies": ["mics.logger"]` 可让内核先激活它。
 
 ## 通用组件
 
