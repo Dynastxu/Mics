@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { DataBrowser, defaultSelection } from '@mics/ui'
 import type { FilterGroup, FilterOption, FilterSelection, ListRow } from '@mics/ui'
 import { usePluginContext } from '@mics/sdk/renderer'
-import type { GameVersion, LoaderKind } from '@mics/sdk'
+import { sanitizeInstanceName, validateInstanceName } from '@mics/sdk'
+import type { GameVersion, InstanceNameCheck, LoaderKind } from '@mics/sdk'
 
 const ctx = usePluginContext()
 
@@ -121,6 +122,7 @@ const versionsError = ref('')
 const listQuery = ref('')
 const listFilter = ref<FilterSelection>(defaultSelection(LIST_FILTER_GROUPS))
 const notice = ref('')
+const noticeError = ref(false)
 const installing = ref(false)
 
 const pageEl = ref<HTMLElement | null>(null)
@@ -129,6 +131,11 @@ const installTarget = ref<VersionItem | null>(null)
 const loaderId = ref(VANILLA_LOADER.id)
 const loaderVersion = ref('')
 const nameDraft = ref('')
+
+/** 名称可用性：本地规则即时判断，重名由主进程检查 */
+const nameCheck = ref<InstanceNameCheck>({ ok: true, name: '' })
+let nameCheckTimer: ReturnType<typeof setTimeout> | null = null
+let nameCheckSeq = 0
 
 const currentLoader = computed(
   () => LOADERS.find((item) => item.id === loaderId.value) ?? VANILLA_LOADER,
@@ -207,25 +214,67 @@ const loaderSort = bySort(
   (row) => CHANNEL_RANK[(row.badge ?? '') as LoaderChannel] ?? 0,
 )
 
-const INVALID_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/g
+/**
+ * 校验当前名称：本地规则先给结论，再问主进程是否重名。
+ * 返回最终结论，提交前可以直接用。
+ */
+async function runNameCheck(): Promise<InstanceNameCheck> {
+  const seq = ++nameCheckSeq
+  const local = validateInstanceName(effectiveName.value)
+  if (!local.ok) {
+    nameCheck.value = local
+    return local
+  }
+
+  try {
+    const remote = await ctx.ipc.invoke<InstanceNameCheck>(
+      'mics.download.manager',
+      'install/validate-name',
+      { name: local.name },
+    )
+    if (seq === nameCheckSeq) nameCheck.value = remote
+    return remote
+  } catch {
+    // 主进程查询失败时先按本地规则放行，提交时主进程仍会把关
+    if (seq === nameCheckSeq) nameCheck.value = local
+    return local
+  }
+}
+
+function scheduleNameCheck(delay = 220): void {
+  if (nameCheckTimer) clearTimeout(nameCheckTimer)
+  nameCheckTimer = setTimeout(() => {
+    nameCheckTimer = null
+    void runNameCheck()
+  }, delay)
+}
 
 function onNameInput(event: Event): void {
   const input = event.target as HTMLInputElement
-  const sanitized = input.value.replace(INVALID_NAME_CHARS, '')
+  const sanitized = sanitizeInstanceName(input.value)
   if (sanitized !== input.value) {
     const caret = Math.max(0, (input.selectionStart ?? 0) - (input.value.length - sanitized.length))
     input.value = sanitized
     input.setSelectionRange(caret, caret)
   }
   nameDraft.value = sanitized
+  scheduleNameCheck()
 }
 
 function normalizeName(): void {
   nameDraft.value = nameDraft.value.trim().replace(/[. ]+$/, '')
 }
 
+function onNameBlur(): void {
+  normalizeName()
+  void runNameCheck()
+}
+
 function syncNameDraft(previousDefault: string): void {
-  if (nameDraft.value === previousDefault) nameDraft.value = defaultName.value
+  if (nameDraft.value === previousDefault) {
+    nameDraft.value = defaultName.value
+    scheduleNameCheck()
+  }
 }
 
 function selectLoader(id: string): void {
@@ -253,21 +302,38 @@ function openInstall(id: string): void {
   loaderVersion.value = ''
   nameDraft.value = defaultName.value
   notice.value = ''
+  noticeError.value = false
+  nameCheck.value = { ok: true, name: '' }
+  scheduleNameCheck(0)
   scrollToTop()
 }
 
 function closeInstall(): void {
+  if (nameCheckTimer) {
+    clearTimeout(nameCheckTimer)
+    nameCheckTimer = null
+  }
   installTarget.value = null
   notice.value = ''
+  noticeError.value = false
   scrollToTop()
 }
 
 async function install(): Promise<void> {
-  if (!installTarget.value || installing.value) return
+  const target = installTarget.value
+  if (!target || installing.value) return
   installing.value = true
   notice.value = ''
+  noticeError.value = false
 
   try {
+    const name = await runNameCheck()
+    if (!name.ok) {
+      noticeError.value = true
+      notice.value = name.message ?? '实例名称不可用'
+      return
+    }
+
     const loader: LoaderKind | undefined =
       loaderId.value !== 'vanilla' ? (loaderId.value as LoaderKind) : undefined
 
@@ -275,8 +341,8 @@ async function install(): Promise<void> {
       'mics.download.manager',
       'install/start',
       {
-        gameVersion: installTarget.value.id,
-        instanceName: effectiveName.value,
+        gameVersion: target.id,
+        instanceName: name.name,
         ...(loader && loaderVersion.value
           ? { loader: { kind: loader, version: loaderVersion.value } }
           : {}),
@@ -284,11 +350,15 @@ async function install(): Promise<void> {
     )
 
     if (result.error) {
+      noticeError.value = true
       notice.value = `安装失败：${result.error}`
     } else {
-      notice.value = `「${effectiveName.value}」已加入下载队列（任务 ${result.jobId}）。`
+      notice.value = `「${name.name}」已加入下载队列（任务 ${result.jobId}）。`
+      // 目录已落盘，刷新一次以免再次点击时才发现重名
+      scheduleNameCheck(0)
     }
   } catch (cause) {
+    noticeError.value = true
     notice.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     installing.value = false
@@ -311,6 +381,10 @@ async function loadVersions(): Promise<void> {
 }
 
 onMounted(loadVersions)
+
+onUnmounted(() => {
+  if (nameCheckTimer) clearTimeout(nameCheckTimer)
+})
 </script>
 
 <template>
@@ -347,27 +421,40 @@ onMounted(loadVersions)
           <p class="install__meta">{{ installTarget.date }}</p>
         </div>
 
-        <input
-          class="mics-input install__name"
-          type="text"
-          :value="nameDraft"
-          :placeholder="defaultName"
-          aria-label="版本名称"
-          spellcheck="false"
-          @input="onNameInput"
-          @blur="normalizeName"
-        />
+        <div class="install__actions">
+          <div class="install__row">
+            <input
+              class="mics-input install__name"
+              :class="{ 'is-invalid': !nameCheck.ok }"
+              type="text"
+              :value="nameDraft"
+              :placeholder="defaultName"
+              aria-label="实例名称"
+              :aria-invalid="!nameCheck.ok"
+              :aria-describedby="nameCheck.ok ? undefined : 'install-name-error'"
+              spellcheck="false"
+              @input="onNameInput"
+              @blur="onNameBlur"
+            />
 
-        <button
-          class="mics-button mics-button--primary install__submit"
-          :disabled="installing"
-          @click="install"
-        >
-          {{ installing ? '提交中…' : '安装' }}
-        </button>
+            <button
+              class="mics-button mics-button--primary install__submit"
+              :disabled="installing || !nameCheck.ok"
+              @click="install"
+            >
+              {{ installing ? '提交中…' : '安装' }}
+            </button>
+          </div>
+
+          <p v-if="!nameCheck.ok" id="install-name-error" class="install__name-error">
+            {{ nameCheck.message }}
+          </p>
+        </div>
       </header>
 
-      <p v-if="notice" class="mics-notice">{{ notice }}</p>
+      <p v-if="notice" class="mics-notice" :class="{ 'mics-notice--error': noticeError }">
+        {{ notice }}
+      </p>
 
       <section class="mics-section">
         <h2 class="mics-section__title">模组加载器</h2>
@@ -437,10 +524,35 @@ onMounted(loadVersions)
   gap: 10px;
 }
 
-.install__name {
-  flex: 0 1 260px;
-  min-width: 140px;
+.install__actions {
+  display: flex;
+  flex: 0 1 350px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 232px;
   margin-left: auto;
+}
+
+.install__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.install__name {
+  flex: 1 1 260px;
+  min-width: 140px;
+}
+
+.install__name.is-invalid {
+  border-color: var(--mics-danger);
+}
+
+.install__name-error {
+  margin: 0;
+  color: var(--mics-danger);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .install__submit {
@@ -451,6 +563,12 @@ onMounted(loadVersions)
   margin: 2px 0 0;
   color: var(--mics-fg-muted);
   font-size: 12px;
+}
+
+.mics-notice--error {
+  border-color: color-mix(in srgb, var(--mics-danger) 40%, var(--mics-border));
+  background: color-mix(in srgb, var(--mics-danger) 8%, transparent);
+  color: var(--mics-danger);
 }
 
 .mics-empty--error {

@@ -13,12 +13,14 @@ import {
   DEFAULT_DOWNLOAD_CONCURRENCY,
   DEFAULT_DOWNLOAD_SOURCES,
   normalizeDownloadSources,
+  validateInstanceName,
 } from '@mics/sdk'
 import type {
   DownloadProgress,
   DownloadSource,
   DownloadTask,
   InstallJob,
+  InstanceNameCheck,
   InstallRequest,
 } from '@mics/sdk'
 
@@ -130,6 +132,47 @@ export function apply(ctx: Context): void {
   const cacheRoot = path.join(dataDir, 'cache', 'downloads')
   const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 128 })
   const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 128 })
+
+  /** 已受理但尚未落盘的实例名：并发提交同名安装时先占位 */
+  const reservedInstanceNames = new Set<string>()
+
+  /** Windows 文件名不区分大小写，重名判断也要一致 */
+  function instanceKey(name: string): string {
+    return process.platform === 'win32' ? name.toLowerCase() : name
+  }
+
+  function instanceDirOf(name: string): string {
+    return path.join(dataDir, 'instances', name)
+  }
+
+  /**
+   * 实例名是否可用：先按共享规则校验名称本身，再检查目录是否已被占用。
+   * 渲染进程的即时提示与安装入口共用这一处判断，避免两边结论不一致。
+   */
+  function checkInstanceName(raw: string): InstanceNameCheck {
+    const base = validateInstanceName(raw)
+    if (!base.ok) return base
+
+    if (existsSync(instanceDirOf(base.name))) {
+      return {
+        ok: false,
+        name: base.name,
+        issue: 'duplicate',
+        message: `实例「${base.name}」已存在，请换一个名称`,
+      }
+    }
+
+    if (reservedInstanceNames.has(instanceKey(base.name))) {
+      return {
+        ok: false,
+        name: base.name,
+        issue: 'duplicate',
+        message: `实例「${base.name}」正在安装，请换一个名称`,
+      }
+    }
+
+    return base
+  }
 
   let cachedManifest: unknown = null
   let cachedAt = 0
@@ -648,11 +691,17 @@ export function apply(ctx: Context): void {
     persistRecords(true)
   })
 
+  ctx.ipc.handle<{ name: string }>('install/validate-name', ({ name }) => checkInstanceName(name))
+
   ctx.ipc.handle<InstallRequest>('install/start', async (request) => {
+    const check = checkInstanceName(request.instanceName)
+    if (!check.ok) return { jobId: '', error: check.message ?? '实例名称无效' }
+
+    const instanceName = check.name
     const jobId = nextJobId()
     const job: InstallJob = {
       id: jobId,
-      instanceName: request.instanceName,
+      instanceName,
       gameVersion: request.gameVersion,
       loader: request.loader,
       taskIds: [],
@@ -660,13 +709,17 @@ export function apply(ctx: Context): void {
     }
     jobs.set(jobId, job)
 
+    // 从受理到版本目录落盘之间占住名称，避免同一名称的并发安装互相覆盖
+    const nameKey = instanceKey(instanceName)
+    reservedInstanceNames.add(nameKey)
+
     const isCancelled = () => cancelledJobs.has(jobId)
 
     try {
       const detail = await fetchVersionDetail(request.gameVersion)
       if (isCancelled()) return { jobId, error: '已取消' }
 
-      const versionsDir = path.join(dataDir, 'instances', request.instanceName, 'versions', request.gameVersion)
+      const versionsDir = path.join(instanceDirOf(instanceName), 'versions', request.gameVersion)
 
       const taskSpecs: TaskSpec[] = []
 
@@ -792,6 +845,9 @@ export function apply(ctx: Context): void {
     } catch (cause) {
       persistRecords(true)
       return { jobId, error: cause instanceof Error ? cause.message : String(cause) }
+    } finally {
+      // 版本目录此时已落盘，后续重名判断交给目录检查
+      reservedInstanceNames.delete(nameKey)
     }
   })
 }
