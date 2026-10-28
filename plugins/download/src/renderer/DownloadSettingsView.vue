@@ -5,18 +5,11 @@ import {
   DEFAULT_DOWNLOAD_CACHE_LIMIT,
   DEFAULT_DOWNLOAD_CONCURRENCY,
   DEFAULT_DOWNLOAD_SOURCES,
+  normalizeDownloadSources,
 } from '@mics/sdk'
 import type { DownloadSource } from '@mics/sdk'
-
-const TARGET_FIELDS = [
-  { key: 'launchermeta', label: '版本清单', placeholder: 'launchermeta.mojang.com' },
-  { key: 'libraries', label: '依赖库', placeholder: 'libraries.minecraft.net' },
-  { key: 'resources', label: '资源文件', placeholder: 'resources.download.minecraft.net' },
-] as const satisfies ReadonlyArray<{
-  key: keyof DownloadSource
-  label: string
-  placeholder: string
-}>
+import { ToggleSwitch } from '@mics/ui'
+import SourceEditorDialog from './SourceEditorDialog.vue'
 
 const ctx = usePluginContext()
 const loading = ref(true)
@@ -26,13 +19,19 @@ const sources = ref<DownloadSource[]>(DEFAULT_DOWNLOAD_SOURCES.map((source) => (
 const saved = ref(true)
 const dragIndex = ref(-1)
 const overIndex = ref(-1)
+const editorOpen = ref(false)
+const editorIndex = ref<number | null>(null)
 const sourcesAreDefault = computed(
   () => JSON.stringify(sources.value) === JSON.stringify(DEFAULT_DOWNLOAD_SOURCES),
 )
+const editorSource = computed<DownloadSource | null>(() => {
+  if (editorIndex.value === null) return null
+  return sources.value[editorIndex.value] ?? null
+})
 
 let concurrencyTimer: ReturnType<typeof setTimeout> | null = null
 
-const pendingLabel = (index: number) =>
+const displayName = (index: number): string =>
   sources.value[index]?.label.trim() || `源 ${index + 1}`
 
 function markDirty(): void {
@@ -56,9 +55,7 @@ async function loadSettings(): Promise<void> {
     }>('mics.download.manager', 'settings/get')
     concurrency.value = settings.concurrency
     cacheLimit.value = settings.cacheLimit
-    sources.value = settings.sources?.length
-      ? settings.sources
-      : DEFAULT_DOWNLOAD_SOURCES.map((source) => ({ ...source }))
+    sources.value = normalizeDownloadSources(settings.sources)
     saved.value = true
   } finally {
     loading.value = false
@@ -67,10 +64,11 @@ async function loadSettings(): Promise<void> {
 
 async function saveSources(): Promise<void> {
   const normalized = sources.value.map((source, index) => ({
-    label: source.label.trim() || pendingLabel(index),
+    label: source.label.trim() || displayName(index),
     launchermeta: source.launchermeta.trim(),
     libraries: source.libraries.trim(),
     resources: source.resources.trim(),
+    enabled: source.enabled !== false,
   }))
   await ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'sources',
@@ -156,20 +154,33 @@ function onDrop(index: number): void {
   markDirty()
 }
 
-function addSource(): void {
-  sources.value.push({ label: '', launchermeta: '', libraries: '', resources: '' })
+function openEditor(index: number | null): void {
+  editorIndex.value = index
+  editorOpen.value = true
+}
+
+function closeEditor(): void {
+  editorOpen.value = false
+  editorIndex.value = null
+}
+
+function applyEditor(source: DownloadSource): void {
+  const index = editorIndex.value
+  if (index === null) sources.value.push(source)
+  else sources.value[index] = source
+  closeEditor()
+  markDirty()
+}
+
+function setSourceEnabled(index: number, enabled: boolean): void {
+  const source = sources.value[index]
+  if (!source) return
+  source.enabled = enabled
   markDirty()
 }
 
 function removeSource(index: number): void {
   sources.value.splice(index, 1)
-  markDirty()
-}
-
-function updateSourceField(index: number, field: keyof DownloadSource, value: string): void {
-  const source = sources.value[index]
-  if (!source) return
-  source[field] = value
   markDirty()
 }
 
@@ -249,7 +260,7 @@ onUnmounted(() => {
             <span class="settings-sources__note">自上而下优先级递减</span>
           </div>
           <div class="settings-sources__actions">
-            <button class="mics-button mics-button--ghost mics-button--small" @click="addSource">
+            <button class="mics-button mics-button--ghost mics-button--small" @click="openEditor(null)">
               添加源
             </button>
             <button
@@ -281,69 +292,76 @@ onUnmounted(() => {
             :class="{
               'settings-source--dragging': index === dragIndex,
               'settings-source--over': index === overIndex && index !== dragIndex,
+              'settings-source--disabled': !src.enabled,
             }"
             @dragover="onDragOver(index, $event)"
             @drop="onDrop(index)"
           >
-            <div class="settings-source__head">
+            <button
+              class="settings-source__handle"
+              type="button"
+              title="拖拽排序"
+              aria-label="拖拽排序"
+              draggable="true"
+              @dragstart="onDragStart(index, $event)"
+              @dragend="resetDrag"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                <line x1="8" y1="6" x2="16" y2="6" />
+                <line x1="8" y1="12" x2="16" y2="12" />
+                <line x1="8" y1="18" x2="16" y2="18" />
+              </svg>
+            </button>
+
+            <span class="settings-source__name" :title="displayName(index)">
+              {{ displayName(index) }}
+            </span>
+            <span v-if="!src.enabled" class="settings-source__state">已禁用</span>
+
+            <div class="settings-source__actions">
               <button
-                class="settings-source__handle"
+                class="settings-source__action"
                 type="button"
-                title="拖拽排序"
-                aria-label="拖拽排序"
-                draggable="true"
-                @dragstart="onDragStart(index, $event)"
-                @dragend="resetDrag"
+                title="编辑"
+                aria-label="编辑"
+                @click="openEditor(index)"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-                  <line x1="8" y1="6" x2="16" y2="6" />
-                  <line x1="8" y1="12" x2="16" y2="12" />
-                  <line x1="8" y1="18" x2="16" y2="18" />
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
                 </svg>
               </button>
 
-              <input
-                class="mics-input settings-source__name"
-                :value="src.label"
-                :placeholder="pendingLabel(index)"
-                aria-label="源名称"
-                @input="updateSourceField(index, 'label', ($event.target as HTMLInputElement).value)"
-              />
-
               <button
-                class="settings-source__remove"
+                class="settings-source__action settings-source__action--danger"
                 type="button"
-                title="移除"
-                aria-label="移除"
+                title="删除"
+                aria-label="删除"
                 @click="removeSource(index)"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4h8v2" />
+                  <path d="M19 6l-1 14H6L5 6" />
                 </svg>
               </button>
-            </div>
 
-            <div class="settings-source__targets">
-              <label
-                v-for="field in TARGET_FIELDS"
-                :key="field.key"
-                class="settings-target"
-              >
-                <span class="settings-target__label">{{ field.label }}</span>
-                <input
-                  class="mics-input mics-mono settings-target__input"
-                  :value="src[field.key]"
-                  :placeholder="field.placeholder"
-                  spellcheck="false"
-                  autocomplete="off"
-                  @input="updateSourceField(index, field.key, ($event.target as HTMLInputElement).value)"
-                />
-              </label>
+              <ToggleSwitch
+                :model-value="src.enabled"
+                :label="`${displayName(index)}：${src.enabled ? '已启用' : '已禁用'}`"
+                title="关闭后跳过该下载源"
+                @update:model-value="setSourceEnabled(index, $event)"
+              />
             </div>
           </div>
         </div>
       </section>
+
+      <SourceEditorDialog
+        :open="editorOpen"
+        :source="editorSource"
+        @submit="applyEditor"
+        @cancel="closeEditor"
+      />
     </template>
   </div>
 </template>
@@ -379,8 +397,8 @@ onUnmounted(() => {
 
 .settings-source {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--mics-border);
   transition: box-shadow .12s ease, opacity .12s ease;
@@ -398,14 +416,8 @@ onUnmounted(() => {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mics-accent) 55%, transparent);
 }
 
-.settings-source__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .settings-source__handle,
-.settings-source__remove {
+.settings-source__action {
   flex: none;
   width: 32px;
   height: 32px;
@@ -428,18 +440,18 @@ onUnmounted(() => {
 }
 
 .settings-source__handle:hover,
-.settings-source__remove:hover {
+.settings-source__action:hover {
   background: var(--mics-bg-hover);
   color: var(--mics-fg);
 }
 
 .settings-source__handle:focus-visible,
-.settings-source__remove:focus-visible {
+.settings-source__action:focus-visible {
   outline: 2px solid var(--mics-accent);
   outline-offset: 1px;
 }
 
-.settings-source__remove:hover {
+.settings-source__action--danger:hover {
   border-color: color-mix(in srgb, var(--mics-danger) 45%, transparent);
   background: color-mix(in srgb, var(--mics-danger) 10%, transparent);
   color: var(--mics-danger);
@@ -448,42 +460,30 @@ onUnmounted(() => {
 .settings-source__name {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  color: var(--mics-fg);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.settings-source__targets {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-left: 40px;
-}
-
-.settings-target {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.settings-target__label {
+.settings-source--disabled .settings-source__name {
   color: var(--mics-fg-muted);
-  font-size: 11.5px;
 }
 
-.settings-target__input {
-  width: 100%;
+.settings-source__state {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--mics-bg-hover);
+  color: var(--mics-fg-muted);
+  font-size: 10.5px;
 }
 
-/* 窄窗口：缩进让给输入框 */
-@media (max-width: 900px) {
-  .settings-source__targets {
-    padding-left: 0;
-  }
-
-  .settings-target {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
-    align-items: start;
-  }
+.settings-source__actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 </style>

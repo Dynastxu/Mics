@@ -106,6 +106,8 @@ export interface DownloadSource {
   libraries: string
   /** 替换 resources.download.minecraft.net */
   resources: string
+  /** 是否参与下载；关闭后该源被跳过 */
+  enabled: boolean
 }
 
 /** 默认下载源（顺序即优先级） */
@@ -115,14 +117,39 @@ export const DEFAULT_DOWNLOAD_SOURCES: ReadonlyArray<DownloadSource> = [
     launchermeta: 'launchermeta.mojang.com',
     libraries: 'libraries.minecraft.net',
     resources: 'resources.download.minecraft.net',
+    enabled: true,
   },
   {
     label: 'BMCLAPI 镜像',
     launchermeta: 'bmclapi2.bangbang93.com',
     libraries: 'bmclapi2.bangbang93.com/maven',
     resources: 'bmclapi2.bangbang93.com/assets',
+    enabled: true,
   },
 ]
+
+/**
+ * 把持久化/外部来源的下载源数据归一化成当前契约。
+ *
+ * 旧版本保存的条目没有 `enabled` 字段，这里统一补成开启；
+ * 传入非数组时退回默认源。
+ */
+export function normalizeDownloadSources(value: unknown): DownloadSource[] {
+  if (!Array.isArray(value)) return DEFAULT_DOWNLOAD_SOURCES.map((source) => ({ ...source }))
+  const sources: DownloadSource[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue
+    const record = entry as Record<string, unknown>
+    sources.push({
+      label: typeof record.label === 'string' ? record.label : '',
+      launchermeta: typeof record.launchermeta === 'string' ? record.launchermeta : '',
+      libraries: typeof record.libraries === 'string' ? record.libraries : '',
+      resources: typeof record.resources === 'string' ? record.resources : '',
+      enabled: record.enabled !== false,
+    })
+  }
+  return sources
+}
 
 /** 最大并发下载文件的默认值 */
 export const DEFAULT_DOWNLOAD_CONCURRENCY = '64'

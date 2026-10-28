@@ -12,6 +12,7 @@ import {
   DEFAULT_DOWNLOAD_CACHE_LIMIT,
   DEFAULT_DOWNLOAD_CONCURRENCY,
   DEFAULT_DOWNLOAD_SOURCES,
+  normalizeDownloadSources,
 } from '@mics/sdk'
 import type {
   DownloadProgress,
@@ -187,9 +188,18 @@ export function apply(ctx: Context): void {
   function loadSources(): DownloadSource[] {
     try {
       const raw = ctx.storage.get<string>('sources', '')
-      if (raw) return JSON.parse(raw)
+      if (raw) return normalizeDownloadSources(JSON.parse(raw))
     } catch { /* fall through */ }
-    return DEFAULT_DOWNLOAD_SOURCES.map((source) => ({ ...source }))
+    return normalizeDownloadSources(DEFAULT_DOWNLOAD_SOURCES)
+  }
+
+  /** 参与下载的源下标（保持优先级顺序） */
+  function enabledSourceIndexes(sources: DownloadSource[]): number[] {
+    const indexes: number[] = []
+    for (let index = 0; index < sources.length; index++) {
+      if (sources[index]?.enabled !== false) indexes.push(index)
+    }
+    return indexes
   }
 
   function cachePath(sha1: string): string {
@@ -301,8 +311,11 @@ export function apply(ctx: Context): void {
       return cachedManifest as Awaited<ReturnType<typeof fetchMojangManifest>>
     }
     const sources = loadSources()
+    const enabled = enabledSourceIndexes(sources)
+    if (enabled.length === 0) throw new Error('未启用任何下载源')
     let lastError: Error | null = null
-    for (const src of sources) {
+    for (const index of enabled) {
+      const src = sources[index]!
       try {
         const manifestUrl = remapUrl('https://launchermeta.mojang.com/mc/game/version_manifest.json', src)
         const data = await httpGetJson(manifestUrl, signal)
@@ -322,8 +335,11 @@ export function apply(ctx: Context): void {
     if (!entry) throw new Error(`未找到版本 ${version}`)
 
     const sources = loadSources()
+    const enabled = enabledSourceIndexes(sources)
+    if (enabled.length === 0) throw new Error('未启用任何下载源')
     let lastError: Error | null = null
-    for (const src of sources) {
+    for (const index of enabled) {
+      const src = sources[index]!
       try {
         const detailUrl = remapUrl(entry.url, src)
         const data = await httpGetJson(detailUrl)
@@ -421,10 +437,17 @@ export function apply(ctx: Context): void {
     const sources = loadSources()
     const tmpPath = task.savePath + '.part'
     const category = sourceCategory(task.url)
-    const preferred = sources
-      .map((_, index) => index)
-      .filter((index) => sourceAvailable(index, category))
-    const order = preferred.length > 0 ? preferred : sources.map((_, index) => index)
+    const enabled = enabledSourceIndexes(sources)
+    if (enabled.length === 0) {
+      task.state = 'failed'
+      task.error = '所有下载源均已禁用'
+      task.progress.speed = 0
+      persistRecords()
+      scheduleLoop()
+      return
+    }
+    const preferred = enabled.filter((index) => sourceAvailable(index, category))
+    const order = preferred.length > 0 ? preferred : enabled
 
     for (let ci = 0; ci < order.length; ci++) {
       const si = order[ci]
@@ -576,8 +599,14 @@ export function apply(ctx: Context): void {
   }))
 
   ctx.ipc.handle<{ key: string; value: string }>('settings/set', ({ key, value }) => {
+    if (key === 'sources') {
+      let parsed: unknown
+      try { parsed = JSON.parse(value) } catch { parsed = null }
+      ctx.storage.set(key, JSON.stringify(normalizeDownloadSources(parsed)))
+      sourceHealth.clear()
+      return
+    }
     ctx.storage.set(key, value)
-    if (key === 'sources') sourceHealth.clear()
   })
 
   ctx.ipc.handle('tasks/list', () => [...tasks.values()])
