@@ -76,6 +76,17 @@ export interface DownloadTask {
   createdAt: number
 }
 
+/**
+ * 安装任务的生命周期。
+ *
+ * - `preparing`：已受理，正在后台构建下载清单（版本详情、资源索引、任务列表）
+ * - `ready`：下载清单已就绪，进度由各 task 状态推导
+ * - `failed` / `cancelled`：终态，`error` 说明原因
+ *
+ * 旧版本持久化的任务没有该字段，读取时按 `ready` 处理。
+ */
+export type InstallJobState = 'preparing' | 'ready' | 'failed' | 'cancelled'
+
 /** 一组关联的下载任务（一次安装操作） */
 export interface InstallJob {
   id: string
@@ -88,6 +99,9 @@ export interface InstallJob {
   /** 总体进度 */
   taskIds: string[]
   createdAt: number
+  state?: InstallJobState
+  /** 准备阶段失败或被取消的原因 */
+  error?: string
 }
 
 /** 安装请求：下载页面 -> 主进程 */
@@ -95,6 +109,17 @@ export interface InstallRequest {
   gameVersion: string
   instanceName: string
   loader?: { kind: LoaderKind; version: string }
+}
+
+/**
+ * 安装受理结果。
+ *
+ * 主进程受理后立即返回，下载清单在后台准备；成功时 `error` 为空，
+ * 进度统一在下载页查看，调用方不需要（也不应该）展示 jobId。
+ */
+export interface InstallStartResult {
+  jobId: string
+  error?: string
 }
 
 /** 下载源：一个可排序的镜像条目 */

@@ -1,5 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # 插件默认没有 package.json；带 package.json 的插件会被当作独立包，
+  # 便于把只服务该插件的依赖限制在插件目录内
+  - "plugins/*"
 allowBuilds:
   esbuild: true

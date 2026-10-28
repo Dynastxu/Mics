@@ -114,6 +114,9 @@ async function buildMain(dir, manifest, watchMode) {
     publicDir: false,
     logLevel: 'warn',
     resolve: { alias: makeViteAliases() },
+    // 插件产物要能脱离仓库 node_modules 运行（插件目录会被单独分发），
+    // 因此把运行时依赖打进 dist，而不是留下裸模块导入
+    ssr: { noExternal: ['node-downloader-helper'] },
     build: {
       ssr: entry,
       outDir: path.join(dir, 'dist'),

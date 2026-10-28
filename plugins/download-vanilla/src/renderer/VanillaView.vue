@@ -4,7 +4,7 @@ import { DataBrowser, defaultSelection } from '@mics/ui'
 import type { FilterGroup, FilterOption, FilterSelection, ListRow } from '@mics/ui'
 import { usePluginContext } from '@mics/sdk/renderer'
 import { sanitizeInstanceName, validateInstanceName } from '@mics/sdk'
-import type { GameVersion, InstanceNameCheck, LoaderKind } from '@mics/sdk'
+import type { GameVersion, InstallStartResult, InstanceNameCheck, LoaderKind } from '@mics/sdk'
 
 const ctx = usePluginContext()
 
@@ -337,7 +337,7 @@ async function install(): Promise<void> {
     const loader: LoaderKind | undefined =
       loaderId.value !== 'vanilla' ? (loaderId.value as LoaderKind) : undefined
 
-    const result = await ctx.ipc.invoke<{ jobId: string; error?: string }>(
+    const result = await ctx.ipc.invoke<InstallStartResult>(
       'mics.download.manager',
       'install/start',
       {
@@ -352,11 +352,15 @@ async function install(): Promise<void> {
     if (result.error) {
       noticeError.value = true
       notice.value = `安装失败：${result.error}`
-    } else {
-      notice.value = `「${name.name}」已加入下载队列（任务 ${result.jobId}）。`
-      // 目录已落盘，刷新一次以免再次点击时才发现重名
-      scheduleNameCheck(0)
+      return
     }
+
+    // 受理后直接进入下载页；下载清单在后台准备，不再在这里回显任务 id
+    if (ctx.ui.navigate('download.progress')) return
+
+    // 下载页不可用（插件被禁用）时留在当前页给出提示
+    notice.value = `「${name.name}」已加入下载队列。`
+    scheduleNameCheck(0)
   } catch (cause) {
     noticeError.value = true
     notice.value = cause instanceof Error ? cause.message : String(cause)

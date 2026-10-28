@@ -3,7 +3,7 @@ import { Service } from 'cordis'
 import type { Component } from 'vue'
 import type { Disposable, RendererStatusBarItem } from '@mics/sdk'
 import { pluginIdOf } from '@mics/sdk'
-import { store, viewComponents } from '../store'
+import { navItemById, store, viewComponents } from '../store'
 
 /**
  * 渲染进程 UI 服务：导航页面与状态栏的注册表。
@@ -32,5 +32,16 @@ export class UiService extends Service {
 
   componentOf(viewId: string): Component | undefined {
     return viewComponents[viewId]
+  }
+
+  /**
+   * 切换到清单贡献的导航页面。
+   * 只改 store，页面组件由 PageHost 负责按需激活；
+   * 目标页面不存在（插件缺失或被禁用）时保持当前页面并返回 false。
+   */
+  navigate(viewId: string): boolean {
+    if (!navItemById(viewId)) return false
+    store.activeView = viewId
+    return true
   }
 }

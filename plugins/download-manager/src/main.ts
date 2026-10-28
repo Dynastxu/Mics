@@ -1,9 +1,7 @@
-import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import https from 'node:https'
 import http from 'node:http'
-import { pipeline } from 'node:stream/promises'
 import { copyFile, rename, rm, writeFile } from 'node:fs/promises'
 import { app } from 'electron'
 import type { Context } from 'cordis'
@@ -16,13 +14,13 @@ import {
   validateInstanceName,
 } from '@mics/sdk'
 import type {
-  DownloadProgress,
   DownloadSource,
   DownloadTask,
   InstallJob,
   InstanceNameCheck,
   InstallRequest,
 } from '@mics/sdk'
+import { createFileTransfer, type FileTransfer, type TransferResult } from './transfer'
 
 let taskSeq = 0
 let jobSeq = 0
@@ -90,25 +88,16 @@ interface TaskSpec {
   size: number
 }
 
-function httpGetJson(url: string, signal?: AbortSignal): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const proto = url.startsWith('https') ? https : http
-    const req = proto.get(url, { signal }, (res) => {
-      if (res.statusCode && res.statusCode >= 400) {
-        reject(new Error(`HTTP ${res.statusCode}`))
-        return
-      }
-      let data = ''
-      res.setEncoding('utf-8')
-      res.on('data', (chunk: string) => { data += chunk })
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)) }
-        catch (err) { reject(err) }
-      })
-    })
-    req.setTimeout(10_000, () => req.destroy(new Error('请求超时')))
-    req.on('error', reject)
-  })
+interface MojangManifestSummary {
+  latest: { release: string; snapshot: string }
+  versions: Array<{ id: string; type: string; releaseTime: string; url: string }>
+}
+
+/** 元数据请求的总时长上限；并行请求下它只兜底「所有源都挂住」的情况 */
+const METADATA_TIMEOUT = 20_000
+
+function toError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error(String(cause))
 }
 
 function remapUrl(url: string, src: DownloadSource): string {
@@ -124,9 +113,16 @@ export const inject = ['ipc', 'storage']
 export function apply(ctx: Context): void {
   const tasks = new Map<string, DownloadTask>()
   const jobs = new Map<string, InstallJob>()
-  const activeFetches = new Map<string, AbortController>()
+  /** 正在传输的任务句柄：暂停/取消时用它中断请求（.part 保留） */
+  const transfers = new Map<string, FileTransfer>()
+  /** 每个任务当前下载轮次；暂停后立刻恢复时靠它丢弃上一轮的迟到回调 */
+  const downloadRuns = new Map<string, number>()
   const cancelledTasks = new Set<string>()
   const cancelledJobs = new Set<string>()
+  /** 整体暂停的安装任务：调度器与下载循环据此判断是否还能继续 */
+  const pausedJobs = new Set<string>()
+  /** 准备阶段的请求控制器，取消安装时可以立即中断元数据请求 */
+  const prepAborts = new Map<string, AbortController>()
 
   const dataDir = app.getPath('userData')
   const cacheRoot = path.join(dataDir, 'cache', 'downloads')
@@ -174,7 +170,7 @@ export function apply(ctx: Context): void {
     return base
   }
 
-  let cachedManifest: unknown = null
+  let cachedManifest: MojangManifestSummary | null = null
   let cachedAt = 0
   const CACHE_TTL = 5 * 60 * 1000
 
@@ -259,6 +255,15 @@ export function apply(ctx: Context): void {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   }
 
+  /** .part 已落盘的字节数；文件不存在时为 0 */
+  function partSizeOf(savePath: string): number {
+    try {
+      return statSync(savePath + '.part').size
+    } catch {
+      return 0
+    }
+  }
+
   function flushRecords(): void {
     recordsDirty = false
     try {
@@ -294,6 +299,13 @@ export function apply(ctx: Context): void {
       const job = value as InstallJob
       if (!job || typeof job.id !== 'string' || !Array.isArray(job.taskIds)) continue
       job.taskIds = job.taskIds.filter((id): id is string => typeof id === 'string')
+      // 旧记录没有 state；上次退出时还在准备阶段的安装无法续上，明确标为失败
+      if (job.state === 'preparing') {
+        job.state = 'failed'
+        job.error = '应用退出时仍在准备下载清单'
+      } else if (!job.state) {
+        job.state = 'ready'
+      }
       jobs.set(job.id, job)
     }
 
@@ -303,10 +315,11 @@ export function apply(ctx: Context): void {
       if (!jobs.has(task.installId) || !task.progress || typeof task.progress !== 'object') continue
 
       if (task.state !== 'done' && task.state !== 'failed') {
-        // 上次退出时还在队列/下载/校验中的任务，重启后从暂停状态继续。
+        // 上次退出时还在队列/下载/校验中的任务，重启后以暂停状态等待恢复。
         task.state = 'paused'
-        task.progress.loaded = 0
         task.progress.speed = 0
+        // 进度以 .part 的实际大小为准，恢复时就从这个字节位置续传
+        task.progress.loaded = partSizeOf(task.savePath)
         if (task.progress.total <= 0) {
           task.progress.total = task.size > 0 ? task.size : -1
         }
@@ -346,89 +359,13 @@ export function apply(ctx: Context): void {
     if (recordsDirty) flushRecords()
   })
 
-  async function fetchMojangManifest(signal?: AbortSignal): Promise<{
-    latest: { release: string; snapshot: string }
-    versions: Array<{ id: string; type: string; releaseTime: string; url: string }>
-  }> {
-    if (cachedManifest && Date.now() - cachedAt < CACHE_TTL) {
-      return cachedManifest as Awaited<ReturnType<typeof fetchMojangManifest>>
-    }
-    const sources = loadSources()
-    const enabled = enabledSourceIndexes(sources)
-    if (enabled.length === 0) throw new Error('未启用任何下载源')
-    let lastError: Error | null = null
-    for (const index of enabled) {
-      const src = sources[index]!
-      try {
-        const manifestUrl = remapUrl('https://launchermeta.mojang.com/mc/game/version_manifest.json', src)
-        const data = await httpGetJson(manifestUrl, signal)
-        cachedManifest = data
-        cachedAt = Date.now()
-        return data as Awaited<ReturnType<typeof fetchMojangManifest>>
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err))
-      }
-    }
-    throw lastError ?? new Error('所有下载源均不可用')
-  }
-
-  async function fetchVersionDetail(version: string): Promise<MojangVersionDetail> {
-    const manifest = await fetchMojangManifest()
-    const entry = manifest.versions.find((v) => v.id === version)
-    if (!entry) throw new Error(`未找到版本 ${version}`)
-
-    const sources = loadSources()
-    const enabled = enabledSourceIndexes(sources)
-    if (enabled.length === 0) throw new Error('未启用任何下载源')
-    let lastError: Error | null = null
-    for (const index of enabled) {
-      const src = sources[index]!
-      try {
-        const detailUrl = remapUrl(entry.url, src)
-        const data = await httpGetJson(detailUrl)
-        return data as MojangVersionDetail
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err))
-      }
-    }
-    throw lastError ?? new Error('所有下载源均不可用')
-  }
-
-  function scheduleLoop(): void {
-    const active = [...tasks.values()].filter((t) => t.state === 'downloading').length
-    const slots = maxConcurrency() - active
-    if (slots <= 0) return
-    const pending = [...tasks.values()].filter((t) => t.state === 'pending')
-    for (const task of pending.slice(0, slots)) {
-      startDownload(task)
-    }
-  }
-
-  async function dropCancelled(task: DownloadTask, ...files: string[]): Promise<boolean> {
-    if (!cancelledTasks.has(task.id)) return false
-    activeFetches.delete(task.id)
-    task.state = 'failed'
-    task.error = '已取消'
-    task.progress.speed = 0
-    for (const file of files) {
-      await rm(file, { force: true }).catch(() => undefined)
-    }
-    return true
-  }
-
-  interface DownloadResponse {
-    statusCode: number
-    headers: Record<string, string | string[] | undefined>
-    stream: NodeJS.ReadableStream
-  }
-
-  function requestStream(url: string, signal: AbortSignal, redirects = 0): Promise<DownloadResponse> {
+  /** 元数据 JSON 请求：跟随重定向，复用 keep-alive 连接 */
+  function requestJson(url: string, signal: AbortSignal, redirects = 0): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (redirects > 8) {
         reject(new Error('重定向次数过多'))
         return
       }
-
       const secure = url.startsWith('https')
       const proto = secure ? https : http
       const req = proto.get(url, {
@@ -451,34 +388,172 @@ export function apply(ctx: Context): void {
             reject(new Error(`无效的重定向地址：${location}`))
             return
           }
-          requestStream(next, signal, redirects + 1).then(resolve, reject)
+          requestJson(next, signal, redirects + 1).then(resolve, reject)
           return
         }
 
         if (status >= 400) {
           res.resume()
-          reject(new Error(`HTTP ${status}`))
+          reject(new Error(`HTTP ${status} from ${url}`))
           return
         }
 
-        resolve({
-          statusCode: status,
-          headers: res.headers as Record<string, string | string[] | undefined>,
-          stream: res,
+        let data = ''
+        res.setEncoding('utf-8')
+        res.on('data', (chunk: string) => { data += chunk })
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)) }
+          catch (error) { reject(error) }
         })
+        res.on('error', reject)
       })
 
-      req.setTimeout(10_000, () => req.destroy(new Error('下载请求超时')))
+      req.setTimeout(10_000, () => req.destroy(new Error('请求超时')))
       req.on('error', reject)
     })
   }
 
+  /**
+   * 在所有启用的下载源上并行请求同一份元数据，最先成功的返回。
+   *
+   * 串行重试时，一个不可达的源会把「点击安装」拖住整整一个超时周期；
+   * 并行后慢源不再影响结果，取消安装时也能立刻中断所有请求。
+   */
+  async function fetchJsonFromSources(url: string, signal?: AbortSignal): Promise<unknown> {
+    const sources = loadSources()
+    const enabled = enabledSourceIndexes(sources)
+    if (enabled.length === 0) throw new Error('未启用任何下载源')
+
+    // 多个源可能映射到同一个地址，去重后只请求一次
+    const targets = [
+      ...new Set(enabled.map((index) => remapUrl(url, sources[index]!))),
+    ]
+
+    const controller = new AbortController()
+    const forwardAbort = (): void => controller.abort()
+    if (signal) {
+      if (signal.aborted) controller.abort()
+      else signal.addEventListener('abort', forwardAbort, { once: true })
+    }
+
+    const attempts = targets.map((target) => {
+      const timeout = new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`请求超时：${target}`)), METADATA_TIMEOUT)
+        controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
+      })
+      return Promise.race([requestJson(target, controller.signal), timeout])
+    })
+
+    try {
+      return await Promise.any(attempts)
+    } catch (cause) {
+      if (cause instanceof AggregateError) {
+        const reasons = cause.errors.map(toError)
+        throw reasons.find((reason) => reason.name !== 'AbortError')
+          ?? reasons[0]
+          ?? new Error('所有下载源均不可用')
+      }
+      throw toError(cause)
+    } finally {
+      signal?.removeEventListener('abort', forwardAbort)
+      controller.abort()
+    }
+  }
+
+  async function fetchMojangManifest(signal?: AbortSignal): Promise<MojangManifestSummary> {
+    if (cachedManifest && Date.now() - cachedAt < CACHE_TTL) {
+      return cachedManifest
+    }
+    const data = (await fetchJsonFromSources(
+      'https://launchermeta.mojang.com/mc/game/version_manifest.json',
+      signal,
+    )) as MojangManifestSummary
+    cachedManifest = data
+    cachedAt = Date.now()
+    return data
+  }
+
+  async function fetchVersionDetail(version: string, signal?: AbortSignal): Promise<MojangVersionDetail> {
+    const manifest = await fetchMojangManifest(signal)
+    const entry = manifest.versions.find((v) => v.id === version)
+    if (!entry) throw new Error(`未找到版本 ${version}`)
+    return (await fetchJsonFromSources(entry.url, signal)) as MojangVersionDetail
+  }
+
+  function scheduleLoop(): void {
+    const active = [...tasks.values()].filter((t) => t.state === 'downloading').length
+    const slots = maxConcurrency() - active
+    if (slots <= 0) return
+    const pending = [...tasks.values()].filter(
+      (task) => task.state === 'pending' && !pausedJobs.has(task.installId),
+    )
+    for (const task of pending.slice(0, slots)) {
+      void startDownload(task)
+    }
+  }
+
+  async function dropCancelled(task: DownloadTask, ...files: string[]): Promise<boolean> {
+    if (!cancelledTasks.has(task.id)) return false
+    task.state = 'failed'
+    task.error = '已取消'
+    task.progress.speed = 0
+    for (const file of files) {
+      await rm(file, { force: true }).catch(() => undefined)
+    }
+    return true
+  }
+
   async function startDownload(task: DownloadTask): Promise<void> {
-    if (cancelledTasks.has(task.id)) return
+    if (
+      cancelledTasks.has(task.id)
+      || pausedJobs.has(task.installId)
+      || task.state !== 'pending'
+    ) {
+      return
+    }
+
+    // 暂停后马上恢复时，上一轮下载可能还没退出；用代号确保只有最新一轮能改状态
+    const run = (downloadRuns.get(task.id) ?? 0) + 1
+    downloadRuns.set(task.id, run)
+    const current = (): boolean => downloadRuns.get(task.id) === run
 
     task.state = 'downloading'
+    task.progress.speed = 0
+    const partPath = task.savePath + '.part'
+    const pausedNow = (): boolean => pausedJobs.has(task.installId) || task.state === 'paused'
+
+    /** 进入暂停态；.part 保留，恢复时从已有字节续传 */
+    const settlePaused = (): void => {
+      if (!current()) return
+      task.state = 'paused'
+      task.progress.speed = 0
+      persistRecords()
+    }
+
+    // 命中缓存的文件直接复制，不再阻塞安装提交（提交只负责建任务）
+    if (task.sha1) {
+      try {
+        if (await tryCopyFromCache(task)) {
+          if (!current()) return
+          if (await dropCancelled(task, task.savePath)) return
+          if (pausedNow()) {
+            settlePaused()
+            return
+          }
+          if (task.size > 0) {
+            task.progress.loaded = task.size
+            task.progress.total = task.size
+          }
+          task.state = 'done'
+          persistRecords()
+          scheduleLoop()
+          return
+        }
+      } catch { /* 缓存不可用时退回网络下载 */ }
+    }
+    if (!current()) return
+
     const sources = loadSources()
-    const tmpPath = task.savePath + '.part'
     const category = sourceCategory(task.url)
     const enabled = enabledSourceIndexes(sources)
     if (enabled.length === 0) {
@@ -492,123 +567,171 @@ export function apply(ctx: Context): void {
     const preferred = enabled.filter((index) => sourceAvailable(index, category))
     const order = preferred.length > 0 ? preferred : enabled
 
+    try {
+      ensureDir(path.dirname(task.savePath))
+    } catch (cause) {
+      task.state = 'failed'
+      task.error = `无法创建下载目录：${toError(cause).message}`
+      persistRecords()
+      scheduleLoop()
+      return
+    }
+
     for (let ci = 0; ci < order.length; ci++) {
       const si = order[ci]
       if (si === undefined) continue
       const src = sources[si]
       if (!src) continue
-      const url = remapUrl(task.url, src)
-      const abort = new AbortController()
-      activeFetches.set(task.id, abort)
-      const targetDir = path.dirname(task.savePath)
-      ensureDir(targetDir)
 
-      try {
-        const response = await requestStream(url, abort.signal)
-
-        const totalHeader = response.headers['content-length']
-        const total = totalHeader ? Number(totalHeader) : -1
-        task.progress.total = total
-        task.size = total > 0 ? total : task.size
-
-        const writeStream = createWriteStream(tmpPath)
-        const hashObj = task.sha1 ? createHash('sha1') : null
-
-        let loaded = 0
-        response.stream.on('data', (chunk: Buffer) => {
-          loaded += chunk.length
-          task.progress.loaded = loaded
-          task.progress.speed = 0
-          if (hashObj) hashObj.update(chunk)
-        })
-
-        await pipeline(response.stream, writeStream)
-
-        if (await dropCancelled(task, tmpPath)) return
-
-        task.progress.loaded = loaded
-        task.progress.speed = 0
-
-        if (task.sha1 && hashObj) {
-          task.state = 'verifying'
-          const actual = hashObj.digest('hex')
-          if (actual !== task.sha1) {
-            throw new Error(`SHA1 校验失败：期望 ${task.sha1}，实际 ${actual}`)
-          }
-        }
-
-        if (await dropCancelled(task, tmpPath)) return
-
-        await rename(tmpPath, task.savePath)
-
-        if (await dropCancelled(task, task.savePath)) return
-
-        if (task.sha1) {
-          const cached = cachePath(task.sha1)
-          if (!existsSync(cached)) {
-            ensureDir(path.dirname(cached))
-            await copyFile(task.savePath, cached)
-          }
-        }
-
-        if (await dropCancelled(task, task.savePath)) return
-
-        reportSource(si, category, true)
-        task.state = 'done'
-        activeFetches.delete(task.id)
-        persistRecords()
-        scheduleLoop()
+      if (!current()) return
+      if (await dropCancelled(task, partPath)) return
+      if (pausedNow()) {
+        settlePaused()
         return
-      } catch (cause: unknown) {
-        if (await dropCancelled(task, tmpPath, task.savePath)) return
+      }
 
-        if (cause instanceof Error && cause.name === 'AbortError') {
-          if ((task.state as string) === 'paused') return
-          task.state = 'pending'
-          scheduleLoop()
+      const transfer = createFileTransfer({
+        url: remapUrl(task.url, src),
+        partPath,
+        sha1: task.sha1,
+        size: task.size > 0 ? task.size : 0,
+        agents: { http: httpAgent, https: httpsAgent },
+        onProgress: ({ loaded, total }) => {
+          if (!current()) return
+          task.progress.loaded = loaded
+          if (total > 0) {
+            task.progress.total = total
+            if (task.size <= 0) task.size = total
+          }
+        },
+        onRestart: () => {
+          if (current()) task.progress.loaded = 0
+        },
+      })
+      transfers.set(task.id, transfer)
+
+      let result: TransferResult
+      try {
+        result = await transfer.start()
+      } catch (cause) {
+        // 传输层自身异常也要走「换源/失败」流程，不能让 Promise 无人处理
+        result = {
+          status: 'failed',
+          error: cause instanceof Error ? cause : new Error(String(cause)),
+        }
+      } finally {
+        // 恢复可能已经创建了新一轮传输，不能误删别人的句柄
+        if (transfers.get(task.id) === transfer) transfers.delete(task.id)
+      }
+
+      if (!current()) return
+      if (await dropCancelled(task, partPath, task.savePath)) return
+
+      if (result.status === 'paused') {
+        settlePaused()
+        return
+      }
+
+      if (result.status === 'failed') {
+        // 暂停引发的请求中断在底层可能表现为失败，以任务状态为准
+        if (pausedNow()) {
+          settlePaused()
           return
         }
         reportSource(si, category, false)
-        if (ci < order.length - 1) {
-          task.progress.loaded = 0
-          task.progress.total = 0
-          task.progress.speed = 0
-          continue
-        }
+        if (ci < order.length - 1) continue
         task.state = 'failed'
-        task.error = cause instanceof Error ? cause.message : String(cause)
-        activeFetches.delete(task.id)
+        task.error = result.error?.message ?? '下载失败'
         persistRecords()
         scheduleLoop()
         return
       }
+
+      // done：先校验，再改名并写入缓存
+      if (task.sha1) {
+        task.state = 'verifying'
+        if (result.digest !== task.sha1) {
+          // 分片来自损坏的镜像或残留文件，删掉后从下一个源重新开始
+          await rm(partPath, { force: true }).catch(() => undefined)
+          reportSource(si, category, false)
+          if (ci < order.length - 1) continue
+          task.state = 'failed'
+          task.error = `SHA1 校验失败：期望 ${task.sha1}，实际 ${result.digest ?? '未知'}`
+          persistRecords()
+          scheduleLoop()
+          return
+        }
+      }
+
+      if (await dropCancelled(task, partPath)) return
+
+      try {
+        await rename(partPath, task.savePath)
+      } catch (cause) {
+        task.state = 'failed'
+        task.error = `无法写入目标文件：${toError(cause).message}`
+        persistRecords()
+        scheduleLoop()
+        return
+      }
+
+      if (await dropCancelled(task, task.savePath)) return
+
+      if (task.sha1) {
+        const cached = cachePath(task.sha1)
+        if (!existsSync(cached)) {
+          try {
+            ensureDir(path.dirname(cached))
+            await copyFile(task.savePath, cached)
+          } catch { /* 缓存只是加速手段，写不进去不影响本次安装 */ }
+        }
+      }
+
+      if (!current()) return
+      if (await dropCancelled(task, task.savePath)) return
+
+      reportSource(si, category, true)
+      if (task.size > 0) {
+        task.progress.loaded = task.size
+        task.progress.total = task.size
+      }
+      task.progress.speed = 0
+      task.state = 'done'
+      persistRecords()
+      scheduleLoop()
+      return
     }
   }
 
-  function pauseTask(taskId: string): void {
+  /** 单个任务暂停：未开始与下载中的任务都可以暂停；.part 保留以便续传 */
+  function pauseTask(taskId: string): Promise<void> {
     const task = tasks.get(taskId)
-    if (!task || task.state !== 'downloading') return
+    if (!task) return Promise.resolve()
+    if (task.state !== 'pending' && task.state !== 'downloading') return Promise.resolve()
     task.state = 'paused'
-    activeFetches.get(taskId)?.abort()
+    task.progress.speed = 0
+    const transfer = transfers.get(taskId)
+    return transfer ? transfer.stop().catch(() => undefined) : Promise.resolve()
   }
 
+  /** 单个任务恢复：从 .part 继续，首次进度回调会按文件实际大小校正 */
   function resumeTask(taskId: string): void {
     const task = tasks.get(taskId)
     if (!task || task.state !== 'paused') return
     task.state = 'pending'
-    task.progress.loaded = 0
     task.progress.speed = 0
-    scheduleLoop()
   }
 
-  function cancelTask(taskId: string): void {
+  async function cancelTask(taskId: string): Promise<void> {
     const task = tasks.get(taskId)
     if (!task || task.state === 'done' || task.state === 'failed') return
     cancelledTasks.add(taskId)
     task.state = 'failed'
     task.error = '已取消'
     task.progress.speed = 0
-    activeFetches.get(taskId)?.abort()
+    const transfer = transfers.get(taskId)
+    if (transfer) await transfer.stop().catch(() => undefined)
+    await rm(task.savePath + '.part', { force: true }).catch(() => undefined)
   }
 
   function nextTaskId(): string {
@@ -621,114 +744,44 @@ export function apply(ctx: Context): void {
     return `job_${jobSeq}`
   }
 
-  async function tryCopyFromCache(spec: TaskSpec): Promise<boolean> {
-    if (!spec.sha1) return false
-    const cached = cachePath(spec.sha1)
+  async function tryCopyFromCache(task: Pick<DownloadTask, 'sha1' | 'savePath'>): Promise<boolean> {
+    if (!task.sha1) return false
+    const cached = cachePath(task.sha1)
     if (!existsSync(cached)) return false
-    ensureDir(path.dirname(spec.savePath))
-    await copyFile(cached, spec.savePath)
+    ensureDir(path.dirname(task.savePath))
+    await copyFile(cached, task.savePath)
     return true
   }
 
-  loadRecords()
-
-  // ── IPC handlers ──
-
-  ctx.ipc.handle('settings/get', () => ({
-    concurrency: String(maxConcurrency()),
-    cacheDir: ctx.storage.get<string>('cacheDir', ''),
-    cacheLimit: ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT),
-    sources: loadSources(),
-  }))
-
-  ctx.ipc.handle<{ key: string; value: string }>('settings/set', ({ key, value }) => {
-    if (key === 'sources') {
-      let parsed: unknown
-      try { parsed = JSON.parse(value) } catch { parsed = null }
-      ctx.storage.set(key, JSON.stringify(normalizeDownloadSources(parsed)))
-      sourceHealth.clear()
-      return
-    }
-    ctx.storage.set(key, value)
-  })
-
-  ctx.ipc.handle('tasks/list', () => [...tasks.values()])
-
-  ctx.ipc.handle<{ taskId: string }>('tasks/cancel', ({ taskId }) => {
-    cancelTask(taskId)
-    persistRecords(true)
-  })
-  ctx.ipc.handle<{ taskId: string }>('tasks/pause', ({ taskId }) => {
-    pauseTask(taskId)
-    persistRecords(true)
-  })
-  ctx.ipc.handle<{ taskId: string }>('tasks/resume', ({ taskId }) => {
-    resumeTask(taskId)
-    persistRecords(true)
-  })
-
-  ctx.ipc.handle('install/list', () => [...jobs.values()])
-
-  ctx.ipc.handle<{ jobId: string }>('install/cancel', ({ jobId }) => {
-    const job = jobs.get(jobId)
-    if (!job) return
-    cancelledJobs.add(jobId)
-    for (const taskId of job.taskIds) cancelTask(taskId)
-    persistRecords(true)
-  })
-
-  ctx.ipc.handle<{ jobId: string }>('install/pause', ({ jobId }) => {
-    const job = jobs.get(jobId)
-    if (!job) return
-    for (const taskId of job.taskIds) pauseTask(taskId)
-    persistRecords(true)
-  })
-
-  ctx.ipc.handle<{ jobId: string }>('install/resume', ({ jobId }) => {
-    const job = jobs.get(jobId)
-    if (!job) return
-    for (const taskId of job.taskIds) resumeTask(taskId)
-    persistRecords(true)
-  })
-
-  ctx.ipc.handle<{ name: string }>('install/validate-name', ({ name }) => checkInstanceName(name))
-
-  ctx.ipc.handle<InstallRequest>('install/start', async (request) => {
-    const check = checkInstanceName(request.instanceName)
-    if (!check.ok) return { jobId: '', error: check.message ?? '实例名称无效' }
-
-    const instanceName = check.name
-    const jobId = nextJobId()
-    const job: InstallJob = {
-      id: jobId,
-      instanceName,
-      gameVersion: request.gameVersion,
-      loader: request.loader,
-      taskIds: [],
-      createdAt: Date.now(),
-    }
-    jobs.set(jobId, job)
-
-    // 从受理到版本目录落盘之间占住名称，避免同一名称的并发安装互相覆盖
-    const nameKey = instanceKey(instanceName)
-    reservedInstanceNames.add(nameKey)
-
-    const isCancelled = () => cancelledJobs.has(jobId)
+  /**
+   * 后台准备安装：拉版本详情、资源索引与清单，再登记下载任务。
+   *
+   * 它不阻塞 `install/start`：界面可以先跳到下载页，任务就绪后自动出现。
+   * 失败或取消时把刚创建的实例目录清掉，避免留下无法重装的空实例。
+   */
+  async function prepareJob(job: InstallJob, request: InstallRequest): Promise<void> {
+    const instanceDir = instanceDirOf(job.instanceName)
+    const nameKey = instanceKey(job.instanceName)
+    const abort = new AbortController()
+    prepAborts.set(job.id, abort)
+    const isCancelled = (): boolean => cancelledJobs.has(job.id)
+    let createdInstance = false
 
     try {
-      const detail = await fetchVersionDetail(request.gameVersion)
-      if (isCancelled()) return { jobId, error: '已取消' }
+      const detail = await fetchVersionDetail(request.gameVersion, abort.signal)
+      if (isCancelled()) return
 
-      const versionsDir = path.join(instanceDirOf(instanceName), 'versions', request.gameVersion)
+      const versionsDir = path.join(instanceDir, 'versions', request.gameVersion)
+
+      // 1. version.json（实例目录从这一步开始存在）
+      createdInstance = true
+      ensureDir(versionsDir)
+      await writeFile(
+        path.join(versionsDir, `${request.gameVersion}.json`),
+        JSON.stringify(detail, null, 2),
+      )
 
       const taskSpecs: TaskSpec[] = []
-
-      // 1. version.json
-      {
-        const jsonPath = path.join(versionsDir, `${request.gameVersion}.json`)
-        ensureDir(versionsDir)
-        await writeFile(jsonPath, JSON.stringify(detail, null, 2))
-      }
 
       // 2. client.jar
       if (detail.downloads?.client) {
@@ -778,8 +831,11 @@ export function apply(ctx: Context): void {
 
       // 4. Asset index + objects
       if (detail.assetIndex?.url) {
-        const rawIndex = await httpGetJson(detail.assetIndex.url) as AssetIndex
-        if (isCancelled()) return { jobId, error: '已取消' }
+        const rawIndex = (await fetchJsonFromSources(
+          detail.assetIndex.url,
+          abort.signal,
+        )) as AssetIndex
+        if (isCancelled()) return
         const objects = rawIndex.objects ?? {}
 
         const assetDir = path.join(versionsDir, 'assets')
@@ -811,44 +867,160 @@ export function apply(ctx: Context): void {
         })
       }
 
+      if (isCancelled()) return
+
+      // 任务先全部登记（缓存命中由下载循环判断），提交因此始终是常数级耗时
+      const paused = pausedJobs.has(job.id)
       for (const spec of taskSpecs) {
-        if (isCancelled()) return { jobId, error: '已取消' }
-        const taskId = nextTaskId()
-        const fromCache = await tryCopyFromCache(spec)
-        if (isCancelled()) return { jobId, error: '已取消' }
         const task: DownloadTask = {
-          id: taskId,
-          installId: jobId,
+          id: nextTaskId(),
+          installId: job.id,
           url: spec.url,
           savePath: spec.savePath,
           sha1: spec.sha1,
           size: spec.size,
           label: spec.label,
-          state: fromCache ? 'done' : 'pending',
+          state: paused ? 'paused' : 'pending',
           progress: {
-            loaded: fromCache ? spec.size : 0,
+            loaded: 0,
             total: spec.size > 0 ? spec.size : -1,
             speed: 0,
             label: spec.label,
           },
           createdAt: Date.now(),
         }
-        tasks.set(taskId, task)
-        job.taskIds.push(taskId)
-        persistRecords()
+        tasks.set(task.id, task)
+        job.taskIds.push(task.id)
       }
 
-      if (isCancelled()) return { jobId, error: '已取消' }
+      job.state = 'ready'
       persistRecords(true)
-      scheduleLoop()
-      return { jobId }
+      if (!paused) scheduleLoop()
     } catch (cause) {
-      persistRecords(true)
-      return { jobId, error: cause instanceof Error ? cause.message : String(cause) }
+      if (isCancelled()) return
+      job.state = 'failed'
+      job.error = toError(cause).message
     } finally {
-      // 版本目录此时已落盘，后续重名判断交给目录检查
+      prepAborts.delete(job.id)
+      if (isCancelled()) job.state = 'cancelled'
+      if (job.state === 'failed' || job.state === 'cancelled') {
+        pausedJobs.delete(job.id)
+        // 先清掉半成品目录再释放名称，否则重试会被残留的目录判成重名
+        if (createdInstance) {
+          await rm(instanceDir, { recursive: true, force: true }).catch(() => undefined)
+        }
+      }
+      // 版本目录此时已落盘；后续重名判断交给目录检查
       reservedInstanceNames.delete(nameKey)
+      persistRecords(true)
     }
+  }
+
+  loadRecords()
+
+  // ── IPC handlers ──
+
+  ctx.ipc.handle('settings/get', () => ({
+    concurrency: String(maxConcurrency()),
+    cacheDir: ctx.storage.get<string>('cacheDir', ''),
+    cacheLimit: ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT),
+    sources: loadSources(),
+  }))
+
+  ctx.ipc.handle<{ key: string; value: string }>('settings/set', ({ key, value }) => {
+    if (key === 'sources') {
+      let parsed: unknown
+      try { parsed = JSON.parse(value) } catch { parsed = null }
+      ctx.storage.set(key, JSON.stringify(normalizeDownloadSources(parsed)))
+      sourceHealth.clear()
+      return
+    }
+    ctx.storage.set(key, value)
+  })
+
+  ctx.ipc.handle('tasks/list', () => [...tasks.values()])
+
+  ctx.ipc.handle<{ taskId: string }>('tasks/cancel', async ({ taskId }) => {
+    await cancelTask(taskId)
+    persistRecords(true)
+  })
+  ctx.ipc.handle<{ taskId: string }>('tasks/pause', async ({ taskId }) => {
+    await pauseTask(taskId)
+    persistRecords(true)
+  })
+  ctx.ipc.handle<{ taskId: string }>('tasks/resume', ({ taskId }) => {
+    resumeTask(taskId)
+    persistRecords(true)
+    scheduleLoop()
+  })
+
+  ctx.ipc.handle('install/list', () => [...jobs.values()])
+
+  ctx.ipc.handle<{ jobId: string }>('install/cancel', async ({ jobId }) => {
+    const job = jobs.get(jobId)
+    if (!job) return
+    // 已完成的安装不能被取消改写历史
+    const unfinished = job.state === 'preparing' || job.taskIds.some((taskId) => {
+      const task = tasks.get(taskId)
+      return task !== undefined && task.state !== 'done' && task.state !== 'failed'
+    })
+    if (!unfinished) return
+    cancelledJobs.add(jobId)
+    pausedJobs.delete(jobId)
+    job.state = 'cancelled'
+    // 准备阶段的安装没有任务，中断元数据请求后由 prepareJob 负责清理实例目录
+    prepAborts.get(jobId)?.abort()
+    await Promise.all(job.taskIds.map((taskId) => cancelTask(taskId)))
+    persistRecords(true)
+  })
+
+  ctx.ipc.handle<{ jobId: string }>('install/pause', async ({ jobId }) => {
+    const job = jobs.get(jobId)
+    if (!job) return
+    if (job.state === 'failed' || job.state === 'cancelled') return
+    // 任务级状态负责展示，任务级暂停集体生效；未开始的任务也要一起停下
+    pausedJobs.add(jobId)
+    await Promise.all(job.taskIds.map((taskId) => pauseTask(taskId)))
+    persistRecords(true)
+  })
+
+  ctx.ipc.handle<{ jobId: string }>('install/resume', ({ jobId }) => {
+    const job = jobs.get(jobId)
+    if (!job) return
+    if (job.state === 'failed' || job.state === 'cancelled') return
+    pausedJobs.delete(jobId)
+    for (const taskId of job.taskIds) resumeTask(taskId)
+    persistRecords(true)
+    scheduleLoop()
+  })
+
+  ctx.ipc.handle<{ name: string }>('install/validate-name', ({ name }) => checkInstanceName(name))
+
+  ctx.ipc.handle<InstallRequest>('install/start', (request) => {
+    const check = checkInstanceName(request.instanceName)
+    if (!check.ok) return { jobId: '', error: check.message ?? '实例名称无效' }
+
+    const instanceName = check.name
+    const job: InstallJob = {
+      id: nextJobId(),
+      instanceName,
+      gameVersion: request.gameVersion,
+      loader: request.loader,
+      taskIds: [],
+      createdAt: Date.now(),
+      state: 'preparing',
+    }
+    jobs.set(job.id, job)
+
+    // 从受理到版本目录落盘之间占住名称，避免同一名称的并发安装互相覆盖
+    reservedInstanceNames.add(instanceKey(instanceName))
+    // 不做同步落盘：任务列表可能有上千条，写入会拖慢「点击即返回」的受理路径
+    persistRecords()
+
+    // 立刻返回：下载清单在后台准备，调用方直接跳转到下载页
+    void prepareJob(job, request).catch(() => undefined)
+
+    return { jobId: job.id }
   })
 }
 

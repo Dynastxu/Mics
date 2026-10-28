@@ -5,7 +5,8 @@ import type { DownloadTask, InstallJob } from '@mics/sdk'
 
 interface JobStats {
   total: number
-  pending: number
+  /** 排队中（不含已暂停） */
+  waiting: number
   paused: number
   downloading: number
   done: number
@@ -18,6 +19,10 @@ interface JobRow {
   job: InstallJob
   stats: JobStats
   speed: number
+  /** 整个任务已暂停：所有未完成任务都在 paused，且没有正在跑的文件 */
+  paused: boolean
+  /** 已受理、仍在后台构建下载清单 */
+  preparing: boolean
 }
 
 interface SpeedSample {
@@ -28,7 +33,7 @@ interface SpeedSample {
 
 const EMPTY_STATS: JobStats = {
   total: 0,
-  pending: 0,
+  waiting: 0,
   paused: 0,
   downloading: 0,
   done: 0,
@@ -63,7 +68,7 @@ const statsByJob = computed(() => {
   const map = new Map<string, JobStats>()
   for (const job of jobs.value) {
     const tasks = tasksByJob.value.get(job.id) ?? []
-    let pending = 0
+    let waiting = 0
     let paused = 0
     let downloading = 0
     let done = 0
@@ -87,10 +92,9 @@ const statsByJob = computed(() => {
           break
         case 'paused':
           paused += 1
-          pending += 1
           break
         default:
-          pending += 1
+          waiting += 1
       }
       loaded += task.progress.loaded
       bytes += task.progress.total > 0 ? task.progress.total : Math.max(task.size, 0)
@@ -104,7 +108,7 @@ const statsByJob = computed(() => {
 
     map.set(job.id, {
       total: tasks.length,
-      pending,
+      waiting,
       paused,
       downloading,
       done,
@@ -116,40 +120,52 @@ const statsByJob = computed(() => {
   return map
 })
 
-const visibleJobs = computed(() =>
-  jobs.value.filter((job) => (tasksByJob.value.get(job.id)?.length ?? 0) > 0),
-)
+/** 任务是否已结束：准备阶段仍算进行中，终态以主进程给的 state 为准 */
+function isJobFinished(job: InstallJob): boolean {
+  if (job.state === 'failed' || job.state === 'cancelled') return true
+  if (job.state === 'preparing') return false
+  const tasks = tasksByJob.value.get(job.id) ?? []
+  return tasks.length === 0
+    || tasks.every((task) => task.state === 'done' || task.state === 'failed')
+}
 
-const activeJobs = computed(() =>
-  visibleJobs.value.filter((job) =>
-    (tasksByJob.value.get(job.id) ?? []).some((task) => task.state !== 'done' && task.state !== 'failed'),
-  ),
-)
+const activeJobs = computed(() => jobs.value.filter((job) => !isJobFinished(job)))
+const historyJobs = computed(() => jobs.value.filter(isJobFinished))
 
-const historyJobs = computed(() =>
-  visibleJobs.value.filter((job) => {
-    const tasks = tasksByJob.value.get(job.id) ?? []
-    return tasks.length > 0 && tasks.every((task) => task.state === 'done' || task.state === 'failed')
-  }),
-)
+function jobPaused(stats: JobStats): boolean {
+  return stats.paused > 0 && stats.downloading === 0 && stats.waiting === 0
+}
 
 const activeRows = computed<JobRow[]>(() =>
   [...activeJobs.value]
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-    .map((job) => ({
-      job,
-      stats: statsByJob.value.get(job.id) ?? EMPTY_STATS,
-      speed: jobSpeeds.value[job.id] ?? 0,
-    })),
+    .map((job) => {
+      const stats = statsByJob.value.get(job.id) ?? EMPTY_STATS
+      return {
+        job,
+        stats,
+        speed: jobSpeeds.value[job.id] ?? 0,
+        paused: jobPaused(stats),
+        preparing: job.state === 'preparing',
+      }
+    }),
 )
 
 const historyRows = computed(() =>
   [...historyJobs.value]
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-    .map((job) => ({
-      job,
-      stats: statsByJob.value.get(job.id) ?? EMPTY_STATS,
-    })),
+    .map((job) => {
+      const stats = statsByJob.value.get(job.id) ?? EMPTY_STATS
+      const ok = job.state !== 'failed'
+        && job.state !== 'cancelled'
+        && stats.failed === 0
+      return {
+        job,
+        stats,
+        label: historyLabel(job, stats),
+        ok,
+      }
+    }),
 )
 
 function formatTime(timestamp: number | undefined): string {
@@ -164,7 +180,9 @@ function formatTime(timestamp: number | undefined): string {
   }).format(new Date(timestamp))
 }
 
-function historyLabel(stats: JobStats): string {
+function historyLabel(job: InstallJob, stats: JobStats): string {
+  if (job.state === 'cancelled') return '已取消'
+  if (job.state === 'failed') return '失败'
   if (stats.failed === 0) return '已完成'
   return stats.cancelled === stats.failed ? '已取消' : '部分失败'
 }
@@ -244,7 +262,7 @@ onUnmounted(() => {
       <h1 class="mics-page__title">下载进度</h1>
     </header>
 
-    <div v-if="visibleJobs.length === 0" class="mics-empty">暂无下载任务</div>
+    <div v-if="jobs.length === 0" class="mics-empty">暂无下载任务</div>
 
     <section v-if="activeRows.length" class="mics-section">
       <h2 class="mics-section__title">进行中</h2>
@@ -262,18 +280,11 @@ onUnmounted(() => {
 
             <div class="progress-job__controls">
               <button
-                v-if="row.stats.downloading > 0"
+                v-if="!row.preparing"
                 class="mics-button mics-button--ghost mics-button--small"
-                @click="invoke('install/pause', row.job.id)"
+                @click="invoke(row.paused ? 'install/resume' : 'install/pause', row.job.id)"
               >
-                暂停
-              </button>
-              <button
-                v-if="row.stats.paused > 0"
-                class="mics-button mics-button--ghost mics-button--small"
-                @click="invoke('install/resume', row.job.id)"
-              >
-                恢复
+                {{ row.paused ? '恢复' : '暂停' }}
               </button>
               <button
                 class="mics-button mics-button--ghost mics-button--small"
@@ -284,30 +295,37 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="progress-job__progress">
-            <div
-              class="progress-job__bar"
-              role="progressbar"
-              :aria-valuenow="row.stats.percent"
-              aria-valuemin="0"
-              aria-valuemax="100"
-            >
-              <div class="progress-job__bar-fill" :style="{ width: row.stats.percent + '%' }" />
-            </div>
-            <span class="progress-job__percent">{{ row.stats.percent }}%</span>
-          </div>
+          <div v-if="row.preparing" class="progress-job__preparing">正在准备下载清单…</div>
 
-          <div class="progress-job__stats">
-            <span class="progress-stat">待下载 <b>{{ row.stats.pending }}</b></span>
-            <span class="progress-stat">下载中 <b>{{ row.stats.downloading }}</b></span>
-            <span class="progress-stat">已完成 <b>{{ row.stats.done }}</b></span>
-            <span v-if="row.stats.failed > 0" class="progress-stat progress-stat--danger">
-              失败 <b>{{ row.stats.failed }}</b>
-            </span>
-            <span class="progress-stat progress-stat--speed">
-              下载速度 <b>{{ fmtSpeed(row.speed) }}</b>
-            </span>
-          </div>
+          <template v-else>
+            <div class="progress-job__progress">
+              <div
+                class="progress-job__bar"
+                role="progressbar"
+                :aria-valuenow="row.stats.percent"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <div class="progress-job__bar-fill" :style="{ width: row.stats.percent + '%' }" />
+              </div>
+              <span class="progress-job__percent">{{ row.stats.percent }}%</span>
+            </div>
+
+            <div class="progress-job__stats">
+              <span class="progress-stat">待下载 <b>{{ row.stats.waiting }}</b></span>
+              <span v-if="row.stats.paused > 0" class="progress-stat">
+                已暂停 <b>{{ row.stats.paused }}</b>
+              </span>
+              <span class="progress-stat">下载中 <b>{{ row.stats.downloading }}</b></span>
+              <span class="progress-stat">已完成 <b>{{ row.stats.done }}</b></span>
+              <span v-if="row.stats.failed > 0" class="progress-stat progress-stat--danger">
+                失败 <b>{{ row.stats.failed }}</b>
+              </span>
+              <span class="progress-stat progress-stat--speed">
+                下载速度 <b>{{ fmtSpeed(row.speed) }}</b>
+              </span>
+            </div>
+          </template>
         </div>
       </div>
     </section>
@@ -323,18 +341,22 @@ onUnmounted(() => {
               <span class="mics-badge">{{ row.job.gameVersion }}</span>
               <span
                 class="mics-badge"
-                :class="{ 'mics-badge--accent': row.stats.failed === 0 }"
+                :class="{ 'mics-badge--accent': row.ok }"
               >
-                {{ historyLabel(row.stats) }}
+                {{ row.label }}
               </span>
             </div>
             <div class="mics-list__meta">
-              {{ formatTime(row.job.createdAt) }} · 已完成 {{ row.stats.done }}
-              <template v-if="row.stats.cancelled > 0"> · 已取消 {{ row.stats.cancelled }}</template>
-              <template v-if="row.stats.failed - row.stats.cancelled > 0">
-                · 失败 {{ row.stats.failed - row.stats.cancelled }}
+              {{ formatTime(row.job.createdAt) }}
+              <template v-if="row.stats.total > 0">
+                · 已完成 {{ row.stats.done }}
+                <template v-if="row.stats.cancelled > 0"> · 已取消 {{ row.stats.cancelled }}</template>
+                <template v-if="row.stats.failed - row.stats.cancelled > 0">
+                  · 失败 {{ row.stats.failed - row.stats.cancelled }}
+                </template>
               </template>
             </div>
+            <div v-if="row.job.error" class="progress-job__error">{{ row.job.error }}</div>
           </div>
         </div>
       </div>
@@ -382,6 +404,18 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.progress-job__preparing {
+  color: var(--mics-fg-muted);
+  font-size: 12px;
+}
+
+.progress-job__error {
+  margin-top: 6px;
+  color: var(--mics-danger);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .progress-job__progress {

@@ -135,6 +135,8 @@ export interface UiServiceApi {
   registerView(viewId: string, component: Component): Disposable
   registerStatusBarItem(item: RendererStatusBarItem): Disposable
   componentOf(viewId: string): Component | undefined
+  /** 切换到清单里已注册的导航页面；页面不存在（插件缺失或被禁用）时返回 false */
+  navigate(viewId: string): boolean
 }
 
 export interface ThemeServiceApi {
