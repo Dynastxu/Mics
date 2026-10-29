@@ -28,7 +28,8 @@ function readJson<T>(file: string): T | null {
   }
 }
 
-function safeInstanceId(id: string): boolean {
+/** 实例 id 就是 instances 下的文件夹名，只接受单层、非 . / .. 的路径 */
+export function isSafeInstanceId(id: string): boolean {
   return Boolean(id) && id !== '.' && id !== '..' && path.basename(id) === id
 }
 
@@ -80,7 +81,7 @@ function resolveVersion(instanceDir: string, preferredVersion?: string): { versi
   return { versionDir: chosen.dir, version: chosen.version }
 }
 
-function loaderLabel(version: VersionJson): string {
+export function loaderLabel(version: VersionJson): string {
   if (!version.inheritsFrom) return '原版'
   const id = version.id.toLowerCase()
   if (id.includes('neoforge')) return 'NeoForge'
@@ -90,7 +91,8 @@ function loaderLabel(version: VersionJson): string {
   return 'Mod 加载器'
 }
 
-function countMods(instanceDir: string): number {
+/** 已启用的 Mod 数量（.jar.disabled 不计入，与启动页徽标一致） */
+export function countMods(instanceDir: string): number {
   const modsDir = path.join(instanceDir, 'mods')
   if (!existsSync(modsDir)) return 0
   try {
@@ -113,7 +115,7 @@ function toSummary(instance: ResolvedInstance): InstanceSummary {
 }
 
 export function resolveInstance(userDataDir: string, id: string): ResolvedInstance | null {
-  if (!safeInstanceId(id)) return null
+  if (!isSafeInstanceId(id)) return null
   const instanceDir = path.join(userDataDir, 'instances', id)
   if (!existsSync(instanceDir)) return null
 

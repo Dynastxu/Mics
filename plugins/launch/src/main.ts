@@ -1,13 +1,28 @@
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import type { Context } from 'cordis'
 import { defineMainPlugin } from '@mics/sdk/main'
 import { SHELL_EXECUTE } from '@mics/sdk'
 import type { ShellExecuteCapability } from '@mics/sdk'
 import { listInstances, markInstanceLaunched, resolveInstance } from './instances'
+import {
+  deleteInstanceDirectory,
+  describeInstance,
+  listInstanceLogs,
+  listInstanceMods,
+  measureInstanceUsage,
+  readInstanceLog,
+  resolveInstanceArea,
+  setInstanceModEnabled,
+} from './instanceFiles'
 import { launchInstance } from './launch'
 import { waitForGameWindow } from './gameWindow'
 import { LaunchRuntime, isProcessAlive, type PersistedProcess } from './runtime'
 import type {
+  InstanceArea,
+  InstanceLogRequest,
+  InstanceModToggleRequest,
+  InstanceRef,
+  InstanceRevealRequest,
   LaunchRequest,
   LaunchSettings,
   RepeatLaunchBehavior,
@@ -39,6 +54,25 @@ function normalizeBehavior(value: unknown): RepeatLaunchBehavior {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** IPC 参数来自渲染进程，运行时仍按 unknown 把关 */
+function instanceIdOf(params?: InstanceRef): string {
+  const id = params?.id
+  if (typeof id !== 'string' || !id) throw new Error('无效的实例 id')
+  return id
+}
+
+function areaOf(value: unknown): InstanceArea {
+  return value === 'logs' || value === 'mods' ? value : 'root'
+}
+
+/** 结束进程后等待文件锁释放，避免紧接着删除目录时反复重试 */
+async function waitForExit(runtime: LaunchRuntime, id: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (runtime.pidsOf(id).length > 0 && Date.now() < deadline) {
+    await delay(200)
+  }
 }
 
 export function apply(ctx: Context): void {
@@ -93,6 +127,56 @@ export function apply(ctx: Context): void {
 
   ctx.ipc.handle('instances/state', () => runtime.snapshot())
 
+  ctx.ipc.handle<InstanceRef>('instances/detail', (params) => {
+    return describeInstance(dataDir, instanceIdOf(params))
+  })
+
+  ctx.ipc.handle<InstanceRef>('instances/usage', (params) => {
+    return measureInstanceUsage(dataDir, instanceIdOf(params))
+  })
+
+  ctx.ipc.handle<InstanceRef>('instances/logs', (params) => {
+    return listInstanceLogs(dataDir, instanceIdOf(params))
+  })
+
+  ctx.ipc.handle<InstanceLogRequest>('instances/log', (params) => {
+    const id = instanceIdOf(params)
+    const name = typeof params?.name === 'string' ? params.name : ''
+    return readInstanceLog(dataDir, id, name)
+  })
+
+  ctx.ipc.handle<InstanceRef>('instances/mods', (params) => {
+    return listInstanceMods(dataDir, instanceIdOf(params))
+  })
+
+  ctx.ipc.handle<InstanceModToggleRequest>('instances/mods/toggle', (params) => {
+    const id = instanceIdOf(params)
+    const fileName = typeof params?.fileName === 'string' ? params.fileName : ''
+    return setInstanceModEnabled(dataDir, id, fileName, params?.enabled === true)
+  })
+
+  ctx.ipc.handle<InstanceRevealRequest>('instances/reveal', async (params) => {
+    const target = await resolveInstanceArea(dataDir, instanceIdOf(params), areaOf(params?.area))
+    const error = await shell.openPath(target)
+    if (error) throw new Error(error)
+  })
+
+  ctx.ipc.handle<InstanceRef>('instances/delete', async (params) => {
+    const id = instanceIdOf(params)
+    if (preparing.has(id)) throw new Error('实例正在启动，无法删除')
+
+    if (runtime.pidsOf(id).length > 0) {
+      await runtime.terminate(id)
+      await waitForExit(runtime, id, 8_000)
+      if (runtime.pidsOf(id).length > 0) {
+        throw new Error('无法结束实例进程，请先手动关闭游戏')
+      }
+    }
+
+    await deleteInstanceDirectory(dataDir, id)
+    return { id }
+  })
+
   ctx.ipc.handle('account/get', () => ({
     username: sanitizeUsername(ctx.storage.get<string>('username', 'Steve')),
   }))
@@ -114,9 +198,9 @@ export function apply(ctx: Context): void {
       const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
 
       // 启动方式由 provider 决定：本机进程只是默认实现，沙箱插件可以整体替换
-      const shell = ctx.capabilities.require<ShellExecuteCapability>(SHELL_EXECUTE)
+      const shellCapability = ctx.capabilities.require<ShellExecuteCapability>(SHELL_EXECUTE)
 
-      const launched = await launchInstance(shell, instance, {
+      const launched = await launchInstance(shellCapability, instance, {
         username: name,
         launcherVersion: app.getVersion(),
         memoryMb: Number.isFinite(memory) ? memory : 4096,

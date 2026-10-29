@@ -2,7 +2,7 @@
   "id": "mics.launch",
   "name": "启动",
   "version": "0.1.0",
-  "description": "实例扫描、离线账户与离线启动；启动前自动校验并修复损坏的依赖文件。",
+  "description": "实例扫描、详情、日志与 Mod 查看、删除、离线账户与离线启动；启动前自动校验并修复损坏的依赖文件。",
   "author": "mics",
   "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",

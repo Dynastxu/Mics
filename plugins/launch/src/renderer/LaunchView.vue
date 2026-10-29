@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
 import type {
   InstanceSummary,
@@ -9,6 +9,7 @@ import type {
   RepeatLaunchBehavior,
 } from '../shared'
 import { LAUNCH_STATE_TOPIC } from '../shared'
+import InstanceDetailView from './InstanceDetailView.vue'
 import RepeatLaunchDialog from './RepeatLaunchDialog.vue'
 
 const ctx = usePluginContext()
@@ -23,6 +24,12 @@ const username = ref('Steve')
 /** 正在执行启动 IPC（准备依赖、spawn 进程）的实例 */
 const pending = ref<string[]>([])
 const conflict = ref<InstanceSummary | null>(null)
+/** 当前打开的实例详情；为空时展示实例列表 */
+const detailId = ref('')
+
+const detailInstance = computed(
+  () => instances.value.find((instance) => instance.id === detailId.value) ?? null,
+)
 
 let offState: (() => void) | null = null
 
@@ -70,11 +77,44 @@ async function load(): Promise<void> {
   error.value = ''
   try {
     instances.value = await ctx.ipc.invoke<InstanceSummary[]>('mics.launch', 'instances/list')
+    if (detailId.value && !instances.value.some((instance) => instance.id === detailId.value)) {
+      detailId.value = ''
+    }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     loading.value = false
   }
+}
+
+function openDetail(instance: InstanceSummary): void {
+  selected.value = instance.id
+  detailId.value = instance.id
+}
+
+function closeDetail(): void {
+  detailId.value = ''
+}
+
+function handleDeleted(id: string): void {
+  instances.value = instances.value.filter((instance) => instance.id !== id)
+  if (selected.value === id) selected.value = ''
+  if (detailId.value === id) detailId.value = ''
+}
+
+function handleModsChanged(mods: number): void {
+  const instance = detailInstance.value
+  if (instance) instance.mods = mods
+}
+
+function playDetail(): void {
+  const instance = detailInstance.value
+  if (instance) void play(instance)
+}
+
+function terminateDetail(): void {
+  const instance = detailInstance.value
+  if (instance) void terminate(instance)
 }
 
 async function refreshState(): Promise<void> {
@@ -195,7 +235,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="mics-page">
+  <InstanceDetailView
+    v-if="detailInstance"
+    :instance="detailInstance"
+    :processes="processesOf(detailInstance.id)"
+    :starting="isStarting(detailInstance)"
+    :can-launch="!isLaunchHidden(detailInstance)"
+    @back="closeDetail"
+    @play="playDetail"
+    @terminate="terminateDetail"
+    @deleted="handleDeleted"
+    @changed="handleModsChanged"
+  />
+
+  <div v-else class="mics-page">
     <header class="mics-page__header">
       <h1 class="mics-page__title">启动</h1>
       <div class="mics-page__actions">
@@ -229,6 +282,7 @@ onUnmounted(() => {
           :key="instance.id"
           class="mics-list__row launch__row"
           :class="{ 'is-selected': selected === instance.id }"
+          @click="openDetail(instance)"
         >
           <span class="mics-avatar" :class="accent(index)">{{ instance.name.slice(0, 1) }}</span>
           <div class="mics-list__main">
@@ -241,7 +295,13 @@ onUnmounted(() => {
             </div>
           </div>
           <span class="launch__played">{{ formatPlayed(instance.lastPlayed) }}</span>
-          <div class="launch__actions">
+          <div class="launch__actions" @click.stop>
+            <button
+              class="mics-button mics-button--ghost mics-button--small"
+              @click="openDetail(instance)"
+            >
+              详情
+            </button>
             <button
               v-if="!isLaunchHidden(instance)"
               class="mics-button mics-button--primary mics-button--small"
@@ -261,14 +321,14 @@ onUnmounted(() => {
         </div>
       </div>
     </section>
-
-    <RepeatLaunchDialog
-      :open="Boolean(conflict)"
-      :instance-name="conflict?.name ?? ''"
-      @confirm="confirmConflict"
-      @cancel="cancelConflict"
-    />
   </div>
+
+  <RepeatLaunchDialog
+    :open="Boolean(conflict)"
+    :instance-name="conflict?.name ?? ''"
+    @confirm="confirmConflict"
+    @cancel="cancelConflict"
+  />
 </template>
 
 <style scoped>
@@ -308,6 +368,10 @@ onUnmounted(() => {
 
 .launch__account-input:focus {
   border-color: var(--mics-accent);
+}
+
+.launch__row {
+  cursor: pointer;
 }
 
 .launch__row.is-selected {
