@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { validateConfigurationContribution } from '@mics/sdk'
 import type { PluginContributions, PluginManifest } from '@mics/sdk'
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
@@ -188,6 +189,15 @@ function validateContributions(
             }
           : undefined,
       }
+    }
+  }
+
+  if (raw.configuration !== undefined) {
+    const result = validateConfigurationContribution(raw.configuration)
+    errors.push(...result.errors)
+    warnings.push(...result.warnings)
+    if (result.configuration && result.errors.length === 0) {
+      contributions.configuration = result.configuration
     }
   }
 

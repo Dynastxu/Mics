@@ -1,9 +1,18 @@
 import type { Component } from 'vue'
 import type { Context } from 'cordis'
+import type { CapabilitiesServiceApi } from './capability'
+import type { PluginConfigurationInfo } from './configuration'
+import type { PluginGraphReport } from './diagnostics'
 import type { LogsServiceApi } from './logs'
 import type { Permission, PluginId } from './manifest'
-import type { PluginInstallSummary } from './plugins'
-import type { AppInfo, CommandInfo, PluginInfo, RuntimeEventEnvelope, RuntimeSnapshot } from './runtime'
+import type { PluginFailureStage, PluginInstallSummary } from './plugins'
+import type {
+  AppInfo,
+  CommandInfo,
+  PluginInfo,
+  RuntimeEventEnvelope,
+  RuntimeSnapshot,
+} from './runtime'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -57,6 +66,8 @@ export interface IpcServiceApi {
   emit(topic: string, payload?: unknown): void
   /** 主进程：广播事件并标注来源插件 */
   broadcast(topic: string, payload?: unknown, source?: PluginId): void
+  /** 主进程实现：某个插件注册的方法名（诊断用） */
+  methodsOf?(target: PluginId): string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -101,9 +112,15 @@ export interface PluginsServiceApi {
   /** 渲染端实现：只卸掉页面、样式与作用域，不改插件状态 */
   unload?(id: PluginId): Promise<void>
   /** 主进程实现：把插件标记为失败（渲染端加载出错时由渲染端回报） */
-  fail?(id: PluginId, message: string): Promise<void>
+  fail?(id: PluginId, message: string, stage?: PluginFailureStage): Promise<void>
   /** 主进程实现：读取文件夹里的清单，生成安装确认摘要（不落盘） */
   inspect?(dir: string): Promise<PluginInstallSummary>
+  /**
+   * 主进程实现：依赖图 + 贡献点 + 未满足项。
+   *
+   * 只读诊断：插件管理页与 agent 共用同一份数据，不各自推断。
+   */
+  diagnostics?(): PluginGraphReport | Promise<PluginGraphReport>
   /** 主进程实现：把文件夹安装到用户插件目录，成功后默认禁用 */
   install?(dir: string): Promise<{ plugin: PluginInstallSummary; upgraded: boolean }>
   /** 主进程实现：卸载（停用 + 卸载脚本 + 删除本体），内置插件会被拒绝 */
@@ -133,6 +150,21 @@ export interface PermissionsServiceApi {
   has(permission: Permission | string): boolean
   require(permission: Permission | string): void
   allows(pluginId: PluginId | undefined, permission: Permission | string): boolean
+}
+
+// ---------------------------------------------------------------------------
+// 配置：清单 schema + 当前值，设置页与 agent 共用
+// ---------------------------------------------------------------------------
+
+export interface ConfigurationServiceApi {
+  /** 所有声明了 `contributes.configuration` 的插件 */
+  list(): PluginConfigurationInfo[]
+  /** 某个插件的 schema 与当前生效值；没有 schema 时返回 undefined */
+  describe(pluginId: PluginId): PluginConfigurationInfo | undefined
+  /** 校验并写入用户值；返回更新后的描述 */
+  set(pluginId: PluginId, key: string, value: unknown): PluginConfigurationInfo
+  /** 删除用户值，回退到 profile / schema 默认值 */
+  reset(pluginId: PluginId, key: string): PluginConfigurationInfo
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +213,7 @@ export interface BridgeApi {
 }
 
 // ---------------------------------------------------------------------------
-// 通过模块增强把服务挂到 cordis 的 Context / Events 上
+// 通过模块增强把服务挂到 cordis 的 Context 上
 // ---------------------------------------------------------------------------
 
 declare module 'cordis' {
@@ -191,17 +223,15 @@ declare module 'cordis' {
     commands: CommandsServiceApi
     storage: StorageServiceApi
     permissions: PermissionsServiceApi
+    /** 能力注册表：definition / provider / consumer 三角的注册与查找 */
+    capabilities: CapabilitiesServiceApi
+    /** 配置 schema 与当前值；设置页与 agent 共用 */
+    configuration: ConfigurationServiceApi
     /** 由 mics.logger 插件提供；其它插件通过 inject: ['logs'] 使用 */
     logs: LogsServiceApi
     ui: UiServiceApi
     theme: ThemeServiceApi
     bridge: BridgeApi
-  }
-
-  interface Events {
-    'plugins/changed'(): void
-    'plugin/activated'(id: PluginId): void
-    'plugin/deactivated'(id: PluginId): void
   }
 }
 

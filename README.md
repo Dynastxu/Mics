@@ -46,6 +46,7 @@ pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
 └─ 设置                    mics.settings（分组）
    ├─ 通用                  mics.settings
    ├─ 插件管理               mics.plugin-inspector
+   ├─ 插件配置               mics.settings
    ├─ 启动设置               mics.launch
    ├─ 下载设置               mics.download
    └─ 日志设置               mics.logger
@@ -68,7 +69,8 @@ mics/
 │  ├─ ui/                   # @mics/ui：通用 UI 组件（筛选面板、可搜索列表）
 │  └─ plugin-loader/        # @mics/plugin-loader：扫描目录、校验 plugin.json
 ├─ plugins/
-│  ├─ kernel/               # 内核插件（plugins / ipc / commands / storage / permissions 服务）
+│  ├─ kernel/               # 内核插件（plugins / ipc / commands / storage / permissions / capabilities 服务）
+│  ├─ shell/                # 进程能力：shell.execute 的本机 provider（启动页与其它插件都经它起进程）
 │  ├─ core-workbench/       # 默认导航宽度与主题（纯清单插件，没有代码）
 │  ├─ launch/               # 启动页 + 启动设置（主进程 stub RPC + 渲染页）
 │  ├─ download/             # 下载分组 + 下载设置
@@ -232,6 +234,17 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
   之后不会被页面/命令/启动事件自动重新激活，其导航、命令与样式也会从界面上移除。
 - 第三方插件的安装、启停、重载与卸载都不需要重启应用，详见
   [docs/plugin-manager.md](docs/plugin-manager.md)；验收载体是 `examples/hello-tool`。
+- 插件管理页选中插件后可看「我依赖 / 依赖我 / 我提供 / 我注册」与未满足项；
+  同一份诊断经只读 RPC `plugins/diagnostics` 暴露，agent 不需要自己推断依赖关系。
+- 插件可以用清单里的 `contributes.configuration` 声明设置；**设置 → 插件配置**会按
+  schema 自动渲染，`ctx.storage` 自动补默认值并校验，agent 通过 `configuration/*` 读写。
+- `boot.config.json` 的 `profile` 指向 `<userData>/profiles/<name>.json`，可强制启用/禁用
+  一批插件并给设置项提供默认值；用户自己的开关保存在 `disabled-plugins.json`。
+- 开发模式会做清理审计：插件重载后 `ipcMain` / `window` 监听器 / 定时器 / 视图数量
+  如果增长，控制台或日志会打印告警与注册堆栈（渲染端前缀 `[mics.cleanup]`）；
+  生产构建不安装审计。
+- 事件派发模式（`emit` / `bail` / `waterfall` / `serial` / `parallel`）在
+  `packages/sdk/src/contract/events.ts` 里统一声明；开发模式会审计派发点与声明不一致的情况。
 - 快捷键：`Ctrl+Shift+P` 命令面板，`Ctrl+B` 显示/隐藏左侧导航。
 - 窗口无边框，标题栏由 `apps/desktop/src/renderer/shell/WindowTitleBar.vue` 自绘；
   系统菜单已移除，开发/预览构建下用 `F12` 打开 DevTools、`Ctrl+R` 重载渲染进程。

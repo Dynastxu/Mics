@@ -1,4 +1,5 @@
 import type { Plugin } from 'cordis'
+import './contract/events'
 import './contract/services'
 
 /**

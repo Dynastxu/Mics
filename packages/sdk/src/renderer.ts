@@ -1,5 +1,6 @@
 import { inject, type InjectionKey } from 'vue'
 import type { Context, Plugin } from 'cordis'
+import './contract/events'
 import './contract/services'
 
 /**

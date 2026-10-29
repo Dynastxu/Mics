@@ -5,5 +5,18 @@
   "description": "下载队列管理、进度追踪、SHA1 校验与断点续传。",
   "author": "mics",
   "main": "dist/main.mjs",
-  "dependencies": ["mics.kernel"]
+  "dependencies": ["mics.kernel"],
+  "contributes": {
+    "configuration": {
+      "title": "下载",
+      "properties": {
+        "cacheDir": {
+          "type": "string",
+          "title": "缓存目录",
+          "description": "留空使用默认缓存目录",
+          "default": ""
+        }
+      }
+    }
+  }
 }

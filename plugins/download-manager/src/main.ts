@@ -10,17 +10,21 @@ import {
   DEFAULT_DOWNLOAD_CACHE_LIMIT,
   DEFAULT_DOWNLOAD_CONCURRENCY,
   DEFAULT_DOWNLOAD_SOURCES,
+  FILE_TRANSFER,
   normalizeDownloadSources,
   validateInstanceName,
 } from '@mics/sdk'
 import type {
   DownloadSource,
   DownloadTask,
+  FileTransferCapability,
+  FileTransferHandle,
   InstallJob,
   InstanceNameCheck,
   InstallRequest,
+  TransferOutcome,
 } from '@mics/sdk'
-import { createFileTransfer, type FileTransfer, type TransferResult } from './transfer'
+import { createFileTransfer, type FileTransferOptions } from './transfer'
 
 let taskSeq = 0
 let jobSeq = 0
@@ -108,13 +112,13 @@ function remapUrl(url: string, src: DownloadSource): string {
 }
 
 export const name = 'mics.download.manager'
-export const inject = ['ipc', 'storage']
+export const inject = ['ipc', 'storage', 'capabilities']
 
 export function apply(ctx: Context): void {
   const tasks = new Map<string, DownloadTask>()
   const jobs = new Map<string, InstallJob>()
   /** 正在传输的任务句柄：暂停/取消时用它中断请求（.part 保留） */
-  const transfers = new Map<string, FileTransfer>()
+  const transfers = new Map<string, FileTransferHandle>()
   /** 每个任务当前下载轮次；暂停后立刻恢复时靠它丢弃上一轮的迟到回调 */
   const downloadRuns = new Map<string, number>()
   const cancelledTasks = new Set<string>()
@@ -128,6 +132,13 @@ export function apply(ctx: Context): void {
   const cacheRoot = path.join(dataDir, 'cache', 'downloads')
   const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 128 })
   const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 128 })
+
+  // 默认的传输实现由本插件提供，但调用方只依赖能力名：沙箱 / 镜像插件可以用
+  // 更高的 priority 注册同名能力整体替换，下载管线不需要改。
+  ctx.capabilities.provide<FileTransferCapability>(FILE_TRANSFER, {
+    label: 'local',
+    create: (spec) => createFileTransfer(spec as FileTransferOptions),
+  })
 
   /** 已受理但尚未落盘的实例名：并发提交同名安装时先占位 */
   const reservedInstanceNames = new Set<string>()
@@ -590,7 +601,7 @@ export function apply(ctx: Context): void {
         return
       }
 
-      const transfer = createFileTransfer({
+      const transfer = ctx.capabilities.require<FileTransferCapability>(FILE_TRANSFER).create({
         url: remapUrl(task.url, src),
         partPath,
         sha1: task.sha1,
@@ -610,7 +621,7 @@ export function apply(ctx: Context): void {
       })
       transfers.set(task.id, transfer)
 
-      let result: TransferResult
+      let result: TransferOutcome
       try {
         result = await transfer.start()
       } catch (cause) {

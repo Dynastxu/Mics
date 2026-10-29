@@ -11,21 +11,43 @@ const height = ref('720')
 const jvmArgs = ref('')
 const isolation = ref('instance')
 const repeatBehavior = ref<RepeatLaunchBehavior>('prompt')
+const error = ref('')
+
+function messageOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
 
 async function load(): Promise<void> {
   try {
     const settings = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/get')
     repeatBehavior.value = settings.repeatBehavior
-  } catch { /* 使用默认的「提示」 */ }
+    memory.value = String(settings.maxMemory)
+  } catch { /* 使用默认的「提示」与 4096 MB */ }
 }
 
 async function saveBehavior(): Promise<void> {
+  error.value = ''
   try {
     const settings = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/set', {
       repeatBehavior: repeatBehavior.value,
     })
     repeatBehavior.value = settings.repeatBehavior
-  } catch { /* 保存失败时保留当前选择 */ }
+    memory.value = String(settings.maxMemory)
+  } catch (cause) {
+    error.value = messageOf(cause)
+  }
+}
+
+async function saveMemory(): Promise<void> {
+  error.value = ''
+  try {
+    const settings = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/set', {
+      maxMemory: Number(memory.value),
+    })
+    memory.value = String(settings.maxMemory)
+  } catch (cause) {
+    error.value = messageOf(cause)
+  }
 }
 
 onMounted(load)
@@ -36,6 +58,8 @@ onMounted(load)
     <header class="mics-page__header">
       <h1 class="mics-page__title">启动设置</h1>
     </header>
+
+    <p v-if="error" class="launch-settings__error">{{ error }}</p>
 
     <div class="mics-form">
       <div class="mics-field">
@@ -58,7 +82,13 @@ onMounted(load)
           <div class="mics-field__hint">单位 MB，留空由启动器自动分配</div>
         </div>
         <div class="mics-field__control">
-          <input v-model="memory" class="mics-input" inputmode="numeric" placeholder="4096" />
+          <input
+            v-model="memory"
+            class="mics-input"
+            inputmode="numeric"
+            placeholder="4096"
+            @change="saveMemory"
+          />
         </div>
       </div>
 
@@ -99,6 +129,17 @@ onMounted(load)
       </div>
     </div>
 
-    <p class="mics-page__note">内存、Java 路径等设置尚未接入启动参数。</p>
+    <p class="mics-page__note">Java 路径、窗口尺寸与 JVM 参数尚未接入启动参数。</p>
   </div>
 </template>
+
+<style scoped>
+.launch-settings__error {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--mics-danger);
+  border-radius: 8px;
+  color: var(--mics-danger);
+  font-size: 12px;
+}
+</style>

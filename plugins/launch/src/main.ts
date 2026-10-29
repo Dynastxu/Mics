@@ -1,6 +1,8 @@
 import { app } from 'electron'
 import type { Context } from 'cordis'
 import { defineMainPlugin } from '@mics/sdk/main'
+import { SHELL_EXECUTE } from '@mics/sdk'
+import type { ShellExecuteCapability } from '@mics/sdk'
 import { listInstances, markInstanceLaunched, resolveInstance } from './instances'
 import { launchInstance } from './launch'
 import { waitForGameWindow } from './gameWindow'
@@ -15,7 +17,7 @@ import type {
 import { LAUNCH_STATE_TOPIC } from './shared'
 
 export const name = 'mics.launch'
-export const inject = ['ipc', 'storage']
+export const inject = ['ipc', 'storage', 'capabilities']
 
 /** 运行中进程记录：用于重启后认领仍在运行的游戏 */
 const RUNNING_KEY = 'running'
@@ -52,6 +54,12 @@ export function apply(ctx: Context): void {
 
   const readBehavior = (): RepeatLaunchBehavior =>
     normalizeBehavior(ctx.storage.get<string>(BEHAVIOR_KEY, 'prompt'))
+
+  const readMemory = (): number => {
+    const value = Number(ctx.storage.get<string>('maxMemory', '4096'))
+    if (!Number.isFinite(value)) return 4096
+    return Math.max(1024, Math.min(32768, Math.round(value)))
+  }
 
   /** 正在准备（校验 / 下载 / spawn）的实例，避免页面重挂载后的重复点击 */
   const preparing = new Set<string>()
@@ -105,7 +113,10 @@ export function apply(ctx: Context): void {
       const name = sanitizeUsername(username || ctx.storage.get<string>('username', 'Steve'))
       const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
 
-      const launched = await launchInstance(instance, {
+      // 启动方式由 provider 决定：本机进程只是默认实现，沙箱插件可以整体替换
+      const shell = ctx.capabilities.require<ShellExecuteCapability>(SHELL_EXECUTE)
+
+      const launched = await launchInstance(shell, instance, {
         username: name,
         launcherVersion: app.getVersion(),
         memoryMb: Number.isFinite(memory) ? memory : 4096,
@@ -126,12 +137,25 @@ export function apply(ctx: Context): void {
     return { terminated } satisfies TerminateResult
   })
 
-  ctx.ipc.handle('settings/get', () => ({ repeatBehavior: readBehavior() } satisfies LaunchSettings))
+  ctx.ipc.handle('settings/get', () => ({
+    repeatBehavior: readBehavior(),
+    maxMemory: readMemory(),
+  }) satisfies LaunchSettings)
 
-  ctx.ipc.handle<{ repeatBehavior: RepeatLaunchBehavior }>('settings/set', ({ repeatBehavior }) => {
-    const behavior = normalizeBehavior(repeatBehavior)
-    ctx.storage.set(BEHAVIOR_KEY, behavior)
-    return { repeatBehavior: behavior } satisfies LaunchSettings
+  ctx.ipc.handle<Partial<LaunchSettings>>('settings/set', (params) => {
+    if (params?.repeatBehavior !== undefined) {
+      ctx.storage.set(BEHAVIOR_KEY, normalizeBehavior(params.repeatBehavior))
+    }
+    if (params?.maxMemory !== undefined) {
+      const memory = Number(params.maxMemory)
+      if (!Number.isFinite(memory)) throw new Error('最大内存必须是数字')
+      // storage 会按清单 schema 校验 1024–32768
+      ctx.storage.set('maxMemory', Math.round(memory))
+    }
+    return {
+      repeatBehavior: readBehavior(),
+      maxMemory: readMemory(),
+    } satisfies LaunchSettings
   })
 }
 

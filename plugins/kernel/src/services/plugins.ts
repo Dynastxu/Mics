@@ -12,18 +12,46 @@ import {
   UNINSTALL_TIMEOUT_MS,
 } from '@mics/plugin-loader'
 import type {
+  CapabilitiesServiceApi,
+  CommandsServiceApi,
   Disposable,
+  IpcServiceApi,
   KernelConfig,
+  PluginDependencyDetail,
+  PluginDependencyRef,
+  PluginFailure,
+  PluginFailureStage,
+  PluginGraphNode,
+  PluginGraphReport,
   PluginId,
   PluginInfo,
   PluginInstallSummary,
   PluginRecord,
   PluginState,
   PluginStatus,
+  PluginUnmetRef,
+  ProfileLock,
   RuntimeSnapshot,
+  ScanError,
   StorageServiceApi,
 } from '@mics/sdk'
-import { PLUGIN_ID, PLUGIN_SCHEME } from '@mics/sdk'
+import {
+  bailEvent,
+  emitEvent,
+  FIBER_ACTIVE,
+  FIBER_FAILED,
+  FIBER_PENDING,
+  PLUGIN_ID,
+  PLUGIN_SCHEME,
+  PluginFailureError,
+  PluginUninstallError,
+  pluginIdOf,
+} from '@mics/sdk'
+import {
+  reportIpcRegistrations,
+  snapshotIpcRegistrations,
+  type IpcRegistrationSnapshot,
+} from '../cleanupAudit'
 
 /** 等插件真正停下来的上限；超过就认为它没救，交给失败态与用户重试 */
 const STOP_TIMEOUT_MS = 10_000
@@ -31,9 +59,18 @@ const STOP_TIMEOUT_MS = 10_000
 interface Entry {
   record: PluginRecord
   state: PluginState
-  error?: string
+  failure?: PluginFailure
+  /** 停止超时过：旧代码可能仍在跑，重启应用前拒绝再次激活 */
+  restartRequired?: boolean
   fiber?: Fiber
+  /** 清单依赖的问题（缺失 / 自依赖 / 循环），激活前就能确定 */
+  issues?: string[]
+  /** 正在等待的服务名，只在 state === 'waiting' 时有值 */
+  waitingFor?: string[]
 }
+
+/** 能力注册表里只给内核用的生命周期钩子 */
+type CapabilitiesDiagnostics = CapabilitiesServiceApi & { forget?: (id: PluginId) => void }
 
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -96,9 +133,18 @@ export class PluginsService extends Service {
   private readonly config: KernelConfig
   private readonly entries = new Map<PluginId, Entry>()
   private readonly listeners = new Set<() => void>()
+  /** 生效的禁用集合（boot.config + 用户开关 + profile，按优先级合并） */
   private readonly disabled = new Set<PluginId>()
+  /** 用户自己切换出来的禁用集合；持久化到 disabled-plugins.json */
+  private readonly userDisabled = new Set<PluginId>()
+  /** 最近一次扫描里失败的目录；清单非法时插件不会进入 entries，只能从这里看到 */
+  private scanIssues: ScanError[] = []
 
   private readonly queues = new Map<PluginId, Promise<unknown>>()
+  /** 同一个插件同时只跑一次启动；共享给并发的依赖方 */
+  private readonly starting = new Map<PluginId, Promise<void>>()
+  /** dev 清理审计：每个插件上一次重载后的 ipcMain 注册快照 */
+  private readonly ipcAuditBaselines = new Map<PluginId, IpcRegistrationSnapshot>()
   private mutations: Promise<unknown> = Promise.resolve()
 
   constructor(ctx: Context, config: KernelConfig) {
@@ -108,6 +154,7 @@ export class PluginsService extends Service {
   }
 
   [Service.init](): void {
+    this.scanIssues = [...(this.config.scanErrors ?? [])]
     for (const record of this.config.plugins) {
       const id = record.manifest.id
       this.entries.set(id, {
@@ -116,18 +163,26 @@ export class PluginsService extends Service {
       })
     }
 
-    // 禁用来源有两处：安装时写下的状态文件，以及部署时静态声明的 boot.config。
-    for (const id of this.readDisabled()) this.disabled.add(id)
-    for (const id of this.config.disabled) this.disabled.add(id)
+    // 禁用来源：用户开关（文件）、部署静态声明、以及 profile 的强制集合。
+    // 用户集合单独保存，profile 变化时只需要重新合并，不会污染用户选择。
+    for (const id of this.readDisabled()) this.userDisabled.add(id)
+    this.rebuildEffectiveDisabled()
 
     for (const [id, entry] of this.entries) {
       if (!this.disabled.has(id)) continue
       // core / essential 不允许禁用：宁可忽略记录，也不能把界面锁死
       if (this.isLocked(entry)) {
         this.disabled.delete(id)
+        this.userDisabled.delete(id)
         continue
       }
       entry.state = 'disabled'
+    }
+
+    this.validateGraph()
+    for (const [id, entry] of this.entries) {
+      if (!entry.issues?.length) continue
+      this.baseCtx.logger('plugins').warn(`插件 ${id} 的依赖有问题：${entry.issues.join('；')}`)
     }
 
     this.persistDisabled()
@@ -145,6 +200,220 @@ export class PluginsService extends Service {
 
   snapshot(): RuntimeSnapshot {
     return { app: this.config.app, plugins: this.list(), commands: [] }
+  }
+
+  /**
+   * 依赖图 + 贡献点 + 未满足项。
+   *
+   * 数据全部来自内核已经持有的注册表，不再让界面自己猜：
+   *   - `dependsOn`：清单依赖 + 非内核服务提供方 + 能力提供方；
+   *   - `dependents`：上面这张图的反向边；
+   *   - `provides`：fiber 注册的服务 + `capabilities` 里的提供方；
+   *   - `contributes`：RPC、命令、页面、主题、状态栏；
+   *   - `unmet`：装了但没开、开了但没人提供、能力没有 provider。
+   */
+  diagnostics(): PluginGraphReport {
+    const nodes = new Map<PluginId, PluginGraphNode>()
+    for (const entry of this.entries.values()) {
+      const info = this.describe(entry)
+      nodes.set(info.id, {
+        id: info.id,
+        name: info.name,
+        version: info.version,
+        status: info.status,
+        state: info.state,
+        source: info.source,
+        failure: entry.failure,
+        restartRequired: entry.restartRequired,
+        dependsOn: [],
+        dependents: [],
+        provides: [],
+        consumes: [],
+        contributes: [],
+        warnings: [...entry.record.warnings],
+      })
+    }
+
+    const ipc = this.baseCtx.get('ipc') as IpcServiceApi | undefined
+    const commands = this.baseCtx.get('commands') as CommandsServiceApi | undefined
+    const capabilities = this.baseCtx.get('capabilities') as CapabilitiesServiceApi | undefined
+    const commandList = commands?.list() ?? []
+    const capabilityNames = capabilities?.names() ?? []
+    const unmet = new Map<string, PluginUnmetRef>()
+    const addUnmet = (kind: PluginUnmetRef['kind'], name: string, id: PluginId): void => {
+      const key = `${kind}:${name}`
+      const ref = unmet.get(key) ?? { kind, name, neededBy: [] }
+      if (!ref.neededBy.includes(id)) ref.neededBy.push(id)
+      unmet.set(key, ref)
+    }
+
+    const addDependency = (
+      node: PluginGraphNode,
+      targetId: PluginId,
+      detail: PluginDependencyDetail,
+    ): void => {
+      let ref: PluginDependencyRef | undefined = node.dependsOn.find(
+        (item) => item.id === targetId,
+      )
+      if (!ref) {
+        const target = nodes.get(targetId)
+        ref = {
+          id: targetId,
+          name: target?.name ?? targetId,
+          status: target?.status,
+          satisfied: true,
+          details: [],
+        }
+        node.dependsOn.push(ref)
+      }
+      ref.satisfied &&= detail.satisfied
+      ref.details.push(detail)
+    }
+
+    for (const [id, entry] of this.entries) {
+      const node = nodes.get(id)
+      if (!node) continue
+
+      for (const dependency of entry.record.manifest.dependencies ?? []) {
+        const targetEntry = this.entries.get(dependency)
+        if (!targetEntry) {
+          addUnmet('plugin', dependency, id)
+          addDependency(node, dependency, { kind: 'manifest', satisfied: false })
+          continue
+        }
+        addDependency(node, dependency, {
+          kind: 'manifest',
+          satisfied: targetEntry.state !== 'disabled' && targetEntry.state !== 'failed',
+        })
+      }
+
+      for (const name of Object.keys(entry.fiber?.inject ?? {})) {
+        const impl = this.baseCtx.reflect._getImpl(name)
+        const providerId = impl ? pluginIdOf(impl.ctx) : undefined
+        const satisfied = impl !== undefined
+        node.consumes.push({ kind: 'service', name, providerId, satisfied })
+        if (!satisfied) addUnmet('service', name, id)
+        if (providerId && providerId !== this.config.kernel && providerId !== id) {
+          addDependency(node, providerId, { kind: 'service', via: name, satisfied })
+        }
+      }
+
+      for (const name of capabilities?.consumersOf(id) ?? []) {
+        const providers = capabilities?.providers(name) ?? []
+        const providerId = providers[0]?.pluginId
+        const satisfied = providers.length > 0
+        node.consumes.push({ kind: 'capability', name, providerId, satisfied })
+        if (!satisfied) addUnmet('capability', name, id)
+        if (providerId && providerId !== this.config.kernel && providerId !== id) {
+          addDependency(node, providerId, { kind: 'capability', via: name, satisfied })
+        }
+      }
+
+      const provided = new Set<string>()
+      for (const provision of entry.fiber?.provisions ?? []) {
+        if (provided.has(provision.name)) continue
+        provided.add(provision.name)
+        node.provides.push({ kind: 'service', name: provision.name })
+      }
+      // 子 fiber 里注册的服务（内核的 plugins/ipc/… 就是这样挂的）不在
+      // 插件自己的 provisions 里，用服务名反查提供方补齐。
+      for (const name of Object.keys(this.baseCtx.reflect.props)) {
+        if (provided.has(name)) continue
+        if (this.baseCtx.reflect.props[name]?.type !== 'service') continue
+        const impl = this.baseCtx.reflect._getImpl(name)
+        if (!impl || pluginIdOf(impl.ctx) !== id) continue
+        provided.add(name)
+        node.provides.push({ kind: 'service', name })
+      }
+      for (const name of capabilityNames) {
+        for (const provider of capabilities?.providers(name) ?? []) {
+          if (provider.pluginId !== id) continue
+          node.provides.push({
+            kind: 'capability',
+            name,
+            label: provider.label,
+            priority: provider.priority,
+          })
+        }
+      }
+
+      const declaredCommands = new Set<string>()
+      for (const contributor of entry.record.manifest.contributes?.commands ?? []) {
+        declaredCommands.add(contributor.id)
+        node.contributes.push({ kind: 'command', id: contributor.id, title: contributor.title })
+      }
+      for (const contributor of commandList) {
+        if (contributor.pluginId !== id || declaredCommands.has(contributor.id)) continue
+        node.contributes.push({
+          kind: 'command',
+          id: contributor.id,
+          title: contributor.title,
+        })
+      }
+      for (const method of ipc?.methodsOf?.(id) ?? []) {
+        node.contributes.push({ kind: 'rpc', id: method })
+      }
+      for (const nav of entry.record.manifest.contributes?.nav ?? []) {
+        node.contributes.push({ kind: 'view', id: nav.id, title: nav.title })
+      }
+      for (const group of entry.record.manifest.contributes?.navGroups ?? []) {
+        node.contributes.push({ kind: 'navGroup', id: group.id, title: group.title })
+      }
+      for (const item of entry.record.manifest.contributes?.statusBar ?? []) {
+        node.contributes.push({ kind: 'statusBar', id: item.id, title: item.text })
+      }
+      for (const theme of entry.record.manifest.contributes?.themes ?? []) {
+        node.contributes.push({ kind: 'theme', id: theme.id, title: theme.label })
+      }
+      const layout = entry.record.manifest.contributes?.layout
+      if (layout) node.contributes.push({ kind: 'layout', id: layout.id, title: layout.label })
+      const configuration = entry.record.manifest.contributes?.configuration
+      if (configuration) {
+        node.contributes.push({
+          kind: 'configuration',
+          id: 'configuration',
+          title: configuration.title,
+        })
+      }
+    }
+
+    const byName = (a: { name: string }, b: { name: string }): number =>
+      a.name.localeCompare(b.name)
+    for (const node of nodes.values()) {
+      for (const dependency of node.dependsOn) {
+        const target = nodes.get(dependency.id)
+        if (!target) continue
+        target.dependents.push({
+          id: node.id,
+          name: node.name,
+          status: node.status,
+          satisfied: dependency.satisfied,
+          details: dependency.details.map((detail) => ({ ...detail })),
+        })
+      }
+      node.dependsOn.sort(byName)
+      node.dependents.sort(byName)
+      node.provides.sort(
+        (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
+      )
+      node.consumes.sort(
+        (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
+      )
+      node.contributes.sort(
+        (a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id),
+      )
+    }
+
+    return {
+      generatedAt: Date.now(),
+      kernel: this.config.kernel,
+      profile: this.config.profile?.name,
+      nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)),
+      unmet: [...unmet.values()].sort(
+        (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
+      ),
+      scanIssues: [...this.scanIssues],
+    }
   }
 
   onDidChange(listener: () => void): Disposable {
@@ -182,13 +451,27 @@ export class PluginsService extends Service {
         )
       }
 
-      this.disabled.add(id)
+      const lock = this.profileLocked(id)
+      if (lock === 'enabled') {
+        throw new Error(`profile ${this.config.profile?.name} 强制启用插件 ${id}，不能禁用`)
+      }
+
+      this.userDisabled.add(id)
+      this.rebuildEffectiveDisabled()
       this.persistDisabled()
-      await this.stop(entry)
+      const timedOut = await this.stop(entry)
+      if (timedOut) {
+        // 停不下来就不能说「已禁用」：保留 failed + timeout，用户重试或重启应用
+        this.setState(entry, 'failed')
+        throw new PluginFailureError(
+          'timeout',
+          entry.failure?.message ?? `插件 ${id} 停止超时`,
+        )
+      }
       entry.state = 'disabled'
-      entry.error = undefined
+      entry.failure = undefined
       this.notify()
-      this.baseCtx.emit('plugin/deactivated', id)
+      emitEvent(this.baseCtx, 'plugin/deactivated', id)
     })
   }
 
@@ -196,9 +479,13 @@ export class PluginsService extends Service {
   enable(id: PluginId): Promise<void> {
     return this.serialize(id, async () => {
       const entry = this.require(id)
-      this.disabled.delete(id)
+      if (this.profileLocked(id) === 'disabled') {
+        throw new Error(`profile ${this.config.profile?.name} 禁用了插件 ${id}，不能启用`)
+      }
+      this.userDisabled.delete(id)
+      this.rebuildEffectiveDisabled()
       this.persistDisabled()
-      entry.error = undefined
+      entry.failure = undefined
       await this.doStart(entry)
       this.notify()
     })
@@ -209,22 +496,49 @@ export class PluginsService extends Service {
     return this.serialize(id, async () => {
       const entry = this.require(id)
       if (this.disabled.has(id)) throw new Error(`插件 ${id} 已禁用，请先启用再重载`)
-      await this.stop(entry)
-      entry.state = 'discovered'
-      entry.error = undefined
-      await this.doStart(entry)
-      this.notify()
+      // 只在 dev 记录 ipcMain 注册；第一次重载建立基线，第二次开始比较
+      const audit = this.config.app.isDev ? snapshotIpcRegistrations() : undefined
+      try {
+        const timedOut = await this.stop(entry)
+        if (timedOut) {
+          this.setState(entry, 'failed')
+          throw new PluginFailureError(
+            'timeout',
+            entry.failure?.message ?? `插件 ${id} 停止超时`,
+          )
+        }
+        entry.state = 'discovered'
+        entry.failure = undefined
+        await this.doStart(entry)
+        this.notify()
+      } finally {
+        if (audit) {
+          const current = snapshotIpcRegistrations()
+          reportIpcRegistrations(
+            id,
+            this.ipcAuditBaselines.get(id),
+            current,
+            (message) => this.baseCtx.logger('cleanup').warn(message),
+          )
+          this.ipcAuditBaselines.set(id, current)
+        }
+      }
     })
   }
 
   /** 渲染端加载失败时回报：主进程这一半也要停下来，避免「一半在跑」 */
-  fail(id: PluginId, message: string): Promise<void> {
+  fail(id: PluginId, message: string, stage: PluginFailureStage = 'renderer'): Promise<void> {
     return this.serialize(id, async () => {
       const entry = this.require(id)
-      await this.stop(entry)
-      entry.state = 'failed'
-      entry.error = message
-      this.notify()
+      const timedOut = await this.stop(entry)
+      entry.failure = timedOut
+        ? {
+            stage: 'timeout',
+            message: `页面加载失败：${message}（主进程停止也超时，需要重启应用）`,
+            at: Date.now(),
+          }
+        : { stage, message, at: Date.now() }
+      this.setState(entry, 'failed')
     })
   }
 
@@ -242,7 +556,8 @@ export class PluginsService extends Service {
   /**
    * 从文件夹安装。
    *
-   * 安装只负责「文件到位、登记」，装完一律是禁用状态——用户点启用才真正执行代码。
+   * 安装只负责「文件到位、登记」，装完默认是禁用状态——用户点启用才真正执行代码。
+   * 若 profile.enable 强制启用了这个 id，则按 profile 的集合生效（仍要等第一次激活）。
    */
   install(dir: string): Promise<{ plugin: PluginInstallSummary; upgraded: boolean }> {
     return this.exclusive(async () => {
@@ -252,7 +567,22 @@ export class PluginsService extends Service {
         const wasActive = existing?.state === 'active' || existing?.state === 'activating'
 
         // 升级：先停旧版，再替换目录，最后保持禁用
-        if (existing) await this.stop(existing)
+        if (existing) {
+          if (existing.restartRequired) {
+            throw new PluginFailureError(
+              'timeout',
+              `插件 ${preview.id} 上次停止超时，重启应用后才能替换文件`,
+            )
+          }
+          const timedOut = await this.stop(existing)
+          if (timedOut) {
+            this.setState(existing, 'failed')
+            throw new PluginFailureError(
+              'timeout',
+              existing.failure?.message ?? `插件 ${preview.id} 停止超时，无法替换文件`,
+            )
+          }
+        }
 
         let installed
         try {
@@ -267,7 +597,8 @@ export class PluginsService extends Service {
           throw error
         }
 
-        this.disabled.add(installed.record.manifest.id)
+        this.userDisabled.add(installed.record.manifest.id)
+        this.rebuildEffectiveDisabled()
         await this.rescan()
         return {
           plugin: this.summarize(installed.record, preview.installedVersion),
@@ -292,11 +623,21 @@ export class PluginsService extends Service {
         }
 
         // 先落禁用：即使后面失败，它也保持「已安装但已禁用」，不会自己跑起来
-        this.disabled.add(id)
+        this.userDisabled.add(id)
+        this.rebuildEffectiveDisabled()
         this.persistDisabled()
-        await this.stop(entry)
+        const timedOut = await this.stop(entry)
+        if (timedOut) {
+          this.setState(entry, 'failed')
+          // 用 script 阶段复用「重试 / 强制卸载」的恢复路径：旧代码没停，
+          // 此时删目录只会得到一个文件占用错误
+          throw new PluginUninstallError(
+            entry.failure?.message ?? `插件 ${id} 停止超时，无法卸载`,
+            'script',
+          )
+        }
         entry.state = 'disabled'
-        entry.error = undefined
+        entry.failure = undefined
         this.notify()
 
         if (!options.force) {
@@ -308,6 +649,7 @@ export class PluginsService extends Service {
         }
 
         await removePluginFiles(entry.record, this.config.userDataDir)
+        this.userDisabled.delete(id)
         this.disabled.delete(id)
         this.forgetStorage(id)
         await this.rescan()
@@ -325,50 +667,159 @@ export class PluginsService extends Service {
     return entry
   }
 
-  private async doStart(entry: Entry, visiting: Set<PluginId> = new Set()): Promise<void> {
+  /**
+   * 启动一个插件（必要时先启动它声明的依赖）。
+   *
+   * 同一个插件可能被多条链同时要求启动（两个开机插件依赖同一个插件），
+   * 因此用 `starting` 共享同一次启动，而不是重复挂载出第二个 fiber；
+   * 依赖成环由 `visiting` 在进入前拦住。
+   */
+  private doStart(entry: Entry, visiting: Set<PluginId> = new Set()): Promise<void> {
     const { manifest } = entry.record
     const id = manifest.id
-    if (this.disabled.has(id)) {
-      throw new Error(`插件 ${id} 已被禁用，请先在插件面板中启用`)
-    }
-    if (entry.state === 'active') return
-    if (visiting.has(id)) throw new Error(`插件 ${id} 存在循环依赖`)
 
+    if (visiting.has(id)) {
+      return Promise.reject(new PluginFailureError('dependency', `插件 ${id} 存在循环依赖`))
+    }
+    if (this.disabled.has(id)) {
+      return Promise.reject(new Error(`插件 ${id} 已被禁用，请先在插件面板中启用`))
+    }
+    if (entry.restartRequired) {
+      // 旧 fiber 的 dispose 没结束：再启动会得到第二个 fiber，只能重启应用
+      const failure = new PluginFailureError(
+        'timeout',
+        `插件 ${id} 上次停止超时，请重启应用后再操作`,
+      )
+      this.recordFailure(entry, failure)
+      return Promise.reject(failure)
+    }
+    if (entry.issues?.length) {
+      const failure = new PluginFailureError(
+        'dependency',
+        `插件 ${id} 的依赖有问题：${entry.issues.join('；')}`,
+      )
+      this.recordFailure(entry, failure)
+      return Promise.reject(failure)
+    }
+    if (entry.state === 'active' || entry.state === 'waiting') return Promise.resolve()
+
+    const running = this.starting.get(id)
+    if (running) return running
+
+    // 审批是同步投票：策略插件可以拒绝激活，拒绝结论会进入失败态
+    let verdict: ReturnType<typeof bailEvent<'plugin/beforeActivate'>>
+    try {
+      verdict = bailEvent(this.baseCtx, 'plugin/beforeActivate', id)
+    } catch (error) {
+      const failure = new PluginFailureError(
+        'policy',
+        `插件 ${id} 的激活审批失败：${toMessage(error)}`,
+      )
+      this.recordFailure(entry, failure)
+      return Promise.reject(failure)
+    }
+    if (verdict && typeof (verdict as { then?: unknown }).then === 'function') {
+      const failure = new PluginFailureError(
+        'policy',
+        `插件 ${id} 的激活审批返回了 Promise；plugin/beforeActivate 必须是同步投票`,
+      )
+      this.recordFailure(entry, failure)
+      return Promise.reject(failure)
+    }
+    if (verdict && verdict.allow === false) {
+      const failure = new PluginFailureError(
+        'policy',
+        verdict.reason ? `插件 ${id} 被策略拒绝激活：${verdict.reason}` : `插件 ${id} 被策略拒绝激活`,
+      )
+      this.recordFailure(entry, failure)
+      return Promise.reject(failure)
+    }
+
+    const task = this.startNow(entry, visiting)
+    this.starting.set(id, task)
+    void task
+      .finally(() => {
+        if (this.starting.get(id) === task) this.starting.delete(id)
+      })
+      .catch(() => {
+        // 失败已经由 startNow 记录并抛给调用方，这里只负责清理登记
+      })
+    return task
+  }
+
+  private async startNow(entry: Entry, visiting: Set<PluginId>): Promise<void> {
+    const { manifest } = entry.record
+    const id = manifest.id
     const nextVisiting = new Set(visiting).add(id)
+    entry.failure = undefined
     this.setState(entry, 'activating')
     try {
       for (const dependency of manifest.dependencies ?? []) {
         const target = this.entries.get(dependency)
-        if (!target) throw new Error(`插件 ${id} 依赖的 ${dependency} 未安装`)
+        if (!target) {
+          throw new PluginFailureError('dependency', `插件 ${id} 依赖的 ${dependency} 未安装`)
+        }
         // 依赖走同一条启动路径，但不重复加锁：外层已经持有当前插件的锁，
         // 依赖之间出现环时由 visiting 直接报错，而不是互相等待。
-        await this.doStart(target, nextVisiting)
+        try {
+          await this.doStart(target, nextVisiting)
+        } catch (error) {
+          throw new PluginFailureError(
+            'dependency',
+            `插件 ${id} 的依赖 ${dependency} 未就绪：${toMessage(error)}`,
+          )
+        }
       }
 
       if (entry.record.entryMain) {
-        const module = await importPluginEntry(entry.record.entryMain)
-        const plugin = resolvePlugin(module, id)
+        let module: Record<string, unknown>
+        try {
+          module = await importPluginEntry(entry.record.entryMain)
+        } catch (error) {
+          throw new PluginFailureError('import', `导入 ${id} 的入口失败：${toMessage(error)}`)
+        }
+        let plugin: import('cordis').Plugin.Object<unknown>
+        try {
+          plugin = resolvePlugin(module, id)
+        } catch (error) {
+          throw new PluginFailureError('import', toMessage(error))
+        }
         // 每个插件拿到独立的子上下文，带上 pluginId：
         // 服务通过 pluginIdOf(ctx) 就能实现「按插件隔离」的存储、命令归属等
         const scope = this.baseCtx.extend({ [PLUGIN_ID]: id }) as Context
-        entry.fiber = await scope.plugin(plugin, { pluginId: id, manifest })
+        let fiber: Fiber
+        try {
+          fiber = await scope.plugin(plugin, { pluginId: id, manifest })
+        } catch (error) {
+          throw new PluginFailureError('apply', `插件 ${id} 启动失败：${toMessage(error)}`)
+        }
+        entry.fiber = fiber
+        // cordis 允许插件在服务缺失时保持 pending：await 只等启动流程结束，
+        // 不代表插件真的执行了。这里把 fiber 状态映射成插件状态并持续跟踪。
+        this.watchFiber(entry, fiber)
+        this.applyFiberState(entry)
+        return
       }
 
-      entry.error = undefined
+      entry.failure = undefined
       this.setState(entry, 'active')
-      this.baseCtx.emit('plugin/activated', id)
+      emitEvent(this.baseCtx, 'plugin/activated', id)
     } catch (error) {
-      entry.error = toMessage(error)
-      this.setState(entry, 'failed')
-      this.baseCtx.logger('plugins').warn(`插件 ${id} 激活失败：${entry.error}`)
-      throw error
+      const failure =
+        error instanceof PluginFailureError
+          ? error
+          : new PluginFailureError('apply', toMessage(error))
+      this.recordFailure(entry, failure)
+      throw failure
     }
   }
 
-  private async stop(entry: Entry): Promise<void> {
+  /** 停掉 fiber；返回 true 表示超时（代码可能还在跑） */
+  private async stop(entry: Entry): Promise<boolean> {
     const fiber = entry.fiber
     entry.fiber = undefined
-    if (!fiber) return
+    entry.waitingFor = undefined
+    if (!fiber) return false
     const id = entry.record.manifest.id
     try {
       await withTimeout(
@@ -376,9 +827,134 @@ export class PluginsService extends Service {
         STOP_TIMEOUT_MS,
         `插件 ${id} 停止超时（${STOP_TIMEOUT_MS}ms）`,
       )
+      return false
     } catch (error) {
-      this.baseCtx.logger('plugins').warn(`插件 ${id} 停止异常：${toMessage(error)}`)
+      const message = toMessage(error)
+      entry.failure = { stage: 'timeout', message, at: Date.now() }
+      entry.restartRequired = true
+      this.baseCtx.logger('plugins').warn(`插件 ${id} 停止异常：${message}`)
+      return true
+    } finally {
+      // 使用记录属于运行时状态：重新激活时 require() 会重新登记
+      const capabilities = this.baseCtx.get('capabilities') as
+        | CapabilitiesDiagnostics
+        | undefined
+      capabilities?.forget?.(id)
     }
+  }
+
+  /** 记录失败并切到 failed；只在这里写 failure，避免 stage 与消息不同步 */
+  private recordFailure(entry: Entry, failure: PluginFailureError): void {
+    entry.failure = { stage: failure.stage, message: failure.message, at: Date.now() }
+    this.setState(entry, 'failed')
+    this.baseCtx
+      .logger('plugins')
+      .warn(`插件 ${entry.record.manifest.id} 激活失败（${failure.stage}）：${failure.message}`)
+  }
+
+  /**
+   * 跟踪 fiber 状态：服务出现 / 消失时 cordis 会重新计算插件是否可运行，
+   * 这里把那个结果同步成插件状态，界面与 RPC 路由才能看到真相。
+   */
+  private watchFiber(entry: Entry, fiber: Fiber): void {
+    // 监听挂在 fiber 自己的上下文上：fiber 销毁时监听一起撤销，重载不会累积
+    fiber.ctx.on('internal/status', (target: Fiber) => {
+      if (target === fiber) this.applyFiberState(entry)
+    })
+  }
+
+  private applyFiberState(entry: Entry): void {
+    const fiber = entry.fiber
+    if (!fiber) return
+
+    const previous = entry.state
+    const next: PluginState =
+      fiber.state === FIBER_ACTIVE
+        ? 'active'
+        : fiber.state === FIBER_FAILED
+          ? 'failed'
+          : fiber.state === FIBER_PENDING
+            ? 'waiting'
+            : 'activating'
+
+    if (next === 'waiting') {
+      entry.waitingFor = this.unmetOf(fiber)
+      entry.failure = undefined
+    } else if (next === 'active') {
+      entry.waitingFor = undefined
+      entry.failure = undefined
+    } else if (next === 'failed') {
+      entry.failure ??= {
+        stage: 'apply',
+        message: '插件在运行中失效，详见日志',
+        at: Date.now(),
+      }
+    }
+
+    if (next === previous) return
+    entry.state = next
+    this.notify()
+    if (next === 'active') emitEvent(this.baseCtx, 'plugin/activated', entry.record.manifest.id)
+  }
+
+  /** `inject` 里还没有提供方的服务名 */
+  private unmetOf(fiber: Fiber): string[] {
+    return Object.keys(fiber.inject).filter((name) => fiber.ctx.get(name) === undefined)
+  }
+
+  /**
+   * 清单依赖的静态校验：缺失、自依赖、循环依赖。
+   *
+   * 这些问题在激活前就能确定，属于「装错了」；与运行期「服务没出现」的 waiting
+   * 分开表达，用户才知道该改清单还是该启用别的插件。
+   */
+  private validateGraph(): void {
+    for (const entry of this.entries.values()) entry.issues = undefined
+
+    for (const [id, entry] of this.entries) {
+      for (const dependency of entry.record.manifest.dependencies ?? []) {
+        if (dependency === id) this.addIssue(id, '依赖自己')
+        else if (!this.entries.has(dependency)) this.addIssue(id, `依赖的插件 ${dependency} 未安装`)
+      }
+    }
+
+    const visited = new Map<PluginId, 'visiting' | 'done'>()
+    const stack: PluginId[] = []
+    const walk = (id: PluginId): void => {
+      const status = visited.get(id)
+      if (status === 'done') return
+      if (status === 'visiting') {
+        const start = stack.indexOf(id)
+        const cycle = [...stack.slice(start), id]
+        const label = `存在循环依赖：${cycle.join(' → ')}`
+        for (const member of new Set(cycle)) this.addIssue(member, label)
+        return
+      }
+      visited.set(id, 'visiting')
+      stack.push(id)
+      for (const dependency of this.entries.get(id)?.record.manifest.dependencies ?? []) {
+        if (this.entries.has(dependency)) walk(dependency)
+      }
+      stack.pop()
+      visited.set(id, 'done')
+    }
+    for (const id of this.entries.keys()) walk(id)
+
+    // 依赖问题修好后要能从失败态里出来：否则用户装好依赖还得重启。
+    // 只清 dependency 阶段的失败，import/apply 失败仍然需要重新加载。
+    for (const entry of this.entries.values()) {
+      if (entry.issues?.length) continue
+      if (entry.state !== 'failed' || entry.failure?.stage !== 'dependency') continue
+      entry.failure = undefined
+      entry.state = 'discovered'
+    }
+  }
+
+  private addIssue(id: PluginId, message: string): void {
+    const entry = this.entries.get(id)
+    if (!entry) return
+    const issues = (entry.issues ??= [])
+    if (!issues.includes(message)) issues.push(message)
   }
 
   /**
@@ -395,17 +971,27 @@ export class PluginsService extends Service {
     for (const failure of scan.errors) {
       this.baseCtx.logger('plugins').warn(`跳过插件 ${failure.dir}：${failure.errors.join('; ')}`)
     }
+    this.scanIssues = scan.errors
 
     const next = new Map(scan.plugins.map((record) => [record.manifest.id, record]))
 
     // 目录消失：停掉并从列表里移除（重启后也不会再出现）
     for (const [id, entry] of [...this.entries]) {
       if (id === this.config.kernel || next.has(id)) continue
-      await this.stop(entry)
+      const timedOut = await this.stop(entry)
+      if (timedOut || entry.restartRequired) {
+        // 旧代码没停下来：保留失败行，别把正在跑的东西从列表里抹掉
+        this.setState(entry, 'failed')
+        continue
+      }
       this.entries.delete(id)
+      this.userDisabled.delete(id)
       this.disabled.delete(id)
       this.forgetStorage(id)
     }
+
+    // 目录集合变化后重新合并禁用来源；新出现的插件才能拿到正确初始状态
+    this.rebuildEffectiveDisabled()
 
     // 目录出现或清单更新
     for (const [id, record] of next) {
@@ -424,13 +1010,15 @@ export class PluginsService extends Service {
     for (const [id, entry] of this.entries) {
       if (id === this.config.kernel) continue
       if (this.disabled.has(id) && entry.state !== 'disabled') {
-        await this.stop(entry)
-        entry.state = 'disabled'
+        const timedOut = await this.stop(entry)
+        entry.state = timedOut ? 'failed' : 'disabled'
+        if (!timedOut) entry.failure = undefined
       } else if (!this.disabled.has(id) && entry.state === 'disabled') {
         entry.state = 'discovered'
       }
     }
 
+    this.validateGraph()
     this.persistDisabled()
     this.syncHost()
     this.notify()
@@ -455,6 +1043,7 @@ export class PluginsService extends Service {
       | (StorageServiceApi & { forget?: (id: PluginId) => void })
       | undefined
     storage?.forget?.(id)
+    this.ipcAuditBaselines.delete(id)
   }
 
   private summarize(record: PluginRecord, installedVersion?: string): PluginInstallSummary {
@@ -484,6 +1073,48 @@ export class PluginsService extends Service {
     return Boolean(entry.record.manifest.core || entry.record.manifest.essential)
   }
 
+  /** profile 是否把某个插件的开关锁在某个方向 */
+  private profileLocked(id: PluginId): ProfileLock | undefined {
+    const profile = this.config.profile
+    if (!profile) return undefined
+    if (profile.disable.includes(id)) return 'disabled'
+    if (profile.enable.includes(id)) return 'enabled'
+    return undefined
+  }
+
+  /**
+   * 合并三处禁用来源：
+   *   1. boot.config.disabled（部署静态）
+   *   2. disabled-plugins.json（用户开关）
+   *   3. profile.disable / profile.enable（部署 profile）
+   *
+   * 优先级：profile.disable > profile.enable > boot/user。core / essential
+   * 永远不可禁用，因此会从结果里剔除并清掉对应用户记录。
+   */
+  private rebuildEffectiveDisabled(): void {
+    const profile = this.config.profile
+    const enable = new Set(profile?.enable ?? [])
+    const disable = new Set(profile?.disable ?? [])
+
+    const effective = new Set<PluginId>()
+    for (const id of this.config.disabled) effective.add(id)
+    for (const id of this.userDisabled) effective.add(id)
+    for (const id of disable) effective.add(id)
+    for (const id of enable) effective.delete(id)
+    // disable 与 enable 同时出现时 disable 优先
+    for (const id of disable) effective.add(id)
+
+    for (const [id, entry] of this.entries) {
+      if (!effective.has(id)) continue
+      if (!this.isLocked(entry)) continue
+      effective.delete(id)
+      this.userDisabled.delete(id)
+    }
+
+    this.disabled.clear()
+    for (const id of effective) this.disabled.add(id)
+  }
+
   private setState(entry: Entry, state: PluginState): void {
     entry.state = state
     this.notify()
@@ -491,12 +1122,13 @@ export class PluginsService extends Service {
 
   private notify(): void {
     for (const listener of this.listeners) listener()
-    this.baseCtx.emit('plugins/changed')
+    emitEvent(this.baseCtx, 'plugins/changed')
   }
 
   private statusOf(entry: Entry): PluginStatus {
     if (entry.state === 'disabled') return 'disabled'
     if (entry.state === 'failed') return 'failed'
+    if (entry.state === 'waiting') return 'waiting'
     return 'enabled'
   }
 
@@ -504,6 +1136,7 @@ export class PluginsService extends Service {
     const { manifest, source } = entry.record
     const builtin = source === 'builtin'
     const renderer = manifest.renderer
+    const profileLock = this.isLocked(entry) ? undefined : this.profileLocked(manifest.id)
     return {
       id: manifest.id,
       name: manifest.name,
@@ -516,7 +1149,8 @@ export class PluginsService extends Service {
       // 保护标记只对内置插件生效，见 isLocked()
       core: builtin && Boolean(manifest.core),
       essential: builtin && Boolean(manifest.essential),
-      canDisable: !this.isLocked(entry),
+      canDisable: !this.isLocked(entry) && !profileLock,
+      profileLocked: profileLock,
       uninstallable: !builtin,
       hasUninstall: Boolean(entry.record.entryUninstall),
       manifest,
@@ -528,7 +1162,11 @@ export class PluginsService extends Service {
       styles: (manifest.styles ?? []).map(
         (style) => `${PLUGIN_SCHEME}://${manifest.id}/${encodePath(style)}`,
       ),
-      error: entry.error,
+      waitingFor: entry.state === 'waiting' ? entry.waitingFor : undefined,
+      dependencyIssues: entry.issues?.length ? [...entry.issues] : undefined,
+      failure: entry.failure,
+      restartRequired: entry.restartRequired,
+      error: entry.failure?.message,
     }
   }
 
@@ -575,7 +1213,8 @@ export class PluginsService extends Service {
   private persistDisabled(): void {
     try {
       mkdirSync(path.dirname(this.disabledFile()), { recursive: true })
-      writeFileSync(this.disabledFile(), JSON.stringify([...this.disabled], null, 2), 'utf8')
+      // 只持久化用户开关：boot.config / profile 是部署侧输入，不写回用户文件
+      writeFileSync(this.disabledFile(), JSON.stringify([...this.userDisabled], null, 2), 'utf8')
     } catch (error) {
       this.baseCtx.logger('plugins').warn(`保存禁用列表失败：${toMessage(error)}`)
     }

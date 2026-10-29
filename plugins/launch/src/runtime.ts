@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import type { ShellProcess } from '@mics/sdk'
 import type {
   InstanceLaunchState,
   LaunchPhase,
@@ -8,10 +9,10 @@ import type {
 
 interface ProcessRecord extends LaunchProcessInfo {
   instanceId: string
-  child?: ChildProcess
+  child?: ShellProcess
 }
 
-/** 持久化到插件存储的形态：不含 ChildProcess，重启后按 pid 重新认领 */
+/** 持久化到插件存储的形态：不含进程句柄，重启后按 pid 重新认领 */
 export interface PersistedProcess {
   instanceId: string
   pid: number
@@ -114,7 +115,7 @@ export class LaunchRuntime {
   }
 
   /** 登记一次刚 spawn 的游戏进程，进入「启动中」 */
-  add(instanceId: string, pid: number, child: ChildProcess): void {
+  add(instanceId: string, pid: number, child: ShellProcess): void {
     if (this.disposed || !Number.isInteger(pid) || pid <= 0 || this.records.has(pid)) return
 
     const record: ProcessRecord = {

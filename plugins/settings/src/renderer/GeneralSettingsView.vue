@@ -49,6 +49,13 @@ function changeTheme(event: Event): void {
     <section class="mics-section">
       <h2 class="mics-section__title">数据与运行环境</h2>
       <div class="mics-form">
+        <div v-if="app.profile" class="mics-field">
+          <div class="mics-field__label">配置档</div>
+          <div class="mics-field__control">
+            <span class="mics-badge">{{ app.profile }}</span>
+          </div>
+        </div>
+
         <div class="mics-field">
           <div class="mics-field__label">数据目录</div>
           <div class="mics-field__control">

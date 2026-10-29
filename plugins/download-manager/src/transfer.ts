@@ -6,52 +6,37 @@ import { Transform } from 'node:stream'
 import type { Agent as HttpAgent } from 'node:http'
 import type { Agent as HttpsAgent } from 'node:https'
 import { DownloaderHelper } from 'node-downloader-helper'
+import type {
+  FileTransferHandle,
+  FileTransferSpec,
+  TransferOutcome,
+  TransferProgress,
+} from '@mics/sdk'
 
 /**
- * 单文件传输层：把「断点续传、Range、重定向、重试」交给 node-downloader-helper，
+ * 单文件传输层的本机实现（`mics.net.file-transfer` 的默认 provider）。
+ *
+ * 把「断点续传、Range、重定向、重试」交给 node-downloader-helper，
  * 下载管线只关心任务编排（多源、并发、校验、缓存）。
  *
  * 约定：文件先写到 `<目标>.part`，成功后由调用方改名；
  * 暂停/失败都保留 .part，下次从已有字节续传。
+ *
+ * 本文件只实现 `FileTransferCapability.create`，能力契约在 SDK 里：
+ * 换成沙箱 / 远程 provider 时，这段代码整体被替换，调用方不变。
  */
-
-export interface TransferProgress {
-  loaded: number
-  total: number
-}
 
 export interface TransferAgents {
   http: HttpAgent
   https: HttpsAgent
 }
 
-export interface FileTransferOptions {
-  url: string
-  partPath: string
-  sha1: string
-  /** 期望的文件总大小；0 表示未知（未知大小时不做续传，直接重下） */
-  size: number
+/** 本机实现需要的 agent 是具体类型，契约里只声明「透传」 */
+export interface FileTransferOptions extends FileTransferSpec {
   agents: TransferAgents
-  onProgress?: (progress: TransferProgress) => void
-  /** 服务端忽略 Range、从头下载时通知调用方重置进度 */
-  onRestart?: () => void
 }
 
-export type TransferStatus = 'done' | 'paused' | 'failed'
-
-export interface TransferResult {
-  status: TransferStatus
-  /** 下载内容的 SHA1（未要求校验时为空） */
-  digest?: string
-  error?: Error
-}
-
-export interface FileTransfer {
-  /** 开始（或续传）下载；暂停/取消后也会 resolve，由 status 区分 */
-  start(): Promise<TransferResult>
-  /** 中止当前请求，保留 .part；可重复调用 */
-  stop(): Promise<void>
-}
+export type { TransferOutcome, TransferProgress }
 
 function toError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause))
@@ -73,7 +58,7 @@ async function hashRange(file: string, length: number, hash: Hash): Promise<void
   }
 }
 
-export function createFileTransfer(options: FileTransferOptions): FileTransfer {
+export function createFileTransfer(options: FileTransferOptions): FileTransferHandle {
   let helper: DownloaderHelper | null = null
   let stopRequested = false
   let ended: { incomplete: boolean } | null = null
@@ -86,7 +71,7 @@ export function createFileTransfer(options: FileTransferOptions): FileTransfer {
     },
   })
 
-  async function start(): Promise<TransferResult> {
+  async function start(): Promise<TransferOutcome> {
     const partSize = fileSize(options.partPath)
 
     // 上次已经写完但没来得及改名：直接校验，不必再发请求

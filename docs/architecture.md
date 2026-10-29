@@ -45,11 +45,34 @@
 | `Context` | 一切服务的容器；渲染进程也有一棵独立的 Context 树 |
 | `ctx.plugin(plugin, config)` | 插件激活；返回 `Fiber`，await 即等待激活完成 |
 | `ctx.effect(() => cleanup)` | 注册页面/命令/IPC 时的回收钩子；插件卸载自动执行 |
-| `ctx.inject(deps, cb)` | 依赖多个服务后再执行（内核注册系统 RPC 时用到） |
-| `Service` 子类 | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions`；插件也能提供（`mics.logger` → `ctx.logs`） |
+| `ctx.inject(deps, cb)` | 依赖多个服务后再执行（内核注册系统 RPC 时用到）；服务缺失时插件停在 waiting |
+| `ctx.waterfall('ipc/before', …)` | RPC 派发前的拦截链：权限、审计、二次确认挂在插件侧，内核不再逐条加 if |
+| `Service` 子类 | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions` / `capabilities` / `configuration`；插件也能提供（`mics.logger` → `ctx.logs`） |
 | `ctx.isolate()` | 后续用于单插件服务隔离（例如独立日志命名空间） |
-| `ctx.on/emit` | 主进程内部事件；跨进程事件走 `ctx.ipc` |
+| `ctx.on/emit` | 主进程内部事件；每个 Mics 事件在 `@mics/sdk` 的 `EVENT_MODES` 里声明派发模式，见下文「事件派发模式」 |
 | `ctx.registry` | 插件面板可据此列出所有 fiber（后续扩展点） |
+
+### 事件派发模式
+
+cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式再派发：
+
+| 模式 | 语义 | 当前事件 |
+| --- | --- | --- |
+| `emit` | 通知，同步执行，返回值丢弃 | `plugins/changed`、`plugin/activated`、`plugin/deactivated`、`ipc/after`、`capability/changed` |
+| `bail` | 同步投票，第一个非空返回值即结论 | `plugin/beforeActivate`（审批：`{ allow: false, reason }` 拒绝激活） |
+| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认） |
+| `serial` | 串行等待，遇到第一个结论即停止 | 暂无（需要异步审批时使用） |
+| `parallel` | 扇出，等全部监听器完成 | 暂无（纯并行的收尾工作使用） |
+
+声明集中在 `packages/sdk/src/contract/events.ts`：
+
+- `MicsEvents` 定义事件签名，`EVENT_MODES` 记录模式；新增事件却忘记登记模式会编译失败；
+- 派发方用 `emitEvent` / `bailEvent` / `waterfallEvent` / `serialEvent` / `parallelEvent`，
+  事件名与模式不匹配是编译错误；
+- 开发模式下 `plugins/kernel/src/eventModeAudit.ts` 监听 `internal/dispatch`，
+  实际派发模式与声明不符时打 warning；生产构建不挂这个审计。
+
+这样「`emit` 之后有没有人改返回值」不需要读派发点猜，类型和声明会直接回答。
 
 ### 调用方追踪（traceable）
 
@@ -74,6 +97,39 @@ Cordis 的 Service 方法在被插件调用时，`this.ctx` 会指向**调用方
 > cordis 会等待依赖方先释放，因此日志插件标记为 `essential`，避免禁用后让依赖它的
 > 插件停在未激活状态。
 
+### 能力（capability）：definition / provider / consumer
+
+Service 是「一个名字一个实现」，而有些能力需要**多份实现**（本机 / 沙箱 / 远程）。
+这类能力走 `ctx.capabilities`：
+
+| 角色 | 位置 | 例子 |
+| --- | --- | --- |
+| definition | `@mics/sdk` 的 `capability.ts`：能力名 + 接口 | `SHELL_EXECUTE` / `FileTransferCapability` |
+| provider | 插件在 `apply()` 里 `ctx.capabilities.provide(name, impl, { priority })` | `mics.shell` 提供本机进程，`download-manager` 提供本机传输 |
+| consumer | `ctx.capabilities.require(name)` | `mics.launch` 启动游戏、下载管线传输文件 |
+
+选择规则是「priority 高的赢，同优先级后注册的赢」。因此沙箱插件只要注册同名能力并给
+更高 priority，就能整体替换执行方式，调用方一行不用改。`provide()` 绑定在提供方 fiber
+上，插件卸载时实现自动撤销并广播 `capability/changed`。
+
+与 Service 的分工：**能力名是契约，Service 名是实现入口**。需要「换实现」的用能力，
+需要「拿运行时服务」的（storage / ipc / logs）继续用 inject。
+
+### 配置 schema 与 profile
+
+`ctx.storage` 不再只是裸 JSON：清单声明 `contributes.configuration` 后，`StorageService`
+按 schema 做「用户值 → profile 默认 → schema 默认」的取值与写入校验。schema 由
+`ConfigurationService` 持有（从 `PluginsService` 的清单实时读取），因此热重载后立刻生效，
+插件代码仍然只需要 `ctx.storage.get/set`。
+
+- 设置页：`mics.settings` 的「插件配置」页面通过 `configuration/list|set|reset`
+  自动渲染简单类型；复杂设置页继续保留，但共享同一套校验。
+- profile：`boot.config.json` 的 `profile` 指向 `userData/profiles/<name>.json`。
+  `enable` / `disable` 是强制开关（`disable` 优先），`settings` 是 schema 原始类型键的
+  默认值（用户保存过的值优先）。
+- 诊断：`PluginGraphReport.profile` 与配置项的 `source` 让插件管理页 / agent 知道
+  某个值是用户设置、profile 默认还是 schema 默认。
+
 ## 3. 启动时序
 
 ```
@@ -82,7 +138,7 @@ app.whenReady()
   ├─ registerPluginProtocol(records)     # mics-plugin://<id>/<path>
   ├─ new Context()
   ├─ root.extend({ [PLUGIN_ID]: 'mics.kernel' }).plugin(kernel, config)
-  │    ├─ 内核注册 plugins/ipc/commands/storage/permissions 服务
+  │    ├─ 内核注册 plugins/ipc/commands/storage/permissions/capabilities/configuration 服务
   │    ├─ 注入完成后注册系统 RPC
   │    └─ activateStartup()（不阻塞；mics.logger 在这里创建本次启动的日志文件）
   ├─ createMainWindow()
@@ -132,6 +188,11 @@ app.whenReady()
 
 - 方法由内核按 `插件 id + 方法名` 路由；目标插件未激活会直接报错（可由调用方先激活）。
 - `callerId` 是「尽力而为」的标识，用于能力校验与审计，不是安全边界。
+- 派发前后各有一个挂载点：`ipc/before`（waterfall，返回 `RpcResponse` 即短路）与
+  `ipc/after`（观察）。权限校验是内核注册的第一条 `ipc/before`；审计、限流、二次确认
+  由插件自己挂同名链，不需要改内核代码。
+- `plugins/diagnostics`：只读诊断，返回依赖图、贡献点与未满足项。插件管理页与
+  agent 读同一份数据（见 `packages/sdk/src/contract/diagnostics.ts`），不各自推断。
 
 ## 6. 窗口与自绘标题栏
 
@@ -162,7 +223,23 @@ app.whenReady()
 - **主进程插件**：拥有完整 Node 能力，清单里的 `permissions` 用于声明与审计。
 - **渲染进程插件**：与 shell 共享页面，属于「可信插件」模型；清单权限由宿主服务
   （如 `host/openExternal`）在调用时校验。
-- 真正的渲染端沙箱（iframe / utility process / per-plugin JS 隔离）在路线图 M3。
+- **已有的最小隔离**：窗口开启 `sandbox` / `contextIsolation`、关闭 `nodeIntegration`，
+  插件本来就没有 `require` / `electron`；每个渲染端插件的上下文再 `isolate('bridge')`，
+  只能经 `ctx.ipc` 访问主进程，拿不到壳专用的 `ctx.bridge`。`ui` 注册表按插件记录归属，
+  跨插件覆盖同一个 view / 状态栏 id 会直接失败。
+- `window.mics` 仍由 preload 暴露给整个页面，完整 iframe / utility process /
+  per-plugin JS 隔离在路线图 M3；当前的限制是「防误用与互相覆盖」，不是安全边界。
+
+### 开发模式清理审计
+
+清理审计分两侧：
+
+- 主进程：dev 下包装 `ipcMain.handle/on/remove…`，记录注册堆栈；插件重载后对比上一次
+  快照，`ipcMain` 注册数量增长时打印新增通道与堆栈。
+- 渲染端：dev 下包装 `window` / `document` 的监听器与 `setInterval`，同时统计 view、
+  状态栏、样式与命令数量；每个插件第一次重载建立基线，之后数量增长才告警。
+- 第一次重载只建基线，避免把插件在 `apply` 里注册的长期监听器误报成泄漏；生产构建
+  不安装这些包装，也不改变全局函数。
 
 ## 8. 构建管线
 
@@ -197,16 +274,30 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 组件复用 shell 的 `mics-*` 设计系统类，自带的 scoped 样式会进插件的 `dist/style.css`，
 因此使用方必须在 `plugin.json` 里声明 `styles`。
 
-## 10. 懒激活、三种状态与贡献点
+## 10. 懒激活、状态机与贡献点
 
 - `activation: ["*"] | ["onStartup"]`：随内核启动。
 - 缺省：按需。打开页面时激活，或执行命令时由命令服务按 manifest 找到归属插件后激活。
 - 渲染器先按清单渲染导航 / 状态栏 / 主题；插件被激活时才 import 产物、创建 fiber、注册页面组件。
 - 渲染端插件激活时也会同步内核状态（`plugins/activate`），保持主进程与渲染进程的生命周期一致。
-- **三种状态**（目录是「已安装」的唯一事实来源）：
-  - 启用：目录在、代码在跑、界面显示；
-  - 禁用：目录在、代码停止、界面隐藏，状态写入 `userData/disabled-plugins.json`；
-  - 未安装：目录不存在，**不出现在列表里**（不是第三种开关）。
+- **状态机**（目录是「已安装」的唯一事实来源）：
+
+  | 状态 | 含义 | 界面 |
+  | --- | --- | --- |
+  | 启用 | 目录在、fiber active | 开关打开 |
+  | 等待依赖 | 目录在、fiber pending：`inject` 的服务没人提供 | 徽标「等待依赖」+ 缺哪些服务 |
+  | 禁用 | 目录在、代码停止，状态写入 `userData/disabled-plugins.json` | 开关关闭 |
+  | 失败 | 目录在、导入或 `apply` 抛错 | 红色徽标 + 错误 |
+  | 未安装 | 目录不存在 | **不显示**（不是第五种开关） |
+
+- **三种状态与 waiting 的区别**：`PluginStatus` 里 `waiting` 不是安装状态，而是「插件已挂载、
+  但 `inject` 的服务没出现」。cordis 在服务缺失时只会把 fiber 留在 pending，`ctx.plugin()`
+  仍然 resolve——所以内核自己把 `fiber.state` 映射成插件状态（`plugins.ts` 的
+  `applyFiberState`），服务出现 / 消失时自动更新。
+- **清单依赖**（`dependencies`）与 **服务依赖**（`inject`）分工明确：前者是「必须一起运行的
+  插件」，激活前做图校验（缺失 / 自依赖 / 环），有问题直接 `dependencyIssues`；后者是
+  「等某服务就绪」，运行期用 `waitingFor` 表达。两者混用会让「装错了」和「还没就绪」
+  看起来一样。
 - **禁用**（`ctx.plugins.disable(id)`）：写入状态文件并卸载 fiber；之后页面打开、命令执行、
   启动事件都不会再激活它，只有 `enable(id)` 能解除。禁用后不再贡献导航 / 命令 / 主题 /
   布局 / 状态栏与样式。
@@ -224,7 +315,7 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 | 阶段 | 内容 |
 | --- | --- |
 | M0 | 当前骨架：双端 Cordis、内核服务、导航贡献点、懒激活、示例页面、构建脚本 |
-| M1 | 插件依赖图校验、错误隔离面板、命令快捷键自定义、配置贡献点（带持久化） |
+| M1 | 插件依赖图校验（已落地）、错误隔离面板、命令快捷键自定义、配置贡献点（带持久化） |
 | M2 | 下载源与安装管线、实例管理、工作台布局可扩展（多面板/分栏） |
 | M3 | 渲染端沙箱、性能追踪 |
 | M4 | electron-builder 打包、插件作为 extraResources |

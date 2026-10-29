@@ -42,6 +42,20 @@ export interface PluginHostBridge {
   syncPluginDirs(dirs: Record<PluginId, string>): void
 }
 
+/**
+ * 部署 profile：一组「启用集合 + 设置默认值」。
+ *
+ * 来自 `boot.config.json` 的 `profile` 与 `userData/profiles/<name>.json`。
+ * - `enable` / `disable` 强制覆盖用户开关（`disable` 优先）；
+ * - `settings` 是设置默认值，用户在设置页保存过的值优先。
+ */
+export interface ProfileConfig {
+  name: string
+  enable: PluginId[]
+  disable: PluginId[]
+  settings: Record<PluginId, Record<string, unknown>>
+}
+
 /** bootstrap 传给内核插件的配置 */
 export interface KernelConfig {
   app: AppInfo
@@ -55,6 +69,10 @@ export interface KernelConfig {
   userPluginRoot: string
   userDataDir: string
   disabled: string[]
+  /** 当前 profile；未配置时为 undefined */
+  profile?: ProfileConfig
+  /** 首次扫描中失败的目录（清单非法、入口冲突等）；rescan 时会刷新 */
+  scanErrors?: ScanError[]
   /** 宿主资源同步接口；缺省表示不跟随变化（例如测试环境） */
   host?: PluginHostBridge
 }

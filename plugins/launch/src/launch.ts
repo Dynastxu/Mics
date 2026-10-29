@@ -1,12 +1,10 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   appendFileSync,
-  closeSync,
   createWriteStream,
   existsSync,
   mkdirSync,
-  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -18,6 +16,7 @@ import https from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import type { ShellExecuteCapability, ShellProcess } from '@mics/sdk'
 import { findJava } from './java'
 import type { ResolvedInstance } from './instances'
 import type { ArgumentEntry, Library, LibraryDownload, Rule } from './version'
@@ -40,7 +39,7 @@ export interface LaunchPlan {
 /** 已 spawn 的游戏进程；child 用于订阅退出事件与判断存活 */
 export interface LaunchedProcess {
   pid: number
-  child: ChildProcess
+  child: ShellProcess
 }
 
 const OS_NAME = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
@@ -460,33 +459,30 @@ function quoteForLog(value: string): string {
   return /[\s"]/g.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value
 }
 
-export async function launchInstance(instance: ResolvedInstance, options: LaunchOptions): Promise<LaunchedProcess> {
+export async function launchInstance(
+  shell: ShellExecuteCapability,
+  instance: ResolvedInstance,
+  options: LaunchOptions,
+): Promise<LaunchedProcess> {
   const plan = await buildLaunchPlan(instance, options)
   const line = `[${new Date().toISOString()}] ${quoteForLog(plan.java)} ${plan.args.map(quoteForLog).join(' ')}\n`
   appendFileSync(plan.logPath, line, 'utf8')
 
-  const logFd = openSync(plan.logPath, 'a')
-  try {
-    const child = spawn(plan.java, plan.args, {
-      cwd: plan.cwd,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      windowsHide: true,
-      env: process.env,
-    })
+  // 启动进程走 shell.execute 能力：本机实现只是其中一种 provider，
+  // 换成沙箱实现时这里不需要改（日志文件与 detached 由 provider 落地）。
+  const child = await shell.spawn({
+    command: plan.java,
+    args: plan.args,
+    cwd: plan.cwd,
+    logFile: plan.logPath,
+    detached: true,
+  })
 
-    await new Promise<void>((resolve, reject) => {
-      child.once('spawn', resolve)
-      child.once('error', reject)
-    })
-    if (!child.pid) {
-      child.kill()
-      throw new Error('未能创建游戏进程')
-    }
-    // 进程独立运行：应用退出不影响游戏；child 仍可用来订阅退出事件。
-    child.unref()
-    return { pid: child.pid, child }
-  } finally {
-    closeSync(logFd)
+  if (!child.pid) {
+    child.kill()
+    throw new Error('未能创建游戏进程')
   }
+  // 进程独立运行：应用退出不影响游戏；child 仍可用来订阅退出事件。
+  child.detach()
+  return { pid: child.pid, child }
 }

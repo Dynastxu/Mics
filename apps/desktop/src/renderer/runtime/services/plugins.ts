@@ -1,7 +1,14 @@
 import type { Context, Fiber, Plugin } from 'cordis'
 import { Service } from 'cordis'
-import type { Disposable, PluginId, PluginInfo, RuntimeSnapshot } from '@mics/sdk'
-import { PLUGIN_ID } from '@mics/sdk'
+import type {
+  Disposable,
+  PluginGraphReport,
+  PluginId,
+  PluginInfo,
+  RuntimeSnapshot,
+} from '@mics/sdk'
+import { FIBER_ACTIVE, PLUGIN_ID, PluginFailureError } from '@mics/sdk'
+import { reportCleanup, snapshotCleanup, type CleanupSnapshot } from '../cleanupAudit'
 import { applySnapshot, ensureStyle, removeStyle, store } from '../store'
 
 /**
@@ -30,6 +37,8 @@ export class PluginsService extends Service {
   private readonly styles = new Map<PluginId, string[]>()
   /** 单调递增：每次加载插件都用新的 ?v= 绕过 ESM 模块缓存 */
   private stamp = 0
+  /** dev 清理审计：每个插件上一次重载后的渲染端注册快照 */
+  private readonly auditBaselines = new Map<PluginId, CleanupSnapshot>()
 
   constructor(ctx: Context) {
     super(ctx, 'plugins')
@@ -87,6 +96,15 @@ export class PluginsService extends Service {
     await this.reconcile()
   }
 
+  /**
+   * 依赖图与贡献点诊断。
+   *
+   * 渲染端只负责转发：数据由内核收集，页面与 agent 读同一份。
+   */
+  async diagnostics(): Promise<PluginGraphReport> {
+    return this.owner.ipc.invoke<PluginGraphReport>('mics.kernel', 'plugins/diagnostics')
+  }
+
   onDidChange(listener: () => void): Disposable {
     return this.owner.ipc.on('plugins/changed', () => listener())
   }
@@ -100,7 +118,13 @@ export class PluginsService extends Service {
     if (this.loaded.has(id)) return
     const running = this.loading.get(id)
     if (running) return running
-    const task = this.doActivate(info).finally(() => this.loading.delete(id))
+    const task = this.doActivate(info)
+      .catch(async (error) => {
+        // 页面这一半的失败也要回报内核，列表与诊断才会显示真实阶段
+        await this.reportFailure(id, error)
+        throw error
+      })
+      .finally(() => this.loading.delete(id))
     this.loading.set(id, task)
     return task
   }
@@ -133,17 +157,12 @@ export class PluginsService extends Service {
     await this.refresh()
   }
 
-  /** 启用：解除内核侧的禁用并重新加载渲染端；页面加载失败则回滚为禁用 */
+  /** 启用：解除内核侧的禁用并重新加载渲染端；失败由 activate() 回报内核 */
   async enable(id: PluginId): Promise<void> {
     await this.owner.ipc.invoke('mics.kernel', 'plugins/enable', { id })
     // 先刷新快照，激活逻辑才能看到 state 已不再是 disabled
     await this.refresh()
-    try {
-      await this.activate(id)
-    } catch (error) {
-      await this.reportFailure(id, error)
-      throw error
-    }
+    await this.activate(id)
     await this.refresh()
   }
 
@@ -157,16 +176,29 @@ export class PluginsService extends Service {
     if (!info) throw new Error(`未知插件 ${id}`)
     if (info.state === 'disabled') throw new Error(`插件 ${id} 已禁用，请先启用再重载`)
 
-    await this.unload(id)
+    // 第一次重载只建立基线；之后比较同一个插件的注册数量是否增长
+    const audit = import.meta.env.DEV ? snapshotCleanup() : undefined
     try {
-      await this.owner.ipc.invoke('mics.kernel', 'plugins/reload', { id })
+      await this.unload(id)
+      try {
+        await this.owner.ipc.invoke('mics.kernel', 'plugins/reload', { id })
+      } catch (error) {
+        // 内核已经带着准确阶段写进失败态；拉一次快照即可，不要覆盖它
+        await this.refresh().catch(() => {})
+        throw error
+      }
       await this.refresh()
       await this.activate(id)
-    } catch (error) {
-      await this.reportFailure(id, error)
-      throw error
+      await this.refresh()
+    } finally {
+      if (audit) {
+        const current = snapshotCleanup()
+        reportCleanup(id, this.auditBaselines.get(id), current, (message) =>
+          console.warn(`[mics.cleanup] ${message}`),
+        )
+        this.auditBaselines.set(id, current)
+      }
     }
-    await this.refresh()
   }
 
   private async doActivate(info: PluginInfo): Promise<void> {
@@ -182,21 +214,53 @@ export class PluginsService extends Service {
         for (const href of hrefs) ensureStyle(href)
         this.styles.set(info.id, hrefs)
 
-        const scope = this.baseCtx.extend({ [PLUGIN_ID]: info.id }) as Context
+        // 渲染端最小隔离：
+        //   - bridge 是壳专用服务，插件只能通过 ctx.ipc 访问主进程；隔离后
+        //     插件上下文里拿不到 ctx.bridge，避免伪造 callerId / 绕过 IPC 服务；
+        //   - 真正能访问 window/document 的完整沙箱（iframe / utility process）在 M3。
+        const scope = (this.baseCtx.extend({ [PLUGIN_ID]: info.id }) as Context).isolate('bridge')
         this.scopes.set(info.id, scope)
-        const module = (await import(
-          /* @vite-ignore */ `${info.rendererUrl}?v=${version}`
-        )) as Record<string, unknown>
+        let module: Record<string, unknown>
+        try {
+          module = (await import(
+            /* @vite-ignore */ `${info.rendererUrl}?v=${version}`
+          )) as Record<string, unknown>
+        } catch (error) {
+          throw new PluginFailureError(
+            'import',
+            `导入插件 ${info.id} 的页面产物失败：${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
         const candidate = (module.default ?? module) as unknown as Plugin | undefined
         if (
           candidate &&
           (typeof candidate === 'function' ||
             typeof (candidate as { apply?: unknown }).apply === 'function')
         ) {
-          const fiber = await scope.plugin(candidate as unknown as Plugin.Object<unknown>, {
-            pluginId: info.id,
-            manifest: info.manifest,
-          })
+          let fiber: Fiber
+          try {
+            fiber = await scope.plugin(candidate as unknown as Plugin.Object<unknown>, {
+              pluginId: info.id,
+              manifest: info.manifest,
+            })
+          } catch (error) {
+            throw new PluginFailureError(
+              'apply',
+              `插件 ${info.id} 的页面启动失败：${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
+          // 服务缺失时 cordis 只会让插件停在 pending：页面什么都不注册，
+          // 用户看到的是「已启用但空白」。这里显式失败，错误信息能指到具体服务。
+          const unmet = Object.keys(fiber.inject).filter(
+            (name) => fiber.ctx.get(name) === undefined,
+          )
+          if (fiber.state !== FIBER_ACTIVE || unmet.length > 0) {
+            await fiber.dispose()
+            throw new PluginFailureError(
+              unmet.length > 0 ? 'dependency' : 'apply',
+              `插件 ${info.id} 声明的服务尚未提供：${unmet.join('、') || '未知'}`,
+            )
+          }
           this.fibers.set(info.id, fiber)
         }
       }
@@ -216,8 +280,18 @@ export class PluginsService extends Service {
   private async reportFailure(id: PluginId, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : String(error)
     store.errors[id] = message
+    // 主进程激活/重载失败时已经带着准确阶段写进失败态；这里只刷新快照，
+    // 不能用一个笼统的 renderer 阶段把它覆盖掉。
+    if (!(error instanceof PluginFailureError)) {
+      await this.refresh().catch(() => {})
+      return
+    }
     try {
-      await this.owner.ipc.invoke('mics.kernel', 'plugins/fail', { id, message })
+      await this.owner.ipc.invoke('mics.kernel', 'plugins/fail', {
+        id,
+        message,
+        stage: error.stage,
+      })
       await this.refresh()
     } catch {
       // 主进程可能已经不可用（例如内核自身出错），保留本地错误即可
@@ -230,6 +304,9 @@ export class PluginsService extends Service {
    */
   private async reconcile(): Promise<void> {
     const alive = new Set(store.plugins.map((plugin) => plugin.id))
+    for (const id of [...this.auditBaselines.keys()]) {
+      if (!alive.has(id)) this.auditBaselines.delete(id)
+    }
     for (const id of [...this.loaded]) {
       if (!alive.has(id)) await this.unload(id)
     }

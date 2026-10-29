@@ -14,7 +14,7 @@ import RepeatLaunchDialog from './RepeatLaunchDialog.vue'
 const ctx = usePluginContext()
 const instances = ref<InstanceSummary[]>([])
 const runtime = ref<LaunchState>({ instances: [] })
-const settings = ref<LaunchSettings>({ repeatBehavior: 'prompt' })
+const settings = ref<LaunchSettings>({ repeatBehavior: 'prompt', maxMemory: 4096 })
 const loading = ref(true)
 const error = ref('')
 const notice = ref('')
@@ -86,7 +86,7 @@ async function refreshState(): Promise<void> {
 async function loadSettings(): Promise<void> {
   try {
     const value = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/get')
-    settings.value = { repeatBehavior: value.repeatBehavior }
+    settings.value = value
   } catch { /* 使用默认的「提示」 */ }
 }
 
@@ -111,12 +111,12 @@ async function saveUsername(): Promise<void> {
 }
 
 async function rememberBehavior(behavior: RepeatLaunchBehavior): Promise<void> {
-  settings.value = { repeatBehavior: behavior }
+  settings.value = { ...settings.value, repeatBehavior: behavior }
   try {
     const saved = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/set', {
       repeatBehavior: behavior,
     })
-    settings.value = { repeatBehavior: saved.repeatBehavior }
+    settings.value = saved
   } catch { /* 保存失败时保留本次选择 */ }
 }
 

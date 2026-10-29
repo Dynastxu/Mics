@@ -4,6 +4,8 @@
  * 都能在插件尚未激活时展示出来（懒激活的前提）。
  */
 
+import type { ConfigurationContribution } from './configuration'
+
 export type PluginId = string
 
 /** 激活事件：* / onStartup 随内核启动；onView:xxx、onCommand:xxx 由内核按需触发 */
@@ -77,6 +79,14 @@ export interface PluginContributions {
   statusBar?: StatusBarContribution[]
   themes?: ThemeContribution[]
   layout?: LayoutContribution
+  /**
+   * 设置项 schema。
+   *
+   * 声明后：`ctx.storage.get/set` 自动补默认值并校验；设置页可以自动渲染；
+   * agent 可以通过 `configuration/*` RPC 结构化读写。复杂结构仍由插件自己的
+   * 设置页处理，但同样经过 storage 的校验。
+   */
+  configuration?: ConfigurationContribution
 }
 
 export interface PluginManifest {

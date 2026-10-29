@@ -7,7 +7,7 @@ import { PLUGIN_ID } from '@mics/sdk'
 import type { KernelConfig, KernelModule } from '@mics/sdk'
 import type { PluginRoot } from '@mics/plugin-loader'
 import { importPluginEntry, scanPlugins } from '@mics/plugin-loader'
-import { createAppInfo, loadBootConfig, resolvePluginRoots } from './config'
+import { createAppInfo, loadBootConfig, loadProfile, resolvePluginRoots } from './config'
 import { registerPluginProtocol, registerPrivilegedSchemes } from './protocol'
 import { createMainWindow, loadRenderer } from './window'
 import { registerWindowControls } from './windowControls'
@@ -82,13 +82,17 @@ async function start(): Promise<void> {
   }
 
   const config: KernelConfig = {
-    app: createAppInfo(),
+    app: createAppInfo(boot.profile),
     kernel: boot.kernel,
     plugins: scan.plugins,
     pluginRoots,
     userPluginRoot,
     userDataDir: app.getPath('userData'),
     disabled: boot.disabled,
+    // profile 只做「启用集合 + 设置默认值」；文件缺失时退回空 profile
+    profile: boot.profile ? loadProfile(boot.profile) : undefined,
+    // 首次扫描失败的目录带进内核，诊断报告里能一并展示清单错误
+    scanErrors: scan.errors,
     // 安装 / 卸载之后内核会回调这里，让 mics-plugin:// 立刻认识新目录
     host: { syncPluginDirs: (dirs) => protocol.sync(dirs) },
   }

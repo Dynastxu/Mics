@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import type { AppInfo } from '@mics/sdk'
+import type { AppInfo, ProfileConfig } from '@mics/sdk'
 
 
 export interface BootConfig {
@@ -11,6 +11,8 @@ export interface BootConfig {
   pluginRoots: string[]
   /** 需要禁用的插件 id */
   disabled: string[]
+  /** 部署 profile 名；对应 userData/profiles/<name>.json */
+  profile?: string
 }
 
 const DEFAULT_CONFIG: BootConfig = {
@@ -46,6 +48,7 @@ export function loadBootConfig(): BootConfig {
         disabled: Array.isArray(raw.disabled)
           ? raw.disabled.filter((item): item is string => typeof item === 'string')
           : [],
+        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined,
       }
     } catch (error) {
       console.warn(`[mics] 读取 ${file} 失败：${(error as Error).message}`)
@@ -67,7 +70,63 @@ export function resolvePluginRoots(roots: string[]): string[] {
   return roots.map((root) => (path.isAbsolute(root) ? root : path.resolve(base, root)))
 }
 
-export function createAppInfo(): AppInfo {
+/**
+ * 读取部署 profile。
+ *
+ * profile 文件缺失或字段不合法时不让应用启动失败：控制台告警并退回空 profile，
+ * 这样一次手滑不会把整个界面锁死。`enable` / `disable` 只接受字符串数组，
+ * `settings` 只接受 `{ [pluginId]: { [key]: value } }`。
+ */
+export function loadProfile(name: string): ProfileConfig {
+  const empty: ProfileConfig = { name, enable: [], disable: [], settings: {} }
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) {
+    console.warn(`[mics] profile 名不合法：${name}`)
+    return empty
+  }
+  const file = path.join(app.getPath('userData'), 'profiles', `${name}.json`)
+  if (!existsSync(file)) {
+    console.warn(`[mics] profile ${name} 不存在：${file}`)
+    return empty
+  }
+
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as unknown
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      console.warn(`[mics] profile ${name} 必须是 JSON 对象`)
+      return empty
+    }
+    const record = raw as Record<string, unknown>
+    const ids = (value: unknown): string[] =>
+      Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+
+    const settings: Record<string, Record<string, unknown>> = {}
+    if (record.settings !== undefined) {
+      if (!record.settings || typeof record.settings !== 'object' || Array.isArray(record.settings)) {
+        console.warn(`[mics] profile ${name} 的 settings 必须是对象`)
+      } else {
+        for (const [pluginId, values] of Object.entries(record.settings)) {
+          if (!values || typeof values !== 'object' || Array.isArray(values)) {
+            console.warn(`[mics] profile ${name} 的 settings.${pluginId} 必须是对象`)
+            continue
+          }
+          settings[pluginId] = values as Record<string, unknown>
+        }
+      }
+    }
+
+    return {
+      name,
+      enable: ids(record.enable),
+      disable: ids(record.disable),
+      settings,
+    }
+  } catch (error) {
+    console.warn(`[mics] 读取 profile ${name} 失败：${(error as Error).message}`)
+    return empty
+  }
+}
+
+export function createAppInfo(profile?: string): AppInfo {
   return {
     name: app.getName(),
     version: app.getVersion(),
@@ -77,5 +136,6 @@ export function createAppInfo(): AppInfo {
     platform: process.platform,
     isDev: !app.isPackaged,
     userDataPath: app.getPath('userData'),
+    profile,
   }
 }

@@ -3,6 +3,7 @@ import * as Vue from 'vue'
 import * as Cordis from 'cordis'
 import App from './App.vue'
 import { boot } from './runtime/context'
+import { installCleanupAudit } from './runtime/cleanupAudit'
 import { store } from './runtime/store'
 import './assets/main.css'
 
@@ -19,6 +20,9 @@ interface MicsGlobals {
 const globals = globalThis as unknown as MicsGlobals
 globals.__MICS_VUE__ = Vue
 globals.__MICS_CORDIS__ = Cordis
+
+// 开发期清理审计要在任何插件加载前安装，才能记录到它们的监听器
+installCleanupAudit()
 
 createApp(App).mount('#app')
 

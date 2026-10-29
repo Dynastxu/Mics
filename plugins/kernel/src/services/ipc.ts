@@ -10,7 +10,7 @@ import type {
   RpcResponse,
   RuntimeEventEnvelope,
 } from '@mics/sdk'
-import { pluginIdOf } from '@mics/sdk'
+import { emitEvent, pluginIdOf, waterfallEvent } from '@mics/sdk'
 
 type Handler = (params: unknown, meta: IpcMeta) => MaybePromise<unknown>
 type Listener = (payload: unknown, envelope: RuntimeEventEnvelope) => void
@@ -19,6 +19,8 @@ type Listener = (payload: unknown, envelope: RuntimeEventEnvelope) => void
  * 主进程侧的 IPC 服务。
  *
  * - 渲染进程通过 preload 发来 `mics:rpc`，由这里路由到「目标插件 + 方法」
+ * - 路由前后各留一个挂载点：`ipc/before`（waterfall，可短路）与 `ipc/after`（观察），
+ *   权限、审计、限流因此不必写进内核
  * - `ctx.ipc.handle()` 注册的处理函数会自动挂在调用方插件的 fiber 上，
  *   插件卸载时随之移除
  * - 事件通过 `mics:event` 广播到所有 webContents
@@ -26,12 +28,14 @@ type Listener = (payload: unknown, envelope: RuntimeEventEnvelope) => void
 export class IpcService extends Service {
   static inject = ['plugins']
 
+  private readonly baseCtx: Context
   private readonly kernelId: PluginId
   private readonly handlers = new Map<PluginId, Map<string, Handler>>()
   private readonly listeners = new Map<string, Set<Listener>>()
 
   constructor(ctx: Context) {
     super(ctx, 'ipc')
+    this.baseCtx = ctx
     this.kernelId = pluginIdOf(ctx) ?? 'mics.kernel'
   }
 
@@ -83,6 +87,11 @@ export class IpcService extends Service {
     })
   }
 
+  /** 某个插件注册的方法名，按字母序；诊断用，不返回处理函数 */
+  methodsOf(target: PluginId): string[] {
+    return [...(this.handlers.get(target)?.keys() ?? [])].sort()
+  }
+
   emit(topic: string, payload?: unknown): void {
     this.broadcast(topic, payload, pluginIdOf(this.ctx))
   }
@@ -107,23 +116,33 @@ export class IpcService extends Service {
       if (!request || typeof request.target !== 'string' || typeof request.method !== 'string') {
         throw new Error('无效的 RPC 请求')
       }
-      const info = this.ctx.plugins.get(request.target)
-      if (!info) throw new Error(`未知插件 ${request.target}`)
-      if (request.target !== this.kernelId && info.state !== 'active') {
-        throw new Error(`插件 ${request.target} 尚未激活`)
-      }
-      const handler = this.handlers.get(request.target)?.get(request.method)
-      if (!handler) throw new Error(`插件 ${request.target} 未提供方法 ${request.method}`)
-      const value = await handler(request.params, {
-        target: request.target,
-        method: request.method,
-        callerId: request.callerId,
-      })
-      return { ok: true, value }
+
+      const response = await waterfallEvent(this.baseCtx, 'ipc/before', request, () =>
+        this.dispatch(request),
+      )
+      emitEvent(this.baseCtx, 'ipc/after', request, response)
+      return response
     } catch (error) {
       const normalized = error instanceof Error ? error : new Error(String(error))
       return { ok: false, error: { message: normalized.message, stack: normalized.stack } }
     }
+  }
+
+  /** 实际路由；不吞异常，由 onRpc 统一转成错误信封 */
+  private async dispatch(request: RpcRequest): Promise<RpcResponse> {
+    const info = this.ctx.plugins.get(request.target)
+    if (!info) throw new Error(`未知插件 ${request.target}`)
+    if (request.target !== this.kernelId && info.state !== 'active') {
+      throw new Error(`插件 ${request.target} 尚未激活`)
+    }
+    const handler = this.handlers.get(request.target)?.get(request.method)
+    if (!handler) throw new Error(`插件 ${request.target} 未提供方法 ${request.method}`)
+    const value = await handler(request.params, {
+      target: request.target,
+      method: request.method,
+      callerId: request.callerId,
+    })
+    return { ok: true, value }
   }
 
   private onEventEmit = (

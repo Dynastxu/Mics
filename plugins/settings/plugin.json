@@ -15,6 +15,13 @@
         "title": "通用",
         "icon": "sliders",
         "order": 10
+      },
+      {
+        "id": "settings.plugins",
+        "group": "settings",
+        "title": "插件配置",
+        "icon": "plugin",
+        "order": 45
       }
     ]
   }

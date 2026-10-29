@@ -19,6 +19,20 @@
         "icon": "activity",
         "order": 50
       }
-    ]
+    ],
+    "configuration": {
+      "title": "日志",
+      "properties": {
+        "maxFiles": {
+          "type": "integer",
+          "title": "保留文件数",
+          "description": "保留最近多少个日志文件",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 50,
+          "unit": "个"
+        }
+      }
+    }
   }
 }

@@ -7,7 +7,7 @@
   "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
-  "dependencies": ["mics.kernel"],
+  "dependencies": ["mics.kernel", "mics.shell"],
   "contributes": {
     "nav": [
       { "id": "launch", "title": "启动", "icon": "play", "order": 10 },
@@ -18,6 +18,31 @@
         "icon": "sliders",
         "order": 30
       }
-    ]
+    ],
+    "configuration": {
+      "title": "启动",
+      "properties": {
+        "repeatLaunchBehavior": {
+          "type": "enum",
+          "title": "重复启动行为",
+          "description": "实例已在运行时再次点击开始游戏",
+          "default": "prompt",
+          "options": [
+            { "value": "prompt", "label": "提示" },
+            { "value": "launch", "label": "启动" },
+            { "value": "ignore", "label": "忽略" }
+          ]
+        },
+        "maxMemory": {
+          "type": "integer",
+          "title": "最大内存",
+          "description": "传给游戏 JVM 的最大堆内存",
+          "default": 4096,
+          "minimum": 1024,
+          "maximum": 32768,
+          "unit": "MB"
+        }
+      }
+    }
   }
 }

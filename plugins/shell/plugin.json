@@ -1,0 +1,10 @@
+{
+  "id": "mics.shell",
+  "name": "进程能力",
+  "version": "0.1.0",
+  "description": "shell.execute 能力的本机实现：所有「启动进程」都经这里，调用方只依赖能力名。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.kernel"]
+}

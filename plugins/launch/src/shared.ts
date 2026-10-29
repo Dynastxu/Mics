@@ -42,6 +42,8 @@ export type RepeatLaunchBehavior = 'prompt' | 'launch' | 'ignore'
 
 export interface LaunchSettings {
   repeatBehavior: RepeatLaunchBehavior
+  /** 游戏 JVM 最大堆内存（MB） */
+  maxMemory: number
 }
 
 export interface TerminateRequest {
