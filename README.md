@@ -183,8 +183,13 @@ export default defineMainPlugin({
 - 每次启动创建一个 `<userData>/logs/mics-<时间>.log`；默认保留最近 5 个，
   可在「设置 → 日志设置」中调整（1–50）；
 - 正文沿用 cordis 的 `%s` / `%d` / `%o` 占位符，传 `Error` 时记录堆栈；
+- 启动、插件扫描 / 激活 / 禁用 / 安装 / 卸载、启动游戏、下载与配置变更都会写 **INFO**；
+  启动阶段的日志由 cordis 缓冲区补录，日志插件晚于内核激活也不会丢；
+- 渲染进程的日志经 `mics.logger/log/write` 汇总到同一个文件，作用域取调用方插件 id；
+- 日志文件保留 debug 级别；开发模式下 info / warn / error 同时打印到控制台；
 - 已有 `ctx.logger(...)` 的输出也会写进同一个文件，存量插件不需要改代码；
-- `ctx.logs` 只在主进程可用；渲染进程插件写日志请经自己的主进程插件转发；
+- `ctx.logs` 是主进程服务；渲染进程插件可调用 `mics.logger` 的 `log/write`（作用域自动取调用方 id），
+  或经自己的主进程插件转发；
 - `mics.logger` 是必需插件（其它插件可能依赖 `logs` 服务），不可在插件管理里禁用，
   清单里声明 `"dependencies": ["mics.logger"]` 可让内核先激活它。
 

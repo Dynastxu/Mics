@@ -8,6 +8,14 @@
 /** 日志级别，从低到高 */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
+/** 级别白名单：跨进程写入与设置校验共用，避免拼错的级别落进日志文件 */
+export const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error']
+
+/** 运行时校验任意值是不是合法日志级别 */
+export function isLogLevel(value: unknown): value is LogLevel {
+  return typeof value === 'string' && (LOG_LEVELS as readonly string[]).includes(value)
+}
+
 /**
  * 一个作用域的写日志入口。
  *
@@ -46,6 +54,18 @@ export interface LogStatus extends LogSettings {
   directory: string
   /** 本次启动正在写入的文件 */
   file: string
+}
+
+/**
+ * 渲染进程写入主进程日志的请求（RPC：`mics.logger` / `log/write`）。
+ *
+ * 渲染进程没有文件系统权限，日志统一交给主进程落盘；
+ * 作用域优先取调用方插件 id（与 IPC 的 callerId 一样是尽力而为的标识，不是安全边界）。
+ */
+export interface LogWriteRequest {
+  level: LogLevel
+  /** 沿用 cordis 的 `%s` / `%d` / `%o` 参数形态 */
+  args: unknown[]
 }
 
 /** 默认保留最近 5 个日志文件（含本次启动的文件） */

@@ -1,6 +1,6 @@
 import { app, dialog, Menu } from 'electron'
 import * as Cordis from 'cordis'
-import { Context } from 'cordis'
+import { Context, type Logger } from 'cordis'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { PLUGIN_ID } from '@mics/sdk'
@@ -22,6 +22,14 @@ import { registerWindowControls } from './windowControls'
 const globals = globalThis as { __MICS_CORDIS__?: typeof Cordis }
 globals.__MICS_CORDIS__ = Cordis
 
+/**
+ * bootstrap 阶段的日志器。
+ *
+ * 它挂在根 Context 上，早于任何插件创建。消息先进入 cordis 的日志缓冲区，
+ * `mics.logger` 激活时会把这段历史补录进本次启动的日志文件。
+ */
+let bootstrapLog: Logger | undefined
+
 // 自定义协议必须在 app ready 之前注册
 registerPrivilegedSchemes()
 
@@ -35,11 +43,41 @@ registerPrivilegedSchemes()
  *   4. 打开窗口（窗口装饰由渲染器自绘，这里只提供控制通道）
  */
 async function start(): Promise<void> {
+  const root = new Context()
+  const log = root.logger('mics')
+  bootstrapLog = log
+
   // 窗口装饰（标题栏 / 菜单栏 / 窗口按钮）全部由渲染器自绘，不要系统菜单
   Menu.setApplicationMenu(null)
   registerWindowControls()
 
-  const boot = loadBootConfig()
+  app.on('window-all-closed', () => {
+    log.info('所有窗口已关闭，退出应用')
+    app.quit()
+  })
+  app.on('before-quit', () => {
+    log.info('应用即将退出')
+  })
+  app.on('render-process-gone', (_event, _contents, details) => {
+    const message = `渲染进程退出：${details.reason}（exitCode=${details.exitCode}）`
+    // clean-exit 是正常销毁窗口，不是崩溃
+    if (details.reason === 'clean-exit') log.info(message)
+    else log.error(message)
+  })
+
+  log.info(
+    'MICS %s 启动 · Electron %s · Node %s · %s/%s',
+    app.getVersion(),
+    process.versions.electron ?? '-',
+    process.versions.node,
+    process.platform,
+    process.arch,
+  )
+  log.info('应用目录 %s', app.getAppPath())
+  log.info('用户数据目录 %s', app.getPath('userData'))
+
+  const boot = loadBootConfig((message) => log.warn(message))
+  const profile = boot.profile ? loadProfile(boot.profile, (message) => log.warn(message)) : undefined
   const resolvedRoots = resolvePluginRoots(boot.pluginRoots)
 
   // 第三方插件落在用户数据目录：安装目录通常是只读的，不能往那里写
@@ -57,15 +95,31 @@ async function start(): Promise<void> {
     { dir: userPluginRoot, source: 'user' as const },
   ]
 
+  log.info(
+    '启动配置：内核 %s · profile %s · 禁用 %d 个插件',
+    boot.kernel,
+    boot.profile ?? '无',
+    boot.disabled.length,
+  )
+  log.info('插件根目录：%s', roots.map((item) => item.dir).join('、'))
+
   const scan = await scanPlugins(roots)
   for (const failure of scan.errors) {
-    console.warn(`[mics] 跳过插件 ${failure.dir}：${failure.errors.join('; ')}`)
+    log.warn('跳过插件 %s：%s', failure.dir, failure.errors.join('; '))
   }
   for (const record of scan.plugins) {
     for (const warning of record.warnings) {
-      console.warn(`[mics] ${record.manifest.id}：${warning}`)
+      log.warn('%s：%s', record.manifest.id, warning)
     }
   }
+  const userPlugins = scan.plugins.filter((record) => record.source === 'user').length
+  log.info(
+    '插件扫描完成：%d 个（内置 %d，第三方 %d），%d 个目录无法加载',
+    scan.plugins.length,
+    scan.plugins.length - userPlugins,
+    userPlugins,
+    scan.errors.length,
+  )
 
   const protocol = registerPluginProtocol(scan.plugins)
 
@@ -74,6 +128,7 @@ async function start(): Promise<void> {
   if (!kernelRecord.entryMain) {
     throw new Error(`内核插件 ${boot.kernel} 缺少 main 入口（先执行 pnpm build:plugins）`)
   }
+  log.info('内核插件 %s v%s：%s', boot.kernel, kernelRecord.manifest.version, kernelRecord.entryMain)
 
   const kernelModule = await importPluginEntry(kernelRecord.entryMain)
   const kernel = (kernelModule.default ?? kernelModule) as unknown as KernelModule | undefined
@@ -90,26 +145,29 @@ async function start(): Promise<void> {
     userDataDir: app.getPath('userData'),
     disabled: boot.disabled,
     // profile 只做「启用集合 + 设置默认值」；文件缺失时退回空 profile
-    profile: boot.profile ? loadProfile(boot.profile) : undefined,
+    profile,
     // 首次扫描失败的目录带进内核，诊断报告里能一并展示清单错误
     scanErrors: scan.errors,
     // 安装 / 卸载之后内核会回调这里，让 mics-plugin:// 立刻认识新目录
     host: { syncPluginDirs: (dirs) => protocol.sync(dirs) },
   }
 
-  const root = new Context()
   // 内核插件自己的作用域：pluginId 会向下继承给内核提供的所有服务
   const kernelScope = root.extend({ [PLUGIN_ID]: boot.kernel }) as Context
   await kernelScope.plugin(kernel, config)
+  log.info('内核已挂载，启动插件将在后台激活')
 
   const window = createMainWindow()
+  log.info('主窗口已创建，正在加载渲染进程')
   await loadRenderer(window)
+  log.info('主界面已加载')
 }
 
 app.whenReady().then(async () => {
   try {
     await start()
   } catch (error) {
+    bootstrapLog?.error('启动失败', error)
     console.error('[mics] 启动失败', error)
     dialog.showErrorBox(
       'Mics 启动失败',
@@ -117,8 +175,4 @@ app.whenReady().then(async () => {
     )
     app.quit()
   }
-})
-
-app.on('window-all-closed', () => {
-  app.quit()
 })

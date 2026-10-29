@@ -23,10 +23,20 @@ export const name = 'mics.kernel'
  * 其余插件则挂在它下面，由 cordis 负责依赖注入与生命周期。
  */
 export function apply(ctx: Context, config: KernelConfig): void {
+  const log = ctx.logger('mics.kernel')
+  log.info(
+    '内核启动：%s · %d 个插件 · profile %s · dev=%s',
+    config.kernel,
+    config.plugins.length,
+    config.profile?.name ?? '无',
+    config.app.isDev,
+  )
+
   // 开发期审计：事件派发模式 + 插件直接注册的 ipcMain 资源
   if (config.app.isDev) {
     installIpcAudit()
     auditEventModes(ctx)
+    log.debug('开发期审计已安装：ipcMain 注册 / 事件派发模式')
   }
 
   ctx.plugin(StorageService, config)
@@ -36,9 +46,12 @@ export function apply(ctx: Context, config: KernelConfig): void {
   ctx.plugin(ConfigurationService)
   ctx.plugin(CommandsService)
   ctx.plugin(IpcService)
+  log.debug('内核服务已注册：storage / permissions / capabilities / plugins / configuration / commands / ipc')
 
   // 等内核服务就绪后，再对外暴露系统 RPC 并启动开机插件
   ctx.inject(['ipc', 'plugins', 'commands', 'permissions', 'configuration'], (ctx) => {
+    log.info('内核服务就绪，开始注册系统 RPC 并激活启动插件')
+
     const snapshot = (): RuntimeSnapshot => ({
       app: config.app,
       plugins: ctx.plugins.list(),
@@ -115,7 +128,9 @@ export function apply(ctx: Context, config: KernelConfig): void {
     })
 
     // 不阻塞 bootstrap：窗口可以先显示，插件在后台激活
-    void ctx.plugins.activateStartup?.()
+    void ctx.plugins.activateStartup?.().catch((error) => {
+      log.error('启动插件激活未完成', error)
+    })
   })
 }
 

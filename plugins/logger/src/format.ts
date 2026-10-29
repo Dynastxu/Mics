@@ -15,19 +15,30 @@ const FORMATTER: Exporter = {
  * 对象转 JSON。格式化失败时退回朴素拼接——写日志绝不能抛错。
  */
 export function formatArgs(args: unknown[]): string {
+  const normalized = args.map(normalizeErrorArg)
+  // 第一个参数是 Error 时 cordis 会自己插入 %s；这里已经换成堆栈字符串，
+  // 补回占位符，避免把堆栈里的 % 当成格式指令。
+  if (args[0] instanceof Error) normalized.unshift('%s')
+
   const message: Message = {
     sn: 0,
     ts: Date.now(),
     name: 'mics',
     type: 'info',
     level: 2,
-    args,
+    args: normalized,
   }
   try {
     return Logger.format(FORMATTER, message)
   } catch {
-    return args.map(fallback).join(' ')
+    return normalized.map(fallback).join(' ')
   }
+}
+
+/** 任意位置的 Error 都转成堆栈字符串；否则 `%o` 的 JSON.stringify 只会得到 {} */
+function normalizeErrorArg(value: unknown): unknown {
+  if (!(value instanceof Error)) return value
+  return value.stack ?? `${value.name}: ${value.message}`
 }
 
 /** 一行日志：本地时间（带时区） + 级别 + 来源 + 正文；多行正文缩进续行 */

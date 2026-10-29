@@ -93,6 +93,7 @@ const localShell: ShellExecuteCapability = {
 
 export function apply(ctx: Context): void {
   ctx.capabilities.provide(SHELL_EXECUTE, localShell, { label: localShell.label })
+  ctx.logger('mics.shell').info('shell.execute 能力已注册（provider=%s）', localShell.label)
 }
 
 export default defineMainPlugin({ name, inject, apply })

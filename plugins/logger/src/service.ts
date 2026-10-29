@@ -6,8 +6,19 @@ import { formatArgs, formatLine } from './format'
 import { LogSink } from './sink'
 
 export interface LogsServiceOptions {
-  directory: string
+  /** 进程内共享的写入端：插件重载时复用同一个文件，而不是再开一份 */
+  sink: LogSink
   maxFiles: number
+  /** 每写一行回调一次；开发模式下用于同时输出到控制台 */
+  mirror?: (level: LogLevel, scope: string, text: string) => void
+}
+
+/** 一条已经产生、但日志服务尚未就绪的历史消息（来自 cordis logger 缓冲区） */
+export interface LogHistoryEntry {
+  ts: number
+  name: string
+  type: LogLevel
+  args: unknown[]
 }
 
 const DEFAULT_SCOPE = 'mics'
@@ -24,12 +35,14 @@ export class LogsService extends Service {
   static inject: string[] = []
 
   private readonly sink: LogSink
+  private readonly mirror?: LogsServiceOptions['mirror']
   private limit: number
 
   constructor(ctx: Context, options: LogsServiceOptions) {
     super(ctx, 'logs')
     this.limit = normalizeLogMaxFiles(options.maxFiles)
-    this.sink = new LogSink(options.directory)
+    this.sink = options.sink
+    this.mirror = options.mirror
     this.sink.prune(this.limit)
   }
 
@@ -90,12 +103,31 @@ export class LogsService extends Service {
     this.append(level, scope, formatArgs(args), ts)
   }
 
+  /**
+   * 补录日志服务就绪之前的消息。
+   *
+   * cordis 的 LoggerService 自带一个滚动缓冲区；日志插件通常不是第一个激活的，
+   * 启动阶段的内核日志、插件加载日志因此要先从这里回放，才不会丢。
+   */
+  importHistory(entries: readonly LogHistoryEntry[]): number {
+    for (const entry of entries) {
+      this.append(entry.type, entry.name, formatArgs(entry.args), entry.ts)
+    }
+    return entries.length
+  }
+
   private write(level: LogLevel, scope: string, args: unknown[]): void {
     this.append(level, scope, formatArgs(args), Date.now())
   }
 
   private append(level: LogLevel, scope: string, text: string, ts: number): void {
-    this.sink.write(formatLine(level, scopeLabel(scope), text, ts))
+    const label = scopeLabel(scope)
+    this.sink.write(formatLine(level, label, text, ts))
+    try {
+      this.mirror?.(level, label, text)
+    } catch {
+      // 控制台镜像只是开发便利，失败不能影响落盘
+    }
   }
 
   /** 调用方插件 id（由 cordis 追踪）；不在插件作用域时用默认标签 */

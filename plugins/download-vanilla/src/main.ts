@@ -72,6 +72,7 @@ export const name = 'mics.download.vanilla'
 export const inject = ['ipc']
 
 export function apply(ctx: Context): void {
+  const log = ctx.logger('mics.download.vanilla')
   let cachedManifest: MojangManifest | null = null
   let cachedAt = 0
   const CACHE_TTL = 5 * 60 * 1000
@@ -80,53 +81,65 @@ export function apply(ctx: Context): void {
     if (cachedManifest && Date.now() - cachedAt < CACHE_TTL) {
       return cachedManifest
     }
+    log.info('正在获取 Mojang 版本清单')
     const data = await safeFetch(MOJANG_MANIFEST_URL)
     cachedManifest = data as MojangManifest
     cachedAt = Date.now()
+    log.info('Mojang 版本清单已更新：%d 个版本', cachedManifest.versions?.length ?? 0)
     return cachedManifest
   }
 
   /** 获取版本列表 */
   ctx.ipc.handle('versions/list', async () => {
-    const manifest = await fetchManifest()
-    const versions: GameVersion[] = manifest.versions.map((v) => ({
-      id: v.id,
-      type: mapType(v.type),
-      releaseTime: v.releaseTime,
-      url: v.url,
-    }))
-    return versions
+    try {
+      const manifest = await fetchManifest()
+      const versions: GameVersion[] = manifest.versions.map((v) => ({
+        id: v.id,
+        type: mapType(v.type),
+        releaseTime: v.releaseTime,
+        url: v.url,
+      }))
+      return versions
+    } catch (error) {
+      log.error('获取版本列表失败', error)
+      throw error
+    }
   })
 
   /** 获取特定版本的详细信息（含下载链接） */
   ctx.ipc.handle<{ version: string }>('versions/detail', async ({ version }) => {
-    const manifest = await fetchManifest()
-    const entry = manifest.versions.find((v) => v.id === version)
-    if (!entry) throw new Error(`未找到版本 ${version}`)
-    const detail = await safeFetch(entry.url)
-    const d = detail as MojangVersionDetail
+    try {
+      const manifest = await fetchManifest()
+      const entry = manifest.versions.find((v) => v.id === version)
+      if (!entry) throw new Error(`未找到版本 ${version}`)
+      const detail = await safeFetch(entry.url)
+      const d = detail as MojangVersionDetail
 
-    return {
-      downloads: {
-        client: d.downloads?.client
-          ? { url: d.downloads.client.url, sha1: d.downloads.client.sha1, size: d.downloads.client.size }
-          : undefined,
-        server: d.downloads?.server
-          ? { url: d.downloads.server.url, sha1: d.downloads.server.sha1, size: d.downloads.server.size }
-          : undefined,
-      },
-      libraries: (d.libraries ?? []).map((lib) => ({
-        name: lib.name,
+      return {
         downloads: {
-          artifact: lib.downloads?.artifact
-            ? { url: lib.downloads.artifact.url, sha1: lib.downloads.artifact.sha1 ?? '', size: lib.downloads.artifact.size ?? 0 }
+          client: d.downloads?.client
+            ? { url: d.downloads.client.url, sha1: d.downloads.client.sha1, size: d.downloads.client.size }
+            : undefined,
+          server: d.downloads?.server
+            ? { url: d.downloads.server.url, sha1: d.downloads.server.sha1, size: d.downloads.server.size }
             : undefined,
         },
-      })),
-      assetIndex: d.assetIndex
-        ? { url: d.assetIndex.url, sha1: d.assetIndex.sha1, size: d.assetIndex.size }
-        : undefined,
-      assets: d.assets ?? 'legacy',
+        libraries: (d.libraries ?? []).map((lib) => ({
+          name: lib.name,
+          downloads: {
+            artifact: lib.downloads?.artifact
+              ? { url: lib.downloads.artifact.url, sha1: lib.downloads.artifact.sha1 ?? '', size: lib.downloads.artifact.size ?? 0 }
+              : undefined,
+          },
+        })),
+        assetIndex: d.assetIndex
+          ? { url: d.assetIndex.url, sha1: d.assetIndex.sha1, size: d.assetIndex.size }
+          : undefined,
+        assets: d.assets ?? 'legacy',
+      }
+    } catch (error) {
+      log.error('获取版本 %s 的详情失败', version, error)
+      throw error
     }
   })
 }

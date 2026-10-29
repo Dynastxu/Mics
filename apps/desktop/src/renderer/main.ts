@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import * as Vue from 'vue'
 import * as Cordis from 'cordis'
 import App from './App.vue'
-import { boot } from './runtime/context'
+import { boot, reportBootError } from './runtime/context'
 import { installCleanupAudit } from './runtime/cleanupAudit'
 import { store } from './runtime/store'
 import './assets/main.css'
@@ -28,4 +28,5 @@ createApp(App).mount('#app')
 
 boot().catch((error: unknown) => {
   store.bootError = error instanceof Error ? error.message : String(error)
+  reportBootError(error)
 })

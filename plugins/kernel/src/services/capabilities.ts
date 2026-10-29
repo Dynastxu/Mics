@@ -55,6 +55,14 @@ export class CapabilitiesService extends Service {
     const list = this.table.get(name) ?? []
     list.push(record)
     this.table.set(name, list)
+    this.baseCtx
+      .logger('capabilities')
+      .debug(
+        '能力 %s 已注册（provider=%s，priority=%d）',
+        name,
+        record.label,
+        record.priority,
+      )
     this.notify(name)
 
     return this.ctx.effect(() => () => {
@@ -64,6 +72,7 @@ export class CapabilitiesService extends Service {
       if (index < 0) return
       current.splice(index, 1)
       if (!current.length) this.table.delete(name)
+      this.baseCtx.logger('capabilities').debug('能力 %s 已撤销（provider=%s）', name, record.label)
       this.notify(name)
     })
   }

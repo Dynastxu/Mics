@@ -95,7 +95,9 @@ Cordis 的 Service 方法在被插件调用时，`this.ctx` 会指向**调用方
 > 插件也能提供 Service：`mics.logger` 在启动时提供 `ctx.logs`，按启动把日志写入文件。
 > 服务名与插件 id 一样是全局契约，其它插件用 `inject: ['logs']` 获取；提供方卸载时
 > cordis 会等待依赖方先释放，因此日志插件标记为 `essential`，避免禁用后让依赖它的
-> 插件停在未激活状态。
+> 插件停在未激活状态。日志插件通常不是第一个激活的：cordis LoggerService 自带
+> 滚动缓冲区，日志插件激活时先补录启动阶段的消息，再接管 `ctx.logger` 的导出；
+> 渲染进程没有文件系统权限，经 `mics.logger/log/write` 把日志汇总到同一文件。
 
 ### 能力（capability）：definition / provider / consumer
 
@@ -140,11 +142,12 @@ app.whenReady()
   ├─ root.extend({ [PLUGIN_ID]: 'mics.kernel' }).plugin(kernel, config)
   │    ├─ 内核注册 plugins/ipc/commands/storage/permissions/capabilities/configuration 服务
   │    ├─ 注入完成后注册系统 RPC
-  │    └─ activateStartup()（不阻塞；mics.logger 在这里创建本次启动的日志文件）
+  │    └─ activateStartup()（不阻塞；mics.logger 建立日志文件并补录启动阶段日志）
   ├─ createMainWindow()
   └─ loadRenderer(window)
         └─ 渲染进程 boot()
              ├─ 创建渲染器 Context，注册 bridge/ipc/commands/ui/theme/plugins
+             ├─ 日志出口接入 mics.logger/log/write（渲染端日志写进同一个文件）
              ├─ plugins 服务拉取 runtime/snapshot（清单层面）
              └─ NavPanel 画出导航；MainArea 显示当前页面 → plugins.activate(pluginId)
                   ├─ 主进程：import main.mjs → ctx.plugin()  （若 hasMain）

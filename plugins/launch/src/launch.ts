@@ -26,6 +26,8 @@ export interface LaunchOptions {
   username: string
   launcherVersion: string
   memoryMb?: number
+  /** 启动准备阶段的告警出口；由调用方接到插件日志器上 */
+  onLog?: (level: 'info' | 'warn', message: string) => void
 }
 
 export interface LaunchPlan {
@@ -189,6 +191,7 @@ async function ensureFile(
   expectedSha1: string | undefined,
   url: string | undefined,
   label: string,
+  onLog?: LaunchOptions['onLog'],
 ): Promise<string> {
   const current = fileSha1(file)
   if (current && (!expectedSha1 || current === expectedSha1)) return file
@@ -197,7 +200,7 @@ async function ensureFile(
     throw new Error(`文件缺失或损坏，且没有可用的下载地址：${label}`)
   }
 
-  console.warn(`[mics.launch] 修复 ${label}`)
+  onLog?.('warn', `文件缺失或损坏，正在修复：${label}`)
   await downloadFile(url, file)
   const repaired = fileSha1(file)
   if (expectedSha1 && repaired !== expectedSha1) {
@@ -256,12 +259,15 @@ function offlineUuid(username: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
-async function resolveClientJar(instance: ResolvedInstance): Promise<string> {
+async function resolveClientJar(
+  instance: ResolvedInstance,
+  onLog?: LaunchOptions['onLog'],
+): Promise<string> {
   const client = instance.version.downloads?.client
   const direct = path.join(instance.versionDir, `${instance.version.id}.jar`)
   const alternative = path.join(instance.versionDir, 'client.jar')
   const located = locateFile(direct) ?? locateFile(alternative) ?? direct
-  return ensureFile(located, client?.sha1, client?.url, 'client.jar')
+  return ensureFile(located, client?.sha1, client?.url, 'client.jar', onLog)
 }
 
 /** 旧版实现为每次启动创建 run-* 目录；空闲超过这么久才回收 */
@@ -311,6 +317,7 @@ async function prepareNatives(
   instance: ResolvedInstance,
   libraries: Library[],
   librariesDir: string,
+  onLog?: LaunchOptions['onLog'],
 ): Promise<{ dir: string; jars: string[] }> {
   const nativesDir = path.join(instance.versionDir, 'natives')
   mkdirSync(nativesDir, { recursive: true })
@@ -326,17 +333,17 @@ async function prepareNatives(
     const target = path.join(librariesDir, native.relative)
     const file = locateFile(target) ?? target
     try {
-      await ensureFile(file, native.artifact?.sha1, native.artifact?.url, library.name)
+      await ensureFile(file, native.artifact?.sha1, native.artifact?.url, library.name, onLog)
       const synced = syncNativeLibraries(file, nativesDir)
       for (const entry of synced.files) expected.add(entry)
       if (synced.locked) {
-        console.warn(`[mics.launch] natives 正被运行中的实例占用，跳过更新：${native.relative}`)
+        onLog?.('warn', `natives 正被运行中的实例占用，跳过更新：${native.relative}`)
       }
       jars.push(file)
     } catch (cause) {
       // 单个本地库损坏不应阻止启动；游戏可能只是缺少可选加速库。
       complete = false
-      console.warn(`[mics.launch] 本地库处理失败：${native.relative}（${(cause as Error).message}）`)
+      onLog?.('warn', `本地库处理失败：${native.relative}（${(cause as Error).message}）`)
     }
   }
 
@@ -352,7 +359,7 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
 
   const assetsDir = path.join(instance.versionDir, 'assets')
   const librariesDir = path.join(instance.versionDir, 'libraries')
-  const clientJar = await resolveClientJar(instance)
+  const clientJar = await resolveClientJar(instance, options.onLog)
   const libraries = version.libraries ?? []
 
   const assetIndex = version.assetIndex?.id ?? version.assets ?? 'legacy'
@@ -363,10 +370,11 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
       version.assetIndex?.sha1,
       version.assetIndex?.url,
       `资源索引 ${assetIndex}`,
+      options.onLog,
     )
   }
 
-  const natives = await prepareNatives(instance, libraries, librariesDir)
+  const natives = await prepareNatives(instance, libraries, librariesDir, options.onLog)
 
   const classpath = [clientJar]
   for (const library of libraries) {
@@ -376,7 +384,7 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
     const relative = artifact?.path ?? mavenPath(library.name)
     const target = path.join(librariesDir, relative)
     const file = locateFile(target) ?? target
-    await ensureFile(file, artifact?.sha1, artifact?.url, library.name)
+    await ensureFile(file, artifact?.sha1, artifact?.url, library.name, options.onLog)
     classpath.push(file)
   }
   classpath.push(...natives.jars)
@@ -417,12 +425,12 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
   if (logFile) {
     const configPath = path.join(instance.versionDir, 'log_configs', logFile.id)
     try {
-      await ensureFile(configPath, logFile.sha1, logFile.url, `日志配置 ${logFile.id}`)
+      await ensureFile(configPath, logFile.sha1, logFile.url, `日志配置 ${logFile.id}`, options.onLog)
       variables.path = configPath
       const argument = version.logging?.client?.argument ?? '-Dlog4j.configurationFile=${path}'
       jvmArgs.push(replaceVariables(argument, variables))
     } catch (cause) {
-      console.warn(`[mics.launch] 日志配置不可用：${(cause as Error).message}`)
+      options.onLog?.('warn', `日志配置不可用：${(cause as Error).message}`)
     }
   }
 

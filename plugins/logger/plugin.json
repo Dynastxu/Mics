@@ -2,7 +2,7 @@
   "id": "mics.logger",
   "name": "日志",
   "version": "0.1.0",
-  "description": "按启动分文件的日志服务：其它插件通过 ctx.logs 写入，设置中可调整保留数量。",
+  "description": "按启动分文件的日志服务：其它插件通过 ctx.logs 写入，启动阶段日志自动补录，渲染进程经 RPC 汇总，设置中可调整保留数量。",
   "author": "mics",
   "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",

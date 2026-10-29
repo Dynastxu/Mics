@@ -67,6 +67,8 @@ interface Entry {
   issues?: string[]
   /** 正在等待的服务名，只在 state === 'waiting' 时有值 */
   waitingFor?: string[]
+  /** 本次激活开始的时间；用于日志里的耗时 */
+  startedAt?: number
 }
 
 /** 能力注册表里只给内核用的生命周期钩子 */
@@ -180,9 +182,27 @@ export class PluginsService extends Service {
     }
 
     this.validateGraph()
+    const log = this.baseCtx.logger('plugins')
     for (const [id, entry] of this.entries) {
       if (!entry.issues?.length) continue
-      this.baseCtx.logger('plugins').warn(`插件 ${id} 的依赖有问题：${entry.issues.join('；')}`)
+      log.warn(`插件 ${id} 的依赖有问题：${entry.issues.join('；')}`)
+    }
+
+    const builtin = [...this.entries.values()].filter(
+      (entry) => entry.record.source === 'builtin',
+    ).length
+    log.info(
+      '插件目录已就绪：共 %d 个（内置 %d，第三方 %d），禁用 %d 个',
+      this.entries.size,
+      builtin,
+      this.entries.size - builtin,
+      this.disabled.size,
+    )
+    if (this.disabled.size > 0) {
+      log.info('已禁用的插件：%s', [...this.disabled].sort().join('、'))
+    }
+    if (this.scanIssues.length > 0) {
+      log.warn('有 %d 个插件目录未能加载，详见启动日志与插件诊断', this.scanIssues.length)
     }
 
     this.persistDisabled()
@@ -425,13 +445,32 @@ export class PluginsService extends Service {
 
   /** 激活所有声明了 * / onStartup 的插件；被禁用的插件会跳过 */
   async activateStartup(): Promise<void> {
+    const log = this.baseCtx.logger('plugins')
     const startup = [...this.entries.values()].filter((entry) => {
       if (this.disabled.has(entry.record.manifest.id)) return false
       const activation = entry.record.manifest.activation ?? []
       return activation.includes('*') || activation.includes('onStartup')
     })
-    await Promise.allSettled(
+    if (startup.length === 0) {
+      log.info('没有需要随启动激活的插件')
+      return
+    }
+
+    log.info(
+      '开始激活启动插件（%d 个）：%s',
+      startup.length,
+      startup.map((entry) => entry.record.manifest.id).join('、'),
+    )
+    const results = await Promise.allSettled(
       startup.map((entry) => this.activate(entry.record.manifest.id)),
+    )
+    const failed = results.filter((result) => result.status === 'rejected').length
+    const waiting = [...this.entries.values()].filter((entry) => entry.state === 'waiting').length
+    log.info(
+      '启动插件激活完成：成功 %d，失败 %d，等待依赖 %d',
+      results.length - failed,
+      failed,
+      waiting,
     )
   }
 
@@ -472,6 +511,7 @@ export class PluginsService extends Service {
       entry.failure = undefined
       this.notify()
       emitEvent(this.baseCtx, 'plugin/deactivated', id)
+      this.baseCtx.logger('plugins').info('插件 %s 已禁用', id)
     })
   }
 
@@ -488,6 +528,7 @@ export class PluginsService extends Service {
       entry.failure = undefined
       await this.doStart(entry)
       this.notify()
+      this.baseCtx.logger('plugins').info('插件 %s 已启用', id)
     })
   }
 
@@ -496,6 +537,8 @@ export class PluginsService extends Service {
     return this.serialize(id, async () => {
       const entry = this.require(id)
       if (this.disabled.has(id)) throw new Error(`插件 ${id} 已禁用，请先启用再重载`)
+      const log = this.baseCtx.logger('plugins')
+      log.info('正在重载插件 %s', id)
       // 只在 dev 记录 ipcMain 注册；第一次重载建立基线，第二次开始比较
       const audit = this.config.app.isDev ? snapshotIpcRegistrations() : undefined
       try {
@@ -511,6 +554,7 @@ export class PluginsService extends Service {
         entry.failure = undefined
         await this.doStart(entry)
         this.notify()
+        log.info('插件 %s 已重载', id)
       } finally {
         if (audit) {
           const current = snapshotIpcRegistrations()
@@ -539,6 +583,7 @@ export class PluginsService extends Service {
           }
         : { stage, message, at: Date.now() }
       this.setState(entry, 'failed')
+      this.baseCtx.logger('plugins').warn('渲染端加载插件 %s 失败：%s', id, message)
     })
   }
 
@@ -594,14 +639,27 @@ export class PluginsService extends Service {
         } catch (error) {
           // 替换失败时旧版本还在磁盘上：把它恢复到安装前的运行状态
           if (existing && wasActive) await this.doStart(existing).catch(() => {})
+          this.baseCtx
+            .logger('plugins')
+            .warn('安装插件 %s 失败：%s', preview.id, toMessage(error))
           throw error
         }
 
         this.userDisabled.add(installed.record.manifest.id)
         this.rebuildEffectiveDisabled()
         await this.rescan()
+        const summary = this.summarize(installed.record, preview.installedVersion)
+        this.baseCtx
+          .logger('plugins')
+          .info(
+            installed.upgraded
+              ? '插件 %s 已升级到 v%s（保持禁用，需手动启用）'
+              : '插件 %s v%s 已安装（默认禁用）',
+            summary.id,
+            summary.version,
+          )
         return {
-          plugin: this.summarize(installed.record, preview.installedVersion),
+          plugin: summary,
           upgraded: installed.upgraded,
         }
       })
@@ -626,6 +684,8 @@ export class PluginsService extends Service {
         this.userDisabled.add(id)
         this.rebuildEffectiveDisabled()
         this.persistDisabled()
+        const log = this.baseCtx.logger('plugins')
+        log.info('正在卸载插件 %s%s', id, options.force ? '（跳过卸载脚本）' : '')
         const timedOut = await this.stop(entry)
         if (timedOut) {
           this.setState(entry, 'failed')
@@ -653,6 +713,7 @@ export class PluginsService extends Service {
         this.disabled.delete(id)
         this.forgetStorage(id)
         await this.rescan()
+        log.info('插件 %s 已卸载', id)
       })
     })
   }
@@ -752,7 +813,9 @@ export class PluginsService extends Service {
     const id = manifest.id
     const nextVisiting = new Set(visiting).add(id)
     entry.failure = undefined
+    entry.startedAt = Date.now()
     this.setState(entry, 'activating')
+    this.baseCtx.logger('plugins').info('正在加载插件 %s（v%s）', id, manifest.version)
     try {
       for (const dependency of manifest.dependencies ?? []) {
         const target = this.entries.get(dependency)
@@ -803,6 +866,7 @@ export class PluginsService extends Service {
 
       entry.failure = undefined
       this.setState(entry, 'active')
+      this.announceActivated(entry)
       emitEvent(this.baseCtx, 'plugin/activated', id)
     } catch (error) {
       const failure =
@@ -827,6 +891,7 @@ export class PluginsService extends Service {
         STOP_TIMEOUT_MS,
         `插件 ${id} 停止超时（${STOP_TIMEOUT_MS}ms）`,
       )
+      this.baseCtx.logger('plugins').debug('插件 %s 已停止', id)
       return false
     } catch (error) {
       const message = toMessage(error)
@@ -894,7 +959,33 @@ export class PluginsService extends Service {
     if (next === previous) return
     entry.state = next
     this.notify()
-    if (next === 'active') emitEvent(this.baseCtx, 'plugin/activated', entry.record.manifest.id)
+    if (next === 'active') {
+      this.announceActivated(entry)
+      emitEvent(this.baseCtx, 'plugin/activated', entry.record.manifest.id)
+    } else if (next === 'waiting') {
+      const unmet = entry.waitingFor ?? []
+      this.baseCtx
+        .logger('plugins')
+        .info(
+          '插件 %s 等待依赖服务：%s',
+          entry.record.manifest.id,
+          unmet.join('、') || '未知',
+        )
+    } else if (next === 'failed') {
+      this.baseCtx.logger('plugins').warn('插件 %s 运行中失效', entry.record.manifest.id)
+    }
+  }
+
+  /** 插件真正可运行后记一条带耗时的 info；耗时从 `正在加载` 开始算 */
+  private announceActivated(entry: Entry): void {
+    const id = entry.record.manifest.id
+    const startedAt = entry.startedAt
+    entry.startedAt = undefined
+    if (startedAt === undefined) {
+      this.baseCtx.logger('plugins').info('插件 %s 已激活', id)
+      return
+    }
+    this.baseCtx.logger('plugins').info('插件 %s 已激活（%dms）', id, Date.now() - startedAt)
   }
 
   /** `inject` 里还没有提供方的服务名 */
@@ -1022,6 +1113,9 @@ export class PluginsService extends Service {
     this.persistDisabled()
     this.syncHost()
     this.notify()
+    this.baseCtx
+      .logger('plugins')
+      .debug('插件目录已同步：%d 个插件，%d 个问题目录', this.entries.size, this.scanIssues.length)
   }
 
   /** 把当前插件目录集合同步给宿主（协议映射），新装的插件才能被页面加载 */

@@ -9,6 +9,7 @@ import type {
 } from '@mics/sdk'
 import { FIBER_ACTIVE, PLUGIN_ID, PluginFailureError } from '@mics/sdk'
 import { reportCleanup, snapshotCleanup, type CleanupSnapshot } from '../cleanupAudit'
+import { logDebug, logError, logInfo, logWarn } from '../logging'
 import { applySnapshot, ensureStyle, removeStyle, store } from '../store'
 
 /**
@@ -51,8 +52,10 @@ export class PluginsService extends Service {
       // 主进程的内核服务可能还在注册系统 RPC，这里做有限重试
       await this.waitForKernel()
       this.owner.theme.restore()
+      logInfo('渲染端插件快照已同步：%d 个插件', store.plugins.length)
     } catch (error) {
       store.bootError = error instanceof Error ? error.message : String(error)
+      logError('渲染端等待内核就绪失败', error)
     }
   }
 
@@ -138,6 +141,7 @@ export class PluginsService extends Service {
     for (const href of this.styles.get(id) ?? []) removeStyle(href)
     this.styles.delete(id)
     if (fiber) await fiber.dispose()
+    logDebug('页面插件 %s 已卸载', id)
   }
 
   /** 禁用：由内核持久化禁用状态，再卸载渲染端 fiber 与样式 */
@@ -155,6 +159,7 @@ export class PluginsService extends Service {
     await this.unload(id)
     delete store.errors[id]
     await this.refresh()
+    logInfo('页面插件 %s 已禁用', id)
   }
 
   /** 启用：解除内核侧的禁用并重新加载渲染端；失败由 activate() 回报内核 */
@@ -164,6 +169,7 @@ export class PluginsService extends Service {
     await this.refresh()
     await this.activate(id)
     await this.refresh()
+    logInfo('页面插件 %s 已启用', id)
   }
 
   /**
@@ -175,6 +181,7 @@ export class PluginsService extends Service {
     const info = this.get(id)
     if (!info) throw new Error(`未知插件 ${id}`)
     if (info.state === 'disabled') throw new Error(`插件 ${id} 已禁用，请先启用再重载`)
+    logInfo('正在重载页面插件 %s', id)
 
     // 第一次重载只建立基线；之后比较同一个插件的注册数量是否增长
     const audit = import.meta.env.DEV ? snapshotCleanup() : undefined
@@ -190,11 +197,12 @@ export class PluginsService extends Service {
       await this.refresh()
       await this.activate(id)
       await this.refresh()
+      logInfo('页面插件 %s 已重载', id)
     } finally {
       if (audit) {
         const current = snapshotCleanup()
         reportCleanup(id, this.auditBaselines.get(id), current, (message) =>
-          console.warn(`[mics.cleanup] ${message}`),
+          logWarn('%s', message),
         )
         this.auditBaselines.set(id, current)
       }
@@ -204,6 +212,7 @@ export class PluginsService extends Service {
   private async doActivate(info: PluginInfo): Promise<void> {
     store.activating[info.id] = true
     delete store.errors[info.id]
+    logInfo('正在加载页面插件 %s', info.id)
     try {
       // 渲染端插件也在内核侧标记为已激活，保持主进程与渲染进程的生命周期一致。
       await this.owner.ipc.invoke('mics.kernel', 'plugins/activate', { id: info.id })
@@ -266,10 +275,12 @@ export class PluginsService extends Service {
       }
 
       this.loaded.add(info.id)
+      logInfo('页面插件 %s 已激活', info.id)
     } catch (error) {
       // 失败就把已经加上去的样式与 fiber 收回去，避免留下半个插件
       await this.unload(info.id).catch(() => {})
       store.errors[info.id] = error instanceof Error ? error.message : String(error)
+      logError('页面插件 %s 加载失败', info.id, error)
       throw error
     } finally {
       store.activating[info.id] = false
@@ -280,6 +291,7 @@ export class PluginsService extends Service {
   private async reportFailure(id: PluginId, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : String(error)
     store.errors[id] = message
+    logDebug('页面插件 %s 的失败已回报内核：%s', id, message)
     // 主进程激活/重载失败时已经带着准确阶段写进失败态；这里只刷新快照，
     // 不能用一个笼统的 renderer 阶段把它覆盖掉。
     if (!(error instanceof PluginFailureError)) {

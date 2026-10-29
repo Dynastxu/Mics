@@ -115,6 +115,7 @@ export const name = 'mics.download.manager'
 export const inject = ['ipc', 'storage', 'capabilities']
 
 export function apply(ctx: Context): void {
+  const log = ctx.logger('mics.download.manager')
   const tasks = new Map<string, DownloadTask>()
   const jobs = new Map<string, InstallJob>()
   /** 正在传输的任务句柄：暂停/取消时用它中断请求（.part 保留） */
@@ -139,6 +140,7 @@ export function apply(ctx: Context): void {
     label: 'local',
     create: (spec) => createFileTransfer(spec as FileTransferOptions),
   })
+  log.info('file-transfer 能力已注册（provider=local）')
 
   /** 已受理但尚未落盘的实例名：并发提交同名安装时先占位 */
   const reservedInstanceNames = new Set<string>()
@@ -231,6 +233,13 @@ export function apply(ctx: Context): void {
     if (health.failures >= SOURCE_FAILURE_LIMIT) {
       health.failures = 0
       health.disabledUntil = Date.now() + SOURCE_COOLDOWN
+      log.warn(
+        '下载源 #%d 的 %s 连续失败 %d 次，暂停使用 %d 分钟',
+        sourceIndex + 1,
+        category,
+        SOURCE_FAILURE_LIMIT,
+        Math.round(SOURCE_COOLDOWN / 60_000),
+      )
     }
     sourceHealth.set(key, health)
   }
@@ -571,6 +580,7 @@ export function apply(ctx: Context): void {
       task.state = 'failed'
       task.error = '所有下载源均已禁用'
       task.progress.speed = 0
+      log.warn('下载失败 %s：所有下载源均已禁用', task.label ?? task.url)
       persistRecords()
       scheduleLoop()
       return
@@ -583,6 +593,7 @@ export function apply(ctx: Context): void {
     } catch (cause) {
       task.state = 'failed'
       task.error = `无法创建下载目录：${toError(cause).message}`
+      log.warn('下载失败 %s：%s', task.label ?? task.url, task.error)
       persistRecords()
       scheduleLoop()
       return
@@ -653,6 +664,7 @@ export function apply(ctx: Context): void {
         if (ci < order.length - 1) continue
         task.state = 'failed'
         task.error = result.error?.message ?? '下载失败'
+        log.warn('下载失败 %s（已尝试 %d 个源）：%s', task.label ?? task.url, order.length, task.error)
         persistRecords()
         scheduleLoop()
         return
@@ -668,6 +680,7 @@ export function apply(ctx: Context): void {
           if (ci < order.length - 1) continue
           task.state = 'failed'
           task.error = `SHA1 校验失败：期望 ${task.sha1}，实际 ${result.digest ?? '未知'}`
+          log.warn('下载失败 %s：%s', task.label ?? task.url, task.error)
           persistRecords()
           scheduleLoop()
           return
@@ -681,6 +694,7 @@ export function apply(ctx: Context): void {
       } catch (cause) {
         task.state = 'failed'
         task.error = `无法写入目标文件：${toError(cause).message}`
+        log.warn('下载失败 %s：%s', task.label ?? task.url, task.error)
         persistRecords()
         scheduleLoop()
         return
@@ -777,6 +791,7 @@ export function apply(ctx: Context): void {
     prepAborts.set(job.id, abort)
     const isCancelled = (): boolean => cancelledJobs.has(job.id)
     let createdInstance = false
+    log.info('开始准备安装「%s」（版本 %s，job %s）', job.instanceName, request.gameVersion, job.id)
 
     try {
       const detail = await fetchVersionDetail(request.gameVersion, abort.signal)
@@ -905,15 +920,25 @@ export function apply(ctx: Context): void {
       }
 
       job.state = 'ready'
+      log.info(
+        '安装「%s」的下载清单已就绪：%d 个文件，job %s',
+        job.instanceName,
+        taskSpecs.length,
+        job.id,
+      )
       persistRecords(true)
       if (!paused) scheduleLoop()
     } catch (cause) {
       if (isCancelled()) return
       job.state = 'failed'
       job.error = toError(cause).message
+      log.error('准备安装「%s」失败：%s', job.instanceName, job.error)
     } finally {
       prepAborts.delete(job.id)
-      if (isCancelled()) job.state = 'cancelled'
+      if (isCancelled()) {
+        job.state = 'cancelled'
+        log.info('安装「%s」已取消，job %s', job.instanceName, job.id)
+      }
       if (job.state === 'failed' || job.state === 'cancelled') {
         pausedJobs.delete(job.id)
         // 先清掉半成品目录再释放名称，否则重试会被残留的目录判成重名
@@ -928,6 +953,9 @@ export function apply(ctx: Context): void {
   }
 
   loadRecords()
+  if (jobs.size > 0 || tasks.size > 0) {
+    log.info('下载记录已恢复：%d 个安装，%d 个下载任务', jobs.size, tasks.size)
+  }
 
   // ── IPC handlers ──
 
@@ -944,9 +972,11 @@ export function apply(ctx: Context): void {
       try { parsed = JSON.parse(value) } catch { parsed = null }
       ctx.storage.set(key, JSON.stringify(normalizeDownloadSources(parsed)))
       sourceHealth.clear()
+      log.info('下载源设置已更新')
       return
     }
     ctx.storage.set(key, value)
+    log.info('下载设置已更新：%s', key)
   })
 
   ctx.ipc.handle('tasks/list', () => [...tasks.values()])
@@ -979,6 +1009,7 @@ export function apply(ctx: Context): void {
     cancelledJobs.add(jobId)
     pausedJobs.delete(jobId)
     job.state = 'cancelled'
+    log.info('取消安装「%s」，job %s', job.instanceName, job.id)
     // 准备阶段的安装没有任务，中断元数据请求后由 prepareJob 负责清理实例目录
     prepAborts.get(jobId)?.abort()
     await Promise.all(job.taskIds.map((taskId) => cancelTask(taskId)))
@@ -991,6 +1022,7 @@ export function apply(ctx: Context): void {
     if (job.state === 'failed' || job.state === 'cancelled') return
     // 任务级状态负责展示，任务级暂停集体生效；未开始的任务也要一起停下
     pausedJobs.add(jobId)
+    log.info('暂停安装「%s」，job %s', job.instanceName, job.id)
     await Promise.all(job.taskIds.map((taskId) => pauseTask(taskId)))
     persistRecords(true)
   })
@@ -1000,6 +1032,7 @@ export function apply(ctx: Context): void {
     if (!job) return
     if (job.state === 'failed' || job.state === 'cancelled') return
     pausedJobs.delete(jobId)
+    log.info('继续安装「%s」，job %s', job.instanceName, job.id)
     for (const taskId of job.taskIds) resumeTask(taskId)
     persistRecords(true)
     scheduleLoop()
@@ -1027,6 +1060,12 @@ export function apply(ctx: Context): void {
     reservedInstanceNames.add(instanceKey(instanceName))
     // 不做同步落盘：任务列表可能有上千条，写入会拖慢「点击即返回」的受理路径
     persistRecords()
+    log.info(
+      '已受理安装「%s」：版本 %s，job %s',
+      instanceName,
+      request.gameVersion,
+      job.id,
+    )
 
     // 立刻返回：下载清单在后台准备，调用方直接跳转到下载页
     void prepareJob(job, request).catch(() => undefined)

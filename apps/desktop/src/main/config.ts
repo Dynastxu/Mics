@@ -15,6 +15,18 @@ export interface BootConfig {
   profile?: string
 }
 
+/**
+ * 启动配置有问题时的去向。
+ *
+ * 配置解析是纯函数，不应该自己决定写控制台还是写文件；bootstrap 传入日志器，
+ * 这些告警就能进入本次启动的日志文件（早于日志插件的部分由缓冲区补录）。
+ */
+export type ConfigWarning = (message: string) => void
+
+const consoleWarning: ConfigWarning = (message) => {
+  console.warn(`[mics] ${message}`)
+}
+
 const DEFAULT_CONFIG: BootConfig = {
   kernel: 'mics.kernel',
   pluginRoots: ['plugins'],
@@ -34,7 +46,7 @@ function configCandidates(): string[] {
   ]
 }
 
-export function loadBootConfig(): BootConfig {
+export function loadBootConfig(onWarning: ConfigWarning = consoleWarning): BootConfig {
   for (const file of configCandidates()) {
     if (!existsSync(file)) continue
     try {
@@ -51,7 +63,7 @@ export function loadBootConfig(): BootConfig {
         profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined,
       }
     } catch (error) {
-      console.warn(`[mics] 读取 ${file} 失败：${(error as Error).message}`)
+      onWarning(`读取 ${file} 失败：${(error as Error).message}`)
     }
   }
   return { ...DEFAULT_CONFIG }
@@ -73,26 +85,26 @@ export function resolvePluginRoots(roots: string[]): string[] {
 /**
  * 读取部署 profile。
  *
- * profile 文件缺失或字段不合法时不让应用启动失败：控制台告警并退回空 profile，
+ * profile 文件缺失或字段不合法时不让应用启动失败：记一条告警并退回空 profile，
  * 这样一次手滑不会把整个界面锁死。`enable` / `disable` 只接受字符串数组，
  * `settings` 只接受 `{ [pluginId]: { [key]: value } }`。
  */
-export function loadProfile(name: string): ProfileConfig {
+export function loadProfile(name: string, onWarning: ConfigWarning = consoleWarning): ProfileConfig {
   const empty: ProfileConfig = { name, enable: [], disable: [], settings: {} }
   if (!/^[A-Za-z0-9._-]+$/.test(name)) {
-    console.warn(`[mics] profile 名不合法：${name}`)
+    onWarning(`profile 名不合法：${name}`)
     return empty
   }
   const file = path.join(app.getPath('userData'), 'profiles', `${name}.json`)
   if (!existsSync(file)) {
-    console.warn(`[mics] profile ${name} 不存在：${file}`)
+    onWarning(`profile ${name} 不存在：${file}`)
     return empty
   }
 
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8')) as unknown
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      console.warn(`[mics] profile ${name} 必须是 JSON 对象`)
+      onWarning(`profile ${name} 必须是 JSON 对象`)
       return empty
     }
     const record = raw as Record<string, unknown>
@@ -102,11 +114,11 @@ export function loadProfile(name: string): ProfileConfig {
     const settings: Record<string, Record<string, unknown>> = {}
     if (record.settings !== undefined) {
       if (!record.settings || typeof record.settings !== 'object' || Array.isArray(record.settings)) {
-        console.warn(`[mics] profile ${name} 的 settings 必须是对象`)
+        onWarning(`profile ${name} 的 settings 必须是对象`)
       } else {
         for (const [pluginId, values] of Object.entries(record.settings)) {
           if (!values || typeof values !== 'object' || Array.isArray(values)) {
-            console.warn(`[mics] profile ${name} 的 settings.${pluginId} 必须是对象`)
+            onWarning(`profile ${name} 的 settings.${pluginId} 必须是对象`)
             continue
           }
           settings[pluginId] = values as Record<string, unknown>
@@ -121,7 +133,7 @@ export function loadProfile(name: string): ProfileConfig {
       settings,
     }
   } catch (error) {
-    console.warn(`[mics] 读取 profile ${name} 失败：${(error as Error).message}`)
+    onWarning(`读取 profile ${name} 失败：${(error as Error).message}`)
     return empty
   }
 }

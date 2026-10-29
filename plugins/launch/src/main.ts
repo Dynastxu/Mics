@@ -77,6 +77,7 @@ async function waitForExit(runtime: LaunchRuntime, id: string, timeoutMs: number
 
 export function apply(ctx: Context): void {
   const dataDir = app.getPath('userData')
+  const log = ctx.logger('mics.launch')
 
   const runtime = new LaunchRuntime({
     load: () => ctx.storage.get<PersistedProcess[]>(RUNNING_KEY, []),
@@ -84,6 +85,8 @@ export function apply(ctx: Context): void {
     publish: (state) => ctx.ipc.broadcast(LAUNCH_STATE_TOPIC, state),
   })
   runtime.restore()
+  const restored = runtime.snapshot().instances.length
+  if (restored > 0) log.info('已恢复 %d 个仍在运行的实例进程', restored)
   ctx.effect(() => () => runtime.dispose())
 
   const readBehavior = (): RepeatLaunchBehavior =>
@@ -103,9 +106,9 @@ export function apply(ctx: Context): void {
    * 窗口一出现就尝试置前（AppActivate，失败也不阻塞状态恢复），然后广播
    * running，渲染端因此不会在窗口还看不见时就提前结束启动状态。
    */
-  const followLaunch = async (pid: number): Promise<void> => {
+  const followLaunch = async (instanceId: string, pid: number): Promise<void> => {
     const result = await waitForGameWindow(pid, WINDOW_PROBE_TIMEOUT)
-    console.log(`[mics.launch] 窗口探测 pid=${pid} 结果=${result}`)
+    log.info('实例 %s 的窗口探测结果：%s（pid=%s）', instanceId, result, pid)
 
     if (result === 'exited') {
       // PowerShell 偶尔会因为拿不到进程信息而误报退出，以 Node 的存活判断为准。
@@ -152,7 +155,10 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle<InstanceModToggleRequest>('instances/mods/toggle', (params) => {
     const id = instanceIdOf(params)
     const fileName = typeof params?.fileName === 'string' ? params.fileName : ''
-    return setInstanceModEnabled(dataDir, id, fileName, params?.enabled === true)
+    const enabled = params?.enabled === true
+    const result = setInstanceModEnabled(dataDir, id, fileName, enabled)
+    log.info('实例 %s 的 Mod %s 已%s', id, fileName, enabled ? '启用' : '禁用')
+    return result
   })
 
   ctx.ipc.handle<InstanceRevealRequest>('instances/reveal', async (params) => {
@@ -174,6 +180,7 @@ export function apply(ctx: Context): void {
     }
 
     await deleteInstanceDirectory(dataDir, id)
+    log.info('实例 %s 已删除', id)
     return { id }
   })
 
@@ -184,6 +191,7 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle<{ username: string }>('account/set', ({ username }) => {
     const name = sanitizeUsername(username)
     ctx.storage.set('username', name)
+    log.info('玩家名称已更新为 %s', name)
     return { username: name }
   })
 
@@ -196,6 +204,14 @@ export function apply(ctx: Context): void {
     try {
       const name = sanitizeUsername(username || ctx.storage.get<string>('username', 'Steve'))
       const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
+      const memoryMb = Number.isFinite(memory) ? memory : 4096
+      log.info(
+        '开始启动实例 %s（版本 %s，用户 %s，内存 %dMB）',
+        instance.id,
+        instance.version.id,
+        name,
+        memoryMb,
+      )
 
       // 启动方式由 provider 决定：本机进程只是默认实现，沙箱插件可以整体替换
       const shellCapability = ctx.capabilities.require<ShellExecuteCapability>(SHELL_EXECUTE)
@@ -203,14 +219,32 @@ export function apply(ctx: Context): void {
       const launched = await launchInstance(shellCapability, instance, {
         username: name,
         launcherVersion: app.getVersion(),
-        memoryMb: Number.isFinite(memory) ? memory : 4096,
+        memoryMb,
+        onLog: (level, message) => {
+          if (level === 'warn') log.warn('%s', message)
+          else log.info('%s', message)
+        },
       })
       markInstanceLaunched(instance, name)
 
       runtime.add(instance.id, launched.pid, launched.child)
-      void followLaunch(launched.pid)
+      // 游戏进程退出时记一条日志；监听只触发一次，不需要额外回收
+      launched.child.once('exit', (code, signal) => {
+        log.info(
+          '实例 %s 的游戏进程 %d 已退出（code=%s，signal=%s）',
+          instance.id,
+          launched.pid,
+          String(code ?? '-'),
+          String(signal ?? '-'),
+        )
+      })
+      log.info('实例 %s 已启动：pid=%d', instance.id, launched.pid)
+      void followLaunch(instance.id, launched.pid)
 
       return { pid: launched.pid }
+    } catch (error) {
+      log.error('启动实例 %s 失败', id, error)
+      throw error
     } finally {
       preparing.delete(id)
     }
@@ -218,6 +252,7 @@ export function apply(ctx: Context): void {
 
   ctx.ipc.handle<TerminateRequest>('instances/terminate', async ({ id }) => {
     const terminated = await runtime.terminate(id)
+    log.info('终止实例 %s：结束 %d 个进程', id, terminated)
     return { terminated } satisfies TerminateResult
   })
 
@@ -236,6 +271,7 @@ export function apply(ctx: Context): void {
       // storage 会按清单 schema 校验 1024–32768
       ctx.storage.set('maxMemory', Math.round(memory))
     }
+    log.info('启动设置已更新：重复启动=%s，最大内存=%dMB', readBehavior(), readMemory())
     return {
       repeatBehavior: readBehavior(),
       maxMemory: readMemory(),

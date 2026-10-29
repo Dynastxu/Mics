@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { getContext } from '../runtime/context'
+import { logError } from '../runtime/logging'
 import { store } from '../runtime/store'
 
 const query = ref('')
@@ -28,7 +29,7 @@ async function run(id: string): Promise<void> {
   try {
     await getContext().commands.execute(id)
   } catch (error) {
-    console.error('[mics] 命令执行失败', error)
+    logError('命令 %s 执行失败', id, error)
   }
 }
 

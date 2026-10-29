@@ -44,6 +44,7 @@ export class IpcService extends Service {
     ipcMain.handle('mics:rpc', this.onRpc)
     ipcMain.removeAllListeners('mics:event:emit')
     ipcMain.on('mics:event:emit', this.onEventEmit)
+    this.baseCtx.logger('ipc').info('IPC 服务已就绪：mics:rpc / mics:event')
     yield () => {
       ipcMain.removeHandler('mics:rpc')
       ipcMain.removeAllListeners('mics:event:emit')
@@ -67,6 +68,7 @@ export class IpcService extends Service {
       throw new Error(`插件 ${target} 重复注册 RPC 方法 ${method}`)
     }
     map.set(method, handler as Handler)
+    this.baseCtx.logger('ipc').debug('插件 %s 注册 RPC %s', target, method)
     return this.ctx.effect(() => () => {
       const current = this.handlers.get(target)
       current?.delete(method)
