@@ -1,4 +1,5 @@
 export * from './contract/manifest'
+export * from './contract/plugins'
 export * from './contract/runtime'
 export * from './contract/services'
 export * from './contract/kernel'

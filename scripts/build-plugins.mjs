@@ -3,12 +3,16 @@
  * 插件构建脚本。
  *
  * 每个 `plugins/<id>/plugin.json` 会被编译成：
- *   dist/main.mjs      —— 主进程 ESM（esbuild，electron/cordis 保持 external）
+ *   dist/main.mjs      —— 主进程 ESM
  *   dist/renderer.mjs  —— 渲染进程 ESM（vite lib 模式，支持 .vue）
  *   dist/style.css     —— 渲染进程样式（若有）
+ *   dist/uninstall.mjs —— 卸载脚本（若清单声明了 uninstall）
  *
- * vue / cordis 在渲染进程侧被替换成 shim：插件不打包框架，
- * 而是复用 shell 注入到 globalThis 上的同一份运行时。
+ * vue / cordis 在两侧都被替换成 shim：插件不打包框架，而是复用宿主注入到
+ * globalThis 上的同一份运行时。这样插件放在应用目录还是用户数据目录都一样能跑。
+ *
+ * `examples/*` 用同一套流程构建，但**不会**被当作内置插件扫描——它们是给
+ * 「从文件夹安装」验收用的示例包。
  */
 import { existsSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -19,6 +23,7 @@ import vuePlugin from '@vitejs/plugin-vue'
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const pluginsDir = path.join(root, 'plugins')
+const examplesDir = path.join(root, 'examples')
 const sdkDir = path.join(root, 'packages', 'sdk', 'src')
 const loaderDir = path.join(root, 'packages', 'plugin-loader', 'src')
 const uiEntry = path.join(root, 'packages', 'ui', 'src', 'index.ts')
@@ -101,13 +106,8 @@ async function readManifest(dir) {
   }
 }
 
-async function buildMain(dir, manifest, watchMode) {
-  const entry = path.join(dir, 'src/main.ts')
-  if (!existsSync(entry)) {
-    if (manifest.main) console.warn(`[plugins] ${manifest.id}: 声明了 main 但缺少 src/main.ts`)
-    return false
-  }
-  const fileName = path.basename(manifest.main ?? 'dist/main.mjs')
+/** 主进程侧入口（main / uninstall）共用一次 SSR 构建 */
+async function buildMainEntry(dir, entry, fileName, watchMode) {
   await viteBuild({
     configFile: false,
     root: dir,
@@ -126,11 +126,39 @@ async function buildMain(dir, manifest, watchMode) {
       sourcemap: true,
       watch: watchMode ? {} : null,
       rollupOptions: {
-        external: ['electron', 'cordis'],
+        // 只留 electron（Electron 内建模块）；cordis 走 shim，必须打进产物，
+        // 否则外部插件会按自己的目录去找 node_modules 并直接报模块找不到
+        external: ['electron'],
         output: { format: 'es', entryFileNames: fileName },
       },
     },
   })
+}
+
+async function buildMain(dir, manifest, watchMode) {
+  const entry = path.join(dir, 'src/main.ts')
+  if (!existsSync(entry)) {
+    if (manifest.main) console.warn(`[plugins] ${manifest.id}: 声明了 main 但缺少 src/main.ts`)
+    return false
+  }
+  await buildMainEntry(dir, entry, path.basename(manifest.main ?? 'dist/main.mjs'), watchMode)
+  return true
+}
+
+async function buildUninstall(dir, manifest, watchMode) {
+  const entry = path.join(dir, 'src/uninstall.ts')
+  if (!existsSync(entry)) {
+    if (manifest.uninstall) {
+      console.warn(`[plugins] ${manifest.id}: 声明了 uninstall 但缺少 src/uninstall.ts`)
+    }
+    return false
+  }
+  await buildMainEntry(
+    dir,
+    entry,
+    path.basename(manifest.uninstall ?? 'dist/uninstall.mjs'),
+    watchMode,
+  )
   return true
 }
 
@@ -168,7 +196,9 @@ async function buildRenderer(dir, manifest, watchMode) {
 }
 
 function checkDeclaredFiles(dir, manifest) {
-  const declared = [manifest.main, manifest.renderer, ...(manifest.styles ?? [])].filter(Boolean)
+  const declared = [manifest.main, manifest.renderer, manifest.uninstall, ...(manifest.styles ?? [])].filter(
+    Boolean,
+  )
   for (const relative of declared) {
     if (!existsSync(path.join(dir, relative))) {
       console.warn(`[plugins] ${manifest.id}: 清单声明的 ${relative} 不存在`)
@@ -176,32 +206,48 @@ function checkDeclaredFiles(dir, manifest) {
   }
 }
 
+async function buildDirectory(baseDir, dirName) {
+  const dir = path.join(baseDir, dirName)
+  const manifest = await readManifest(dir)
+  if (!manifest?.id) return false
+
+  if (!watch) await rm(path.join(dir, 'dist'), { recursive: true, force: true })
+
+  const hasMain = await buildMain(dir, manifest, watch)
+  const hasUninstall = await buildUninstall(dir, manifest, watch)
+  const hasRenderer = await buildRenderer(dir, manifest, watch)
+  if (!hasMain && !hasRenderer) return false
+  if (!watch) checkDeclaredFiles(dir, manifest)
+
+  const parts = [hasMain ? 'main' : '', hasRenderer ? 'renderer' : '', hasUninstall ? 'uninstall' : '']
+    .filter(Boolean)
+    .join(' ')
+  console.log(`[plugins] ${manifest.id} ✓ ${parts}`)
+  return true
+}
+
+async function buildTree(baseDir, label) {
+  if (!existsSync(baseDir)) return 0
+  const dirents = await readdir(baseDir, { withFileTypes: true })
+  let built = 0
+  for (const dirent of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!dirent.isDirectory() || dirent.name.startsWith('.')) continue
+    if (await buildDirectory(baseDir, dirent.name)) built += 1
+  }
+  if (built) console.log(`[plugins] ${label}：${built} 个`)
+  return built
+}
+
 async function main() {
   await writeShims()
 
-  const dirents = await readdir(pluginsDir, { withFileTypes: true })
-  let built = 0
-
-  for (const dirent of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (!dirent.isDirectory()) continue
-    const dir = path.join(pluginsDir, dirent.name)
-    const manifest = await readManifest(dir)
-    if (!manifest?.id) continue
-
-    if (!watch) await rm(path.join(dir, 'dist'), { recursive: true, force: true })
-
-    const hasMain = await buildMain(dir, manifest, watch)
-    const hasRenderer = await buildRenderer(dir, manifest, watch)
-    if (!hasMain && !hasRenderer) continue
-    if (!watch) checkDeclaredFiles(dir, manifest)
-    built += 1
-    console.log(`[plugins] ${manifest.id} ✓ ${hasMain ? 'main ' : ''}${hasRenderer ? 'renderer' : ''}`)
-  }
+  const plugins = await buildTree(pluginsDir, '内置插件')
+  const examples = await buildTree(examplesDir, '示例插件')
 
   console.log(
     watch
-      ? `[plugins] 监听中（${built} 个插件）…`
-      : `[plugins] 完成：${built} 个插件 → out 就绪，可以 pnpm dev`,
+      ? `[plugins] 监听中（${plugins + examples} 个）…`
+      : `[plugins] 完成：${plugins} 个插件 + ${examples} 个示例 → out 就绪，可以 pnpm dev`,
   )
   if (watch) await new Promise(() => {})
 }

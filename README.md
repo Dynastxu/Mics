@@ -79,11 +79,15 @@ mics/
 │  ├─ download-resourcepack/# 资源包目录
 │  ├─ download-shader/      # 光影包目录
 │  ├─ settings/             # 设置分组 + 通用设置页
-│  ├─ plugin-inspector/     # 插件管理页
+│  ├─ plugin-inspector/     # 插件管理页（安装 / 启用 / 禁用 / 重载 / 卸载）
 │  └─ logger/               # 按启动分文件的日志服务 + 日志设置
+├─ examples/
+│  └─ hello-tool/           # 验收用示例插件：页面 + 主进程 RPC + 文件读写 + 卸载脚本
 ├─ scripts/build-plugins.mjs
 ├─ boot.config.json         # {"kernel": "mics.kernel", "pluginRoots": ["plugins"]}
-└─ docs/architecture.md
+└─ docs/
+   ├─ architecture.md
+   └─ plugin-manager.md     # 安装 / 卸载 / 三态 / 内置保护 / 卸载脚本
 ```
 
 ## 一个插件长什么样
@@ -226,6 +230,8 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
 - `ctx.effect()`、`ctx.ipc.handle()`、`ctx.ui.registerView()` 等注册都绑定在调用方插件
   的 fiber 上，插件禁用或卸载时自动清理；禁用状态会持久化到 `userData/disabled-plugins.json`，
   之后不会被页面/命令/启动事件自动重新激活，其导航、命令与样式也会从界面上移除。
+- 第三方插件的安装、启停、重载与卸载都不需要重启应用，详见
+  [docs/plugin-manager.md](docs/plugin-manager.md)；验收载体是 `examples/hello-tool`。
 - 快捷键：`Ctrl+Shift+P` 命令面板，`Ctrl+B` 显示/隐藏左侧导航。
 - 窗口无边框，标题栏由 `apps/desktop/src/renderer/shell/WindowTitleBar.vue` 自绘；
   系统菜单已移除，开发/预览构建下用 `F12` 打开 DevTools、`Ctrl+R` 重载渲染进程。

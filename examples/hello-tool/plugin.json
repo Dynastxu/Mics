@@ -1,0 +1,22 @@
+{
+  "id": "demo.hello-tool",
+  "name": "示例插件",
+  "version": "0.1.0",
+  "description": "验收用示例：一个页面、一个主进程 RPC、一次文件读写、一个卸载脚本。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "uninstall": "dist/uninstall.mjs",
+  "activation": ["onView:hello.view"],
+  "contributes": {
+    "nav": [
+      {
+        "id": "hello.view",
+        "title": "示例插件",
+        "icon": "plugin",
+        "order": 90
+      }
+    ]
+  }
+}

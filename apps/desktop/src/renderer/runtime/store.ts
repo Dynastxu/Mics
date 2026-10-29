@@ -134,6 +134,11 @@ export function applySnapshot(snapshot: RuntimeSnapshot): void {
 
   repairSelection()
 
+  // 主进程侧的失败也要能显示在页面上：内核把错误放在清单快照里带过来
+  for (const plugin of snapshot.plugins) {
+    if (plugin.status === 'failed' && plugin.error) store.errors[plugin.id] = plugin.error
+  }
+
   // 清理已消失插件的错误与激活标记
   const alive = new Set(snapshot.plugins.map((plugin) => plugin.id))
   for (const id of Object.keys(store.errors)) {

@@ -227,7 +227,7 @@ export function validateManifest(raw: unknown): ValidationResult {
   if (raw.core === true) manifest.core = true
   if (raw.essential === true) manifest.essential = true
 
-  for (const field of ['main', 'renderer'] as const) {
+  for (const field of ['main', 'renderer', 'uninstall'] as const) {
     const value = raw[field]
     if (value === undefined) continue
     if (typeof value !== 'string' || !isSafeRelativePath(value)) {
@@ -235,6 +235,11 @@ export function validateManifest(raw: unknown): ValidationResult {
       continue
     }
     manifest[field] = value
+  }
+
+  // 卸载脚本是主进程代码：页面插件没有执行清理的权限，声明了也无从运行
+  if (manifest.uninstall && !manifest.main) {
+    errors.push('uninstall 需要同时声明 main：只有带主进程的插件才能定义卸载脚本')
   }
 
   if (raw.styles !== undefined) {

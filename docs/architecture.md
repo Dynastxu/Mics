@@ -197,19 +197,27 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 组件复用 shell 的 `mics-*` 设计系统类，自带的 scoped 样式会进插件的 `dist/style.css`，
 因此使用方必须在 `plugin.json` 里声明 `styles`。
 
-## 10. 懒激活、禁用与贡献点
+## 10. 懒激活、三种状态与贡献点
 
 - `activation: ["*"] | ["onStartup"]`：随内核启动。
 - 缺省：按需。打开页面时激活，或执行命令时由命令服务按 manifest 找到归属插件后激活。
 - 渲染器先按清单渲染导航 / 状态栏 / 主题；插件被激活时才 import 产物、创建 fiber、注册页面组件。
 - 渲染端插件激活时也会同步内核状态（`plugins/activate`），保持主进程与渲染进程的生命周期一致。
-- **禁用**（`ctx.plugins.disable(id)`）：写入 `userData/disabled-plugins.json` 并卸载 fiber；
-  之后页面打开、命令执行、启动事件都不会再激活它，只有 `enable(id)` 能解除。
-  禁用后视同未安装：不再贡献导航 / 命令 / 主题 / 布局 / 状态栏与样式，只保留在插件管理页。
-  插件管理页用开关表达禁用与启用。
+- **三种状态**（目录是「已安装」的唯一事实来源）：
+  - 启用：目录在、代码在跑、界面显示；
+  - 禁用：目录在、代码停止、界面隐藏，状态写入 `userData/disabled-plugins.json`；
+  - 未安装：目录不存在，**不出现在列表里**（不是第三种开关）。
+- **禁用**（`ctx.plugins.disable(id)`）：写入状态文件并卸载 fiber；之后页面打开、命令执行、
+  启动事件都不会再激活它，只有 `enable(id)` 能解除。禁用后不再贡献导航 / 命令 / 主题 /
+  布局 / 状态栏与样式。
+- **启用 / 重载 / 卸载**都是双进程事务：主进程 fiber 与渲染端 fiber 一起成功或一起失败；
+  渲染端加载失败会回报内核（`plugins/fail`），内核停下主进程并标记失败。
 - `core: true` 的内核插件与 `essential: true` 的必需插件拒绝禁用（renderer 与 kernel 两侧都会校验）；
-  插件管理自身标记为 essential，避免禁用后失去恢复入口；日志插件同样标记为 essential，
-  避免禁用后让 inject `logs` 的插件停在未激活状态。
+  这两个标记只对**内置插件**生效，第三方插件写它们不会获得自锁能力。插件管理自身标记为
+  essential，避免禁用后失去恢复入口；日志插件同样标记为 essential，避免禁用后让 inject
+  `logs` 的插件停在未激活状态。
+- 第三方插件的安装、升级、启用、禁用、重载与卸载规则见
+  [plugin-manager.md](plugin-manager.md)。
 
 ## 11. 路线图
 
@@ -218,5 +226,8 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 | M0 | 当前骨架：双端 Cordis、内核服务、导航贡献点、懒激活、示例页面、构建脚本 |
 | M1 | 插件依赖图校验、错误隔离面板、命令快捷键自定义、配置贡献点（带持久化） |
 | M2 | 下载源与安装管线、实例管理、工作台布局可扩展（多面板/分栏） |
-| M3 | 渲染端沙箱、插件热重载、性能追踪 |
-| M4 | electron-builder 打包、插件作为 extraResources、独立插件目录 |
+| M3 | 渲染端沙箱、性能追踪 |
+| M4 | electron-builder 打包、插件作为 extraResources |
+
+> 热插拔（安装 / 启用 / 禁用 / 重载 / 卸载，含卸载脚本）已在 M0 之后落地，
+> 见 [plugin-manager.md](plugin-manager.md)。

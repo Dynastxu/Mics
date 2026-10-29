@@ -2,6 +2,7 @@ import type { Component } from 'vue'
 import type { Context } from 'cordis'
 import type { LogsServiceApi } from './logs'
 import type { Permission, PluginId } from './manifest'
+import type { PluginInstallSummary } from './plugins'
 import type { AppInfo, CommandInfo, PluginInfo, RuntimeEventEnvelope, RuntimeSnapshot } from './runtime'
 
 export type MaybePromise<T> = T | Promise<T>
@@ -90,6 +91,23 @@ export interface PluginsServiceApi {
   disable(id: PluginId): Promise<void>
   /** 启用：解除禁用并激活 */
   enable(id: PluginId): Promise<void>
+  /**
+   * 重载：停掉旧代码，重新导入并挂载。
+   *
+   * 主进程与渲染端各实现一半；调用方必须先卸掉页面再调用主进程这一半，
+   * 否则会出现「一半新一半旧」。
+   */
+  reload?(id: PluginId): Promise<void>
+  /** 渲染端实现：只卸掉页面、样式与作用域，不改插件状态 */
+  unload?(id: PluginId): Promise<void>
+  /** 主进程实现：把插件标记为失败（渲染端加载出错时由渲染端回报） */
+  fail?(id: PluginId, message: string): Promise<void>
+  /** 主进程实现：读取文件夹里的清单，生成安装确认摘要（不落盘） */
+  inspect?(dir: string): Promise<PluginInstallSummary>
+  /** 主进程实现：把文件夹安装到用户插件目录，成功后默认禁用 */
+  install?(dir: string): Promise<{ plugin: PluginInstallSummary; upgraded: boolean }>
+  /** 主进程实现：卸载（停用 + 卸载脚本 + 删除本体），内置插件会被拒绝 */
+  uninstall?(id: PluginId, options?: { force?: boolean }): Promise<void>
   /** 主进程实现：激活所有声明了 onStartup / * 的插件 */
   activateStartup?(): Promise<void>
   /** 渲染端实现：重新拉取内核快照 */

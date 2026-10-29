@@ -43,6 +43,11 @@ export class StorageService extends Service {
     return Object.keys(this.data())
   }
 
+  /** 插件被卸载后丢掉内存缓存，避免重装时读到已删除的数据 */
+  forget(id: PluginId): void {
+    this.cache.delete(id)
+  }
+
   private pluginId(): PluginId {
     return pluginIdOf(this.ctx) ?? this.config.kernel
   }

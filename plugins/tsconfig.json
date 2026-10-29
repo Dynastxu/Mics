@@ -16,11 +16,13 @@
   "include": [
     "**/*.ts",
     "**/*.vue",
+    "../examples/**/*.ts",
+    "../examples/**/*.vue",
     "../packages/sdk/src/global.d.ts",
     "../packages/ui/src/**/*.ts",
     "../packages/ui/src/**/*.vue",
     "../packages/ui/demo/**/*.ts",
     "../packages/ui/demo/**/*.vue"
   ],
-  "exclude": ["**/dist/**"]
+  "exclude": ["**/dist/**", "../examples/**/dist/**"]
 }

@@ -44,6 +44,12 @@ export function apply(ctx: Context, config: KernelConfig): void {
     ctx.ipc.handle<{ id: PluginId }>('plugins/enable', async ({ id }) => {
       await ctx.plugins.enable(id)
     })
+    ctx.ipc.handle<{ id: PluginId }>('plugins/reload', async ({ id }) => {
+      await ctx.plugins.reload?.(id)
+    })
+    ctx.ipc.handle<{ id: PluginId; message: string }>('plugins/fail', async ({ id, message }) => {
+      await ctx.plugins.fail?.(id, message)
+    })
     ctx.ipc.handle('commands/list', () => ctx.commands.list())
     ctx.ipc.handle<{ id: string; args?: unknown[] }>('commands/execute', async ({ id, args }) => {
       return ctx.commands.execute(id, ...(args ?? []))

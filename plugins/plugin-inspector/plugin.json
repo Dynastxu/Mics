@@ -2,9 +2,10 @@
   "id": "mics.plugin-inspector",
   "name": "插件管理",
   "version": "0.1.0",
-  "description": "插件管理页：查看清单，并启用或禁用插件。",
+  "description": "插件管理：安装、启用、禁用、重载、卸载插件。",
   "author": "mics",
   "essential": true,
+  "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
   "contributes": {

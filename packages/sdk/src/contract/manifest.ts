@@ -93,6 +93,14 @@ export interface PluginManifest {
   renderer?: string
   /** 渲染进程样式，相对插件目录 */
   styles?: string[]
+  /**
+   * 卸载脚本，相对插件目录的 ESM 文件，默认导出一个函数。
+   *
+   * 在插件停止之后、宿主删除插件目录之前执行，用来清理插件自己在插件目录之外
+   * 创建的东西（下载的文件、游戏实例等）。只有带 `main` 的插件可以声明——
+   * 页面插件没有主进程，也就没有执行清理逻辑的权限。
+   */
+  uninstall?: string
   /** 激活事件；缺省表示完全按需激活 */
   activation?: ActivationEvent[]
   /** 依赖的插件 id，内核保证先激活依赖 */
