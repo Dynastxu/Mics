@@ -1,23 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
-import type { DownloadTask, InstallJob } from '@mics/sdk'
-
-interface JobStats {
-  total: number
-  /** 排队中（不含已暂停） */
-  waiting: number
-  paused: number
-  downloading: number
-  done: number
-  failed: number
-  cancelled: number
-  percent: number
-}
+import type { InstallJobStats, InstallJobSummary } from '@mics/sdk'
 
 interface JobRow {
-  job: InstallJob
-  stats: JobStats
+  job: InstallJobSummary
+  stats: InstallJobStats
   speed: number
   /** 整个任务已暂停：所有未完成任务都在 paused，且没有正在跑的文件 */
   paused: boolean
@@ -31,23 +19,13 @@ interface SpeedSample {
   speed: number
 }
 
-const EMPTY_STATS: JobStats = {
-  total: 0,
-  waiting: 0,
-  paused: 0,
-  downloading: 0,
-  done: 0,
-  failed: 0,
-  cancelled: 0,
-  percent: 0,
-}
-
 const ctx = usePluginContext()
 
-const jobs = ref<InstallJob[]>([])
-const allTasks = ref<DownloadTask[]>([])
+const jobs = ref<InstallJobSummary[]>([])
 const jobSpeeds = ref<Record<string, number>>({})
 const notice = ref('')
+/** 第一次汇总返回前显示加载态，不要先闪「暂无下载任务」 */
+const loaded = ref(false)
 
 const blocking = new Set<string>()
 const speedSamples = new Map<string, SpeedSample>()
@@ -55,115 +33,36 @@ const speedSamples = new Map<string, SpeedSample>()
 let timer: ReturnType<typeof setInterval> | null = null
 let pollSeq = 0
 
-const tasksByJob = computed(() => {
-  const map = new Map<string, DownloadTask[]>()
-  for (const task of allTasks.value) {
-    const list = map.get(task.installId) ?? []
-    list.push(task)
-    map.set(task.installId, list)
-  }
-  return map
-})
+const activeJobs = computed(() => jobs.value.filter((job) => !job.finished))
+const historyJobs = computed(() => jobs.value.filter((job) => job.finished))
 
-const statsByJob = computed(() => {
-  const map = new Map<string, JobStats>()
-  for (const job of jobs.value) {
-    const tasks = tasksByJob.value.get(job.id) ?? []
-    let waiting = 0
-    let paused = 0
-    let downloading = 0
-    let done = 0
-    let failed = 0
-    let cancelled = 0
-    let loaded = 0
-    let bytes = 0
-
-    for (const task of tasks) {
-      switch (task.state) {
-        case 'done':
-          done += 1
-          break
-        case 'failed':
-          failed += 1
-          if (task.error === '已取消') cancelled += 1
-          break
-        case 'downloading':
-        case 'verifying':
-          downloading += 1
-          break
-        case 'paused':
-          paused += 1
-          break
-        default:
-          waiting += 1
-      }
-      loaded += task.progress.loaded
-      bytes += task.progress.total > 0 ? task.progress.total : Math.max(task.size, 0)
-    }
-
-    const measured = bytes > 0
-      ? (loaded / bytes) * 100
-      : tasks.length > 0
-        ? ((done + failed) / tasks.length) * 100
-        : 0
-
-    map.set(job.id, {
-      total: tasks.length,
-      waiting,
-      paused,
-      downloading,
-      done,
-      failed,
-      cancelled,
-      percent: Math.min(100, Math.max(0, Math.round(measured))),
-    })
-  }
-  return map
-})
-
-/** 任务是否已结束：准备阶段仍算进行中，终态以主进程给的 state 为准 */
-function isJobFinished(job: InstallJob): boolean {
-  if (job.state === 'done' || job.state === 'failed' || job.state === 'cancelled') return true
-  if (job.state === 'preparing') return false
-  const tasks = tasksByJob.value.get(job.id) ?? []
-  return tasks.length === 0
-    || tasks.every((task) => task.state === 'done' || task.state === 'failed')
-}
-
-const activeJobs = computed(() => jobs.value.filter((job) => !isJobFinished(job)))
-const historyJobs = computed(() => jobs.value.filter(isJobFinished))
-
-function jobPaused(stats: JobStats): boolean {
+function jobPaused(stats: InstallJobStats): boolean {
   return stats.paused > 0 && stats.downloading === 0 && stats.waiting === 0
 }
 
 const activeRows = computed<JobRow[]>(() =>
   [...activeJobs.value]
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-    .map((job) => {
-      const stats = statsByJob.value.get(job.id) ?? EMPTY_STATS
-      return {
-        job,
-        stats,
-        speed: jobSpeeds.value[job.id] ?? 0,
-        paused: jobPaused(stats),
-        preparing: job.state === 'preparing',
-      }
-    }),
+    .map((job) => ({
+      job,
+      stats: job.stats,
+      speed: jobSpeeds.value[job.id] ?? 0,
+      paused: jobPaused(job.stats),
+      preparing: job.state === 'preparing',
+    })),
 )
 
 const historyRows = computed(() =>
   [...historyJobs.value]
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
     .map((job) => {
-      const stats = statsByJob.value.get(job.id) ?? EMPTY_STATS
       const ok = job.state !== 'failed'
         && job.state !== 'cancelled'
-        && stats.failed === 0
+        && job.stats.failed === 0
       return {
         job,
-        stats,
-        label: historyLabel(job, stats),
+        stats: job.stats,
+        label: historyLabel(job, job.stats),
         ok,
       }
     }),
@@ -181,7 +80,7 @@ function formatTime(timestamp: number | undefined): string {
   }).format(new Date(timestamp))
 }
 
-function historyLabel(job: InstallJob, stats: JobStats): string {
+function historyLabel(job: InstallJobSummary, stats: InstallJobStats): string {
   if (job.state === 'cancelled') return '已取消'
   if (job.state === 'failed') return '失败'
   if (job.state === 'done' || stats.failed === 0) return '已完成'
@@ -190,7 +89,7 @@ function historyLabel(job: InstallJob, stats: JobStats): string {
 
 /** 同一实例名只认最新的一条安装记录，旧记录只能查看 */
 const latestJobByInstance = computed(() => {
-  const latest = new Map<string, InstallJob>()
+  const latest = new Map<string, InstallJobSummary>()
   for (const job of jobs.value) {
     const current = latest.get(job.instanceName)
     if (!current || jobSequence(job) >= jobSequence(current)) latest.set(job.instanceName, job)
@@ -198,22 +97,22 @@ const latestJobByInstance = computed(() => {
   return latest
 })
 
-function jobSequence(job: InstallJob): number {
+function jobSequence(job: InstallJobSummary): number {
   const sequence = Number(job.id.startsWith('job_') ? job.id.slice('job_'.length) : '')
   return Number.isFinite(sequence) ? sequence : (job.createdAt ?? 0)
 }
 
-function isSuperseded(job: InstallJob): boolean {
+function isSuperseded(job: InstallJobSummary): boolean {
   return latestJobByInstance.value.get(job.instanceName)?.id !== job.id
 }
 
 /** 还有非取消原因失败的文件时可以重试，已完成的文件不会重新下载 */
-function canRetry(job: InstallJob, stats: JobStats): boolean {
+function canRetry(job: InstallJobSummary, stats: InstallJobStats): boolean {
   return !isSuperseded(job) && stats.failed > stats.cancelled
 }
 
 /** 只有失败/取消的安装可以在这里清理；成功完成的实例请到启动页删除 */
-function canDiscard(job: InstallJob, stats: JobStats): boolean {
+function canDiscard(job: InstallJobSummary, stats: InstallJobStats): boolean {
   if (isSuperseded(job)) return false
   return job.state === 'failed' || job.state === 'cancelled' || stats.failed > 0
 }
@@ -239,14 +138,14 @@ async function invoke(method: string, jobId: string): Promise<void> {
   }
 }
 
+/** 速度由两次汇总的已下载字节差算出，主进程不再逐任务传进度 */
 function sampleSpeeds(): void {
   const now = Date.now()
   const speeds: Record<string, number> = {}
 
   for (const job of activeJobs.value) {
-    const tasks = tasksByJob.value.get(job.id) ?? []
-    const loaded = tasks.reduce((sum, task) => sum + task.progress.loaded, 0)
-    const downloading = tasks.some((task) => task.state === 'downloading' || task.state === 'verifying')
+    const loaded = job.stats.loaded
+    const downloading = job.stats.downloading > 0
     const previous = speedSamples.get(job.id)
 
     let speed = previous?.speed ?? 0
@@ -269,15 +168,16 @@ function sampleSpeeds(): void {
 async function poll(): Promise<void> {
   const seq = ++pollSeq
   try {
-    const [jobList, taskList] = await Promise.all([
-      ctx.ipc.invoke<InstallJob[]>('mics.download.manager', 'install/list'),
-      ctx.ipc.invoke<DownloadTask[]>('mics.download.manager', 'tasks/list'),
-    ])
+    const list = await ctx.ipc.invoke<InstallJobSummary[]>(
+      'mics.download.manager',
+      'install/summary',
+    )
     if (seq !== pollSeq) return
-    jobs.value = jobList
-    allTasks.value = taskList
+    jobs.value = list
     sampleSpeeds()
-  } catch { /* 管线未就绪 */ }
+  } catch { /* 管线未就绪 */ } finally {
+    if (seq === pollSeq) loaded.value = true
+  }
 }
 
 onMounted(() => {
@@ -298,7 +198,8 @@ onUnmounted(() => {
 
     <p v-if="notice" class="mics-notice">{{ notice }}</p>
 
-    <div v-if="jobs.length === 0" class="mics-empty">暂无下载任务</div>
+    <div v-if="!loaded" class="mics-empty">正在加载下载记录…</div>
+    <div v-else-if="jobs.length === 0" class="mics-empty">暂无下载任务</div>
 
     <section v-if="activeRows.length" class="mics-section">
       <h2 class="mics-section__title">进行中</h2>

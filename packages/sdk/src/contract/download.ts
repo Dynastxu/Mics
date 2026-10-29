@@ -96,6 +96,26 @@ export type InstallJobState = 'preparing' | 'ready' | 'done' | 'failed' | 'cance
  */
 export type InstallMode = 'install' | 'repair'
 
+/** 一次安装的聚合进度；下载页只依赖这份汇总，不拉取逐文件任务 */
+export interface InstallJobStats {
+  /** 任务总数 */
+  total: number
+  /** 排队中（不含已暂停） */
+  waiting: number
+  paused: number
+  /** 下载 / 校验中的文件数 */
+  downloading: number
+  done: number
+  failed: number
+  /** failed 中由取消产生的数量 */
+  cancelled: number
+  loaded: number
+  /** 预计总字节；未知大小的任务按 size 或 0 计 */
+  bytes: number
+  /** 0–100 */
+  percent: number
+}
+
 /** 一组关联的下载任务（一次安装操作） */
 export interface InstallJob {
   id: string
@@ -105,7 +125,7 @@ export interface InstallJob {
   gameVersion: string
   /** 加载器（原版为空） */
   loader?: { kind: LoaderKind; version: string }
-  /** 总体进度 */
+  /** 任务 id；终态安装归档后会清空，统计改看 stats */
   taskIds: string[]
   createdAt: number
   state?: InstallJobState
@@ -113,6 +133,28 @@ export interface InstallJob {
   error?: string
   /** 安装方式；旧记录没有该字段，按 install 处理 */
   mode?: InstallMode
+  /** 终态汇总；任务明细被清理后，下载页仍能显示历史统计 */
+  stats?: InstallJobStats
+}
+
+/**
+ * 下载页的一行。
+ *
+ * 一次安装可能有几千个文件级任务，页面只需要聚合结果；逐文件明细留给
+ * 需要时再按安装 id 查询，避免首屏搬运几十 MB 数据。
+ */
+export interface InstallJobSummary {
+  id: string
+  instanceName: string
+  gameVersion: string
+  loader?: { kind: LoaderKind; version: string }
+  mode?: InstallMode
+  state: InstallJobState
+  error?: string
+  createdAt: number
+  /** 准备阶段之外、已经没有进行中的文件时为 true */
+  finished: boolean
+  stats: InstallJobStats
 }
 
 /** 安装请求：下载页面 -> 主进程 */

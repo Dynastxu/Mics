@@ -21,6 +21,8 @@ import type {
   FileTransferCapability,
   FileTransferHandle,
   InstallJob,
+  InstallJobStats,
+  InstallJobSummary,
   InstallLiveState,
   InstallRepairRequest,
   InstanceInstallRecord,
@@ -412,6 +414,16 @@ export function apply(ctx: Context): void {
     taskSeq = Math.max(taskSeq, maxSequence(tasks.keys(), 'task_'))
     jobSeq = Math.max(jobSeq, maxSequence(jobs.keys(), 'job_'))
 
+    // 迁移旧记录：终态安装的逐文件任务只占空间，历史页读 job.stats 即可。
+    // 被新安装取代的失败记录既不能重试也不能删除，同样没有保留明细的理由。
+    for (const job of jobs.values()) {
+      if (job.state === 'done' || job.state === 'cancelled') {
+        archiveJob(job)
+      } else if (job.state === 'failed' && !isCurrentJob(job)) {
+        archiveJob(job)
+      }
+    }
+
     if (jobs.size > 0 || raw.jobs.length > 0) persistRecords(true)
   }
 
@@ -419,6 +431,119 @@ export function apply(ctx: Context): void {
   function jobSequence(job: InstallJob): number {
     const sequence = Number(job.id.startsWith('job_') ? job.id.slice('job_'.length) : '')
     return Number.isFinite(sequence) ? sequence : (job.createdAt ?? 0)
+  }
+
+  /** 遍历任务并汇总一次安装；任务明细缺失时按实际存在的部分计算 */
+  function collectStats(job: InstallJob): InstallJobStats {
+    let total = 0
+    let waiting = 0
+    let paused = 0
+    let downloading = 0
+    let done = 0
+    let failed = 0
+    let cancelled = 0
+    let loaded = 0
+    let bytes = 0
+
+    for (const taskId of job.taskIds) {
+      const task = tasks.get(taskId)
+      if (!task) continue
+      total += 1
+      switch (task.state) {
+        case 'done':
+          done += 1
+          break
+        case 'failed':
+          failed += 1
+          if (task.error === '已取消') cancelled += 1
+          break
+        case 'downloading':
+        case 'verifying':
+          downloading += 1
+          break
+        case 'paused':
+          paused += 1
+          break
+        default:
+          waiting += 1
+      }
+      loaded += task.progress.loaded
+      bytes += task.progress.total > 0 ? task.progress.total : Math.max(task.size, 0)
+    }
+
+    const measured = bytes > 0
+      ? (loaded / bytes) * 100
+      : total > 0
+        ? ((done + failed) / total) * 100
+        : 0
+
+    return {
+      total,
+      waiting,
+      paused,
+      downloading,
+      done,
+      failed,
+      cancelled,
+      loaded,
+      bytes,
+      percent: Math.min(100, Math.max(0, Math.round(measured))),
+    }
+  }
+
+  function statsOf(job: InstallJob): InstallJobStats {
+    // 已归档的终态安装没有任务明细，直接复用落盘的汇总
+    if (job.taskIds.length === 0 && job.stats) return job.stats
+    return collectStats(job)
+  }
+
+  function isFinishedJob(job: InstallJob, stats: InstallJobStats): boolean {
+    if (job.state === 'done' || job.state === 'failed' || job.state === 'cancelled') return true
+    if (job.state === 'preparing') return false
+    return stats.total === 0 || stats.done + stats.failed === stats.total
+  }
+
+  /**
+   * 归档终态安装：保留汇总计数，删掉逐文件任务。
+   *
+   * 一次安装通常有几千个任务（资源对象占大头），历史记录全部保留会让下载页
+   * 每次轮询都搬运几十 MB。已完成 / 已取消 / 被取代的安装不再需要这些明细：
+   * 历史行只显示汇总，重试也只针对当前失败记录。
+   */
+  function archiveJob(job: InstallJob): void {
+    if (job.taskIds.length === 0) {
+      if (!job.stats) job.stats = collectStats(job)
+      return
+    }
+    job.stats = collectStats(job)
+    for (const taskId of job.taskIds) tasks.delete(taskId)
+    job.taskIds = []
+  }
+
+  /** 新安装接手实例名后，旧终态记录既不能重试也不能删除，明细可以立刻归档 */
+  function archiveSupersededJobs(instanceName: string, currentJobId: string): void {
+    for (const job of jobs.values()) {
+      if (job.id === currentJobId || job.instanceName !== instanceName) continue
+      if (job.state === 'done' || job.state === 'cancelled' || job.state === 'failed') {
+        archiveJob(job)
+      }
+    }
+  }
+
+  function toSummary(job: InstallJob): InstallJobSummary {
+    const stats = statsOf(job)
+    return {
+      id: job.id,
+      instanceName: job.instanceName,
+      gameVersion: job.gameVersion,
+      loader: job.loader,
+      mode: job.mode,
+      state: job.state ?? 'ready',
+      error: job.error,
+      createdAt: job.createdAt,
+      finished: isFinishedJob(job, stats),
+      stats,
+    }
   }
 
   /**
@@ -452,6 +577,7 @@ export function apply(ctx: Context): void {
     if (!isCurrentJob(job)) {
       job.state = 'done'
       delete job.error
+      archiveJob(job)
       persistRecords(true)
       log.info('安装「%s」已完成，但记录已被更新的安装取代，job %s', job.instanceName, job.id)
       return
@@ -479,11 +605,13 @@ export function apply(ctx: Context): void {
 
       job.state = 'done'
       delete job.error
+      const fileCount = job.taskIds.length
+      archiveJob(job)
       persistRecords(true)
       log.info(
         '安装「%s」已完成：%d 个文件全部就绪，job %s',
         job.instanceName,
-        job.taskIds.length,
+        fileCount,
         job.id,
       )
     } finally {
@@ -1368,6 +1496,11 @@ export function apply(ctx: Context): void {
 
   ctx.ipc.handle('install/list', () => [...jobs.values()])
 
+  // 下载页首屏只需要聚合结果；逐文件任务可能有几万条，全部传输会拖慢开页
+  ctx.ipc.handle('install/summary', (): InstallJobSummary[] =>
+    [...jobs.values()].map(toSummary),
+  )
+
   /** 汇总一次安装的实时阶段：准备 / 下载中 / 已暂停 / 失败 / 完成 */
   function liveStateOf(job: InstallJob): InstallLiveState {
     if (job.state === 'preparing') return pausedJobs.has(job.id) ? 'paused' : 'preparing'
@@ -1428,6 +1561,8 @@ export function apply(ctx: Context): void {
     // 准备阶段的安装没有任务，中断元数据请求后由 prepareJob 负责清理实例目录
     prepAborts.get(jobId)?.abort()
     await Promise.all(job.taskIds.map((taskId) => cancelTask(taskId)))
+    // 取消的任务只会出现在历史行里，汇总后即可丢掉逐文件明细
+    archiveJob(job)
     // 取消的安装不保留半成品：清掉实例目录，名称可以立即重新使用。
     // 补全任务只停下载，实例本身要保留；旧记录也不能删掉新版实例的文件。
     if (isCurrentJob(job) && job.mode !== 'repair') await discardInstanceDir(job)
@@ -1556,6 +1691,7 @@ export function apply(ctx: Context): void {
       mode: 'repair',
     }
     jobs.set(job.id, job)
+    archiveSupersededJobs(instanceName, job.id)
     persistRecords()
     log.info('已受理补全实例「%s」：版本 %s，job %s', instanceName, versionId, job.id)
 
@@ -1581,6 +1717,7 @@ export function apply(ctx: Context): void {
       mode: 'install',
     }
     jobs.set(job.id, job)
+    archiveSupersededJobs(instanceName, job.id)
 
     // 从受理到版本目录落盘之间占住名称，避免同一名称的并发安装互相覆盖
     reservedInstanceNames.add(instanceKey(instanceName))
