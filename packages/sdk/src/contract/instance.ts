@@ -1,9 +1,38 @@
 /**
- * 实例名称校验规则。
+ * 实例名称校验规则与实例磁盘布局约定。
  *
  * 实例名称同时是实例文件夹名，因此渲染进程（即时反馈）与主进程（写盘前把关）
  * 必须共用同一份规则：否则 UI 放行的名称可能在写盘时失败，或写出意料之外的目录。
  */
+
+// ---------------------------------------------------------------------------
+// 安装状态标记
+// ---------------------------------------------------------------------------
+
+/**
+ * 实例根目录下的安装状态文件。
+ *
+ * 下载管线在创建实例目录时先写入 `installing`，全部文件落盘并校验通过后
+ * 原子替换为 `ready`。启动页会照常列出 `installing` 的实例，但不提供启动入口：
+ * 下载到一半、断点暂停或部分失败的实例只能查看或删除，不能开始游戏。
+ * 没有该文件的旧实例按 `ready` 处理，保持兼容。
+ *
+ * 其它创建实例的插件也必须遵守这一约定，否则半成品会被误判为可启动。
+ */
+export const INSTANCE_STATE_FILE = 'install-state.json'
+
+/** 安装状态：installing 表示仍在下载/校验，ready 表示已经可以启动 */
+export type InstanceInstallState = 'installing' | 'ready'
+
+export interface InstanceInstallRecord {
+  state: InstanceInstallState
+  /** 触发本次安装的下载任务 id，便于日志排查 */
+  jobId?: string
+  /** 目标游戏版本 */
+  gameVersion?: string
+  /** 完成时间戳；installing 时没有 */
+  completedAt?: number
+}
 
 /** Windows 文件名/文件夹名中不允许出现的字符 */
 export const INVALID_INSTANCE_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/g

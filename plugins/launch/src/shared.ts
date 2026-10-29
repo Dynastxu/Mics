@@ -1,3 +1,5 @@
+import type { InstanceInstallState } from '@mics/sdk'
+
 /** 启动页展示的实例摘要；主进程与渲染器共用同一份结构 */
 export interface InstanceSummary {
   id: string
@@ -8,6 +10,8 @@ export interface InstanceSummary {
   /** 上次启动时间戳；从未启动为 null */
   lastPlayed: number | null
   versionId: string
+  /** 安装状态：installing 的实例仍会列出，但不提供启动入口 */
+  installState: InstanceInstallState
 }
 
 export interface LaunchRequest {

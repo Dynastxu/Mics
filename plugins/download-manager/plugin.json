@@ -2,9 +2,10 @@
   "id": "mics.download.manager",
   "name": "下载管线",
   "version": "0.1.0",
-  "description": "下载队列管理、进度追踪、SHA1 校验与断点续传。",
+  "description": "下载队列管理、进度追踪、SHA1 校验与断点续传；安装完成后写入实例就绪标记，失败可重试，已有实例可补全缺失文件。",
   "author": "mics",
   "main": "dist/main.mjs",
+  "activation": ["onStartup"],
   "dependencies": ["mics.kernel"],
   "contributes": {
     "configuration": {

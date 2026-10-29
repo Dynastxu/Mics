@@ -81,11 +81,20 @@ export interface DownloadTask {
  *
  * - `preparing`：已受理，正在后台构建下载清单（版本详情、资源索引、任务列表）
  * - `ready`：下载清单已就绪，进度由各 task 状态推导
- * - `failed` / `cancelled`：终态，`error` 说明原因
+ * - `done`：全部文件下载并校验完成，实例已写入 `ready` 安装标记，可以启动
+ * - `failed` / `cancelled`：终态，`error` 说明原因；失败的安装可以重试或删除
  *
  * 旧版本持久化的任务没有该字段，读取时按 `ready` 处理。
  */
-export type InstallJobState = 'preparing' | 'ready' | 'failed' | 'cancelled'
+export type InstallJobState = 'preparing' | 'ready' | 'done' | 'failed' | 'cancelled'
+
+/**
+ * 安装方式。
+ *
+ * - `install`：新建实例目录并下载全部文件；
+ * - `repair`：实例目录已存在，只检查并补下缺失文件。
+ */
+export type InstallMode = 'install' | 'repair'
 
 /** 一组关联的下载任务（一次安装操作） */
 export interface InstallJob {
@@ -102,6 +111,8 @@ export interface InstallJob {
   state?: InstallJobState
   /** 准备阶段失败或被取消的原因 */
   error?: string
+  /** 安装方式；旧记录没有该字段，按 install 处理 */
+  mode?: InstallMode
 }
 
 /** 安装请求：下载页面 -> 主进程 */
@@ -109,6 +120,35 @@ export interface InstallRequest {
   gameVersion: string
   instanceName: string
   loader?: { kind: LoaderKind; version: string }
+}
+
+/** 补全请求：启动页对已有实例发起，只下载缺失文件 */
+export interface InstallRepairRequest {
+  /** 实例目录名 */
+  instanceName: string
+  /** 实例当前使用的版本 id */
+  versionId: string
+}
+
+/**
+ * 安装任务的实时阶段，由下载管线按任务状态汇总。
+ * 启动页据此显示「下载中 / 已暂停 / 不完整」。
+ */
+export type InstallLiveState =
+  | 'preparing'
+  | 'downloading'
+  | 'paused'
+  | 'failed'
+  | 'done'
+  | 'cancelled'
+
+export interface InstanceInstallStatus {
+  /** 实例目录名 */
+  instanceName: string
+  jobId: string
+  state: InstallLiveState
+  /** 有可重试的失败任务；否则补全时应该新建 repair 任务 */
+  retryable: boolean
 }
 
 /**

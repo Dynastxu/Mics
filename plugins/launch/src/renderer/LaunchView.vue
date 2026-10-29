@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
+import type { InstallStartResult, InstanceInstallStatus } from '@mics/sdk'
 import type {
   InstanceSummary,
   LaunchProcessInfo,
@@ -31,7 +32,43 @@ const detailInstance = computed(
   () => instances.value.find((instance) => instance.id === detailId.value) ?? null,
 )
 
+/** 下载管线报告的实时阶段；没有记录时说明没有下载任务 */
+const statuses = ref<Record<string, InstanceInstallStatus>>({})
+/** 正在发起补全的实例 */
+const repairing = ref<string[]>([])
+
+type InstallPhase = 'ready' | 'downloading' | 'paused' | 'incomplete'
+
+function phaseOf(instance: InstanceSummary): InstallPhase {
+  if (instance.installState === 'ready') return 'ready'
+  const status = statuses.value[instance.id]
+  if (!status) return 'incomplete'
+  if (status.state === 'preparing' || status.state === 'downloading') return 'downloading'
+  if (status.state === 'paused') return 'paused'
+  return 'incomplete'
+}
+
+const phases = computed<Record<string, InstallPhase>>(() => {
+  const map: Record<string, InstallPhase> = {}
+  for (const instance of instances.value) map[instance.id] = phaseOf(instance)
+  return map
+})
+
+function phaseLabel(phase: InstallPhase): string {
+  switch (phase) {
+    case 'downloading': return '下载中'
+    case 'paused': return '已暂停'
+    case 'incomplete': return '不完整'
+    default: return ''
+  }
+}
+
+function isRepairing(id: string): boolean {
+  return repairing.value.includes(id)
+}
+
 let offState: (() => void) | null = null
+let statusTimer: ReturnType<typeof setInterval> | null = null
 
 const ACCENTS = ['', 'mics-avatar--amber', 'mics-avatar--teal', 'mics-avatar--rose']
 
@@ -72,8 +109,8 @@ function isLaunchHidden(instance: InstanceSummary): boolean {
   )
 }
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(silent = false): Promise<void> {
+  if (!silent) loading.value = true
   error.value = ''
   try {
     instances.value = await ctx.ipc.invoke<InstanceSummary[]>('mics.launch', 'instances/list')
@@ -81,9 +118,74 @@ async function load(): Promise<void> {
       detailId.value = ''
     }
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    if (!silent) error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
+  }
+}
+
+async function fetchStatuses(): Promise<Record<string, InstanceInstallStatus>> {
+  const list = await ctx.ipc.invoke<InstanceInstallStatus[]>(
+    'mics.download.manager',
+    'install/status',
+  )
+  const map: Record<string, InstanceInstallStatus> = {}
+  for (const item of list) map[item.instanceName] = item
+  return map
+}
+
+async function loadStatuses(): Promise<void> {
+  try {
+    statuses.value = await fetchStatuses()
+  } catch {
+    // 启动阶段下载管线可能还没激活，稍后再试一次
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    try {
+      statuses.value = await fetchStatuses()
+    } catch {
+      // 下载管线未启用时，未完成的实例统一按「不完整」展示
+      statuses.value = {}
+    }
+  }
+}
+
+/** 轮询下载阶段；某个未完成实例已经下完时顺便刷新实例列表 */
+async function refreshStatuses(): Promise<void> {
+  await loadStatuses()
+  const finished = instances.value.some(
+    (instance) => instance.installState === 'installing'
+      && statuses.value[instance.id]?.state === 'done',
+  )
+  if (finished) await load(true)
+}
+
+/**
+ * 补全文件。
+ *
+ * - 最后一次下载已失败：直接重试失败的文件，保留已完成的部分；
+ * - 没有下载记录 / 已取消：按实例里的版本文件重新检查并补下缺失文件。
+ */
+async function repair(instance: InstanceSummary): Promise<void> {
+  if (isRepairing(instance.id)) return
+  repairing.value = [...repairing.value, instance.id]
+  notice.value = ''
+  try {
+    const status = statuses.value[instance.id]
+    if (status?.retryable) {
+      await ctx.ipc.invoke('mics.download.manager', 'install/retry', { jobId: status.jobId })
+    } else {
+      const result = await ctx.ipc.invoke<InstallStartResult>(
+        'mics.download.manager',
+        'install/repair',
+        { instanceName: instance.id, versionId: instance.versionId },
+      )
+      if (result.error) throw new Error(result.error)
+    }
+    await refreshStatuses()
+  } catch (cause) {
+    notice.value = `补全失败：${cause instanceof Error ? cause.message : String(cause)}`
+  } finally {
+    repairing.value = repairing.value.filter((id) => id !== instance.id)
   }
 }
 
@@ -181,6 +283,8 @@ async function startLaunch(instance: InstanceSummary): Promise<void> {
 }
 
 async function play(instance: InstanceSummary): Promise<void> {
+  // 未下载完成的实例只展示，启动入口在这里再兜一层
+  if (instance.installState !== 'ready') return
   if (isStarting(instance)) return
 
   if (isAlive(instance.id)) {
@@ -223,14 +327,20 @@ onMounted(() => {
     if (state && Array.isArray(state.instances)) runtime.value = state
   })
   void load()
+  void loadStatuses()
   void refreshState()
   void loadSettings()
   void loadAccount()
+  statusTimer = setInterval(() => { void refreshStatuses() }, 3000)
 })
 
 onUnmounted(() => {
   offState?.()
   offState = null
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    statusTimer = null
+  }
 })
 </script>
 
@@ -240,7 +350,10 @@ onUnmounted(() => {
     :instance="detailInstance"
     :processes="processesOf(detailInstance.id)"
     :starting="isStarting(detailInstance)"
-    :can-launch="!isLaunchHidden(detailInstance)"
+    :install-phase="phases[detailInstance.id] ?? 'incomplete'"
+    :can-launch="phases[detailInstance.id] === 'ready' && !isLaunchHidden(detailInstance)"
+    :repairing="isRepairing(detailInstance.id)"
+    @repair="repair(detailInstance)"
     @back="closeDetail"
     @play="playDetail"
     @terminate="terminateDetail"
@@ -289,6 +402,13 @@ onUnmounted(() => {
             <div class="launch__name">
               {{ instance.name }}
               <span class="mics-badge">{{ instance.minecraft }}</span>
+              <span
+                v-if="phases[instance.id] !== 'ready'"
+                class="mics-badge"
+                :class="{ 'launch__pending': phases[instance.id] === 'incomplete' }"
+              >
+                {{ phaseLabel(phases[instance.id] ?? 'incomplete') }}
+              </span>
             </div>
             <div class="mics-list__meta">
               {{ instance.loader }} · {{ instance.mods }} 个 Mod
@@ -303,7 +423,15 @@ onUnmounted(() => {
               详情
             </button>
             <button
-              v-if="!isLaunchHidden(instance)"
+              v-if="phases[instance.id] === 'incomplete'"
+              class="mics-button mics-button--ghost mics-button--small"
+              :disabled="isRepairing(instance.id)"
+              @click="repair(instance)"
+            >
+              {{ isRepairing(instance.id) ? '补全中…' : '补全文件' }}
+            </button>
+            <button
+              v-if="phases[instance.id] === 'ready' && !isLaunchHidden(instance)"
               class="mics-button mics-button--primary mics-button--small"
               :disabled="isStarting(instance)"
               @click="play(instance)"
@@ -384,6 +512,10 @@ onUnmounted(() => {
   gap: 8px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.launch__pending {
+  color: var(--mics-danger);
 }
 
 .launch__played {

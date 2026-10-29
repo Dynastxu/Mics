@@ -47,6 +47,7 @@ const ctx = usePluginContext()
 const jobs = ref<InstallJob[]>([])
 const allTasks = ref<DownloadTask[]>([])
 const jobSpeeds = ref<Record<string, number>>({})
+const notice = ref('')
 
 const blocking = new Set<string>()
 const speedSamples = new Map<string, SpeedSample>()
@@ -122,7 +123,7 @@ const statsByJob = computed(() => {
 
 /** 任务是否已结束：准备阶段仍算进行中，终态以主进程给的 state 为准 */
 function isJobFinished(job: InstallJob): boolean {
-  if (job.state === 'failed' || job.state === 'cancelled') return true
+  if (job.state === 'done' || job.state === 'failed' || job.state === 'cancelled') return true
   if (job.state === 'preparing') return false
   const tasks = tasksByJob.value.get(job.id) ?? []
   return tasks.length === 0
@@ -183,8 +184,38 @@ function formatTime(timestamp: number | undefined): string {
 function historyLabel(job: InstallJob, stats: JobStats): string {
   if (job.state === 'cancelled') return '已取消'
   if (job.state === 'failed') return '失败'
-  if (stats.failed === 0) return '已完成'
+  if (job.state === 'done' || stats.failed === 0) return '已完成'
   return stats.cancelled === stats.failed ? '已取消' : '部分失败'
+}
+
+/** 同一实例名只认最新的一条安装记录，旧记录只能查看 */
+const latestJobByInstance = computed(() => {
+  const latest = new Map<string, InstallJob>()
+  for (const job of jobs.value) {
+    const current = latest.get(job.instanceName)
+    if (!current || jobSequence(job) >= jobSequence(current)) latest.set(job.instanceName, job)
+  }
+  return latest
+})
+
+function jobSequence(job: InstallJob): number {
+  const sequence = Number(job.id.startsWith('job_') ? job.id.slice('job_'.length) : '')
+  return Number.isFinite(sequence) ? sequence : (job.createdAt ?? 0)
+}
+
+function isSuperseded(job: InstallJob): boolean {
+  return latestJobByInstance.value.get(job.instanceName)?.id !== job.id
+}
+
+/** 还有非取消原因失败的文件时可以重试，已完成的文件不会重新下载 */
+function canRetry(job: InstallJob, stats: JobStats): boolean {
+  return !isSuperseded(job) && stats.failed > stats.cancelled
+}
+
+/** 只有失败/取消的安装可以在这里清理；成功完成的实例请到启动页删除 */
+function canDiscard(job: InstallJob, stats: JobStats): boolean {
+  if (isSuperseded(job)) return false
+  return job.state === 'failed' || job.state === 'cancelled' || stats.failed > 0
 }
 
 function fmtSpeed(bytesPerSecond: number): string {
@@ -199,6 +230,9 @@ async function invoke(method: string, jobId: string): Promise<void> {
   blocking.add(jobId)
   try {
     await ctx.ipc.invoke('mics.download.manager', method, { jobId })
+    notice.value = ''
+  } catch (cause) {
+    notice.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     blocking.delete(jobId)
     void poll()
@@ -262,6 +296,8 @@ onUnmounted(() => {
       <h1 class="mics-page__title">下载进度</h1>
     </header>
 
+    <p v-if="notice" class="mics-notice">{{ notice }}</p>
+
     <div v-if="jobs.length === 0" class="mics-empty">暂无下载任务</div>
 
     <section v-if="activeRows.length" class="mics-section">
@@ -276,11 +312,13 @@ onUnmounted(() => {
               <span v-if="row.job.loader" class="mics-badge">
                 {{ row.job.loader.kind }} {{ row.job.loader.version }}
               </span>
+              <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
+              <span v-if="isSuperseded(row.job)" class="mics-badge">旧记录</span>
             </div>
 
             <div class="progress-job__controls">
               <button
-                v-if="!row.preparing"
+                v-if="!row.preparing && !isSuperseded(row.job)"
                 class="mics-button mics-button--ghost mics-button--small"
                 @click="invoke(row.paused ? 'install/resume' : 'install/pause', row.job.id)"
               >
@@ -339,12 +377,14 @@ onUnmounted(() => {
             <div class="mics-list__title">
               <span>{{ row.job.instanceName }}</span>
               <span class="mics-badge">{{ row.job.gameVersion }}</span>
+              <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
               <span
                 class="mics-badge"
                 :class="{ 'mics-badge--accent': row.ok }"
               >
                 {{ row.label }}
               </span>
+              <span v-if="isSuperseded(row.job)" class="mics-badge">旧记录</span>
             </div>
             <div class="mics-list__meta">
               {{ formatTime(row.job.createdAt) }}
@@ -357,6 +397,23 @@ onUnmounted(() => {
               </template>
             </div>
             <div v-if="row.job.error" class="progress-job__error">{{ row.job.error }}</div>
+          </div>
+
+          <div class="progress-job__controls">
+            <button
+              v-if="canRetry(row.job, row.stats)"
+              class="mics-button mics-button--ghost mics-button--small"
+              @click="invoke('install/retry', row.job.id)"
+            >
+              重试
+            </button>
+            <button
+              v-if="canDiscard(row.job, row.stats)"
+              class="mics-button mics-button--ghost mics-button--small"
+              @click="invoke('install/discard', row.job.id)"
+            >
+              {{ row.job.mode === 'repair' ? '移除记录' : '删除' }}
+            </button>
           </div>
         </div>
       </div>

@@ -198,6 +198,7 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle<LaunchRequest>('instances/launch', async ({ id, username }) => {
     const instance = resolveInstance(dataDir, id)
     if (!instance) throw new Error('实例不存在或缺少版本文件')
+    if (instance.installState !== 'ready') throw new Error('实例尚未下载完成，暂时无法启动')
     if (preparing.has(id)) throw new Error('该实例正在启动中')
 
     preparing.add(id)

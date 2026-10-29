@@ -19,13 +19,17 @@ const props = defineProps<{
   instance: InstanceSummary
   processes: LaunchProcessInfo[]
   starting: boolean
+  /** 启动页汇总的安装阶段：下载中 / 已暂停 / 不完整 */
+  installPhase: 'ready' | 'downloading' | 'paused' | 'incomplete'
   canLaunch: boolean
+  repairing: boolean
 }>()
 
 const emit = defineEmits<{
   back: []
   play: []
   terminate: []
+  repair: []
   deleted: [id: string]
   /** 启用的 Mod 数量变化，用于更新返回列表后的徽标 */
   changed: [mods: number]
@@ -92,6 +96,9 @@ let logSequence = 0
 
 const alive = computed(() => props.processes.length > 0)
 const statusLabel = computed(() => {
+  if (props.installPhase === 'downloading') return '下载中'
+  if (props.installPhase === 'paused') return '已暂停'
+  if (props.installPhase === 'incomplete') return '不完整'
   if (props.starting) return '启动中'
   if (alive.value) return `运行中 · ${props.processes.length}`
   return '未运行'
@@ -413,6 +420,15 @@ onMounted(() => {
       </div>
 
       <div class="mics-page__actions">
+        <button
+          v-if="installPhase === 'incomplete'"
+          class="mics-button mics-button--ghost mics-button--small"
+          type="button"
+          :disabled="repairing"
+          @click="emit('repair')"
+        >
+          {{ repairing ? '补全中…' : '补全文件' }}
+        </button>
         <button
           v-if="canLaunch"
           class="mics-button mics-button--primary mics-button--small"

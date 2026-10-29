@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { INSTANCE_STATE_FILE } from '@mics/sdk'
+import type { InstanceInstallRecord, InstanceInstallState } from '@mics/sdk'
 import type { InstanceSummary } from './shared'
 import type { VersionJson } from './version'
 
@@ -18,6 +20,7 @@ export interface ResolvedInstance {
   version: VersionJson
   metadataPath: string
   metadata: InstanceMetadata
+  installState: InstanceInstallState
 }
 
 function readJson<T>(file: string): T | null {
@@ -37,6 +40,18 @@ function readMetadata(instanceDir: string): { metadataPath: string; metadata: In
   const metadataPath = path.join(instanceDir, 'instance.json')
   const metadata = readJson<InstanceMetadata>(metadataPath) ?? {}
   return { metadataPath, metadata }
+}
+
+/**
+ * 读取实例的安装状态。
+ *
+ * 下载管线在实例目录里写 `installing` / `ready`；没有这个文件的实例来自
+ * 更早的版本，按 `ready` 处理以保持兼容。`installing` 的实例仍然会出现在
+ * 列表里，由界面去掉启动入口，用户可以在下载页继续、重试或删除。
+ */
+function installStateOf(instanceDir: string): InstanceInstallState {
+  const record = readJson<InstanceInstallRecord>(path.join(instanceDir, INSTANCE_STATE_FILE))
+  return record?.state === 'installing' ? 'installing' : 'ready'
 }
 
 function versionJsonIn(versionDir: string): { version: VersionJson; file: string } | null {
@@ -111,6 +126,7 @@ function toSummary(instance: ResolvedInstance): InstanceSummary {
     mods: countMods(instance.dir),
     lastPlayed: instance.metadata.lastPlayed ?? null,
     versionId: instance.version.id,
+    installState: instance.installState,
   }
 }
 
@@ -131,6 +147,7 @@ export function resolveInstance(userDataDir: string, id: string): ResolvedInstan
     version: resolved.version,
     metadataPath,
     metadata,
+    installState: installStateOf(instanceDir),
   }
 }
 
