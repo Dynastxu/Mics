@@ -54,16 +54,17 @@ export const inject = ['ipc', 'plugins']
 
 export function apply(ctx: Context): void {
   ctx.ipc.handle('plugin-manager/install', async (): Promise<PluginInstallOutcome> => {
-    const inspect = ctx.plugins.inspect
-    const install = ctx.plugins.install
-    if (!inspect || !install) return { status: 'failed', message: '内核未提供安装能力' }
+    // 必须通过 ctx.plugins 调用：服务方法依赖 this，取出来单独调用会丢掉接收者
+    if (!ctx.plugins.inspect || !ctx.plugins.install) {
+      return { status: 'failed', message: '内核未提供安装能力' }
+    }
 
     const dir = await openFolder()
     if (!dir) return { status: 'cancelled' }
 
     let preview: PluginInstallSummary
     try {
-      preview = await inspect(dir)
+      preview = await ctx.plugins.inspect(dir)
     } catch (error) {
       return { status: 'failed', message: messageOf(error) }
     }
@@ -95,7 +96,7 @@ export function apply(ctx: Context): void {
     if (!confirmed) return { status: 'cancelled' }
 
     try {
-      const result = await install(dir)
+      const result = await ctx.plugins.install(dir)
       return { status: 'installed', plugin: result.plugin, upgraded: result.upgraded }
     } catch (error) {
       return { status: 'failed', message: messageOf(error) }
@@ -105,10 +106,12 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle<{ id: PluginId; force?: boolean }>(
     'plugin-manager/uninstall',
     async ({ id, force }): Promise<PluginUninstallOutcome> => {
-      const uninstall = ctx.plugins.uninstall
       const info = ctx.plugins.get(id)
       if (!info) return { status: 'failed', id, message: `未找到插件 ${id}`, retryable: false }
-      if (!uninstall) return { status: 'failed', id, message: '内核未提供卸载能力', retryable: false }
+      // 同样要通过 ctx.plugins 调用，否则服务方法会丢失 this
+      if (!ctx.plugins.uninstall) {
+        return { status: 'failed', id, message: '内核未提供卸载能力', retryable: false }
+      }
       if (info.source === 'builtin') {
         return { status: 'failed', id, message: `内置插件 ${id} 不可卸载`, retryable: false }
       }
@@ -133,7 +136,7 @@ export function apply(ctx: Context): void {
       }
 
       try {
-        await uninstall(id, { force })
+        await ctx.plugins.uninstall(id, { force })
         return { status: 'uninstalled', id }
       } catch (error) {
         const stage = (error as { stage?: string }).stage
