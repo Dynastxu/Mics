@@ -3,8 +3,15 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { DataBrowser, defaultSelection } from '@mics/ui'
 import type { FilterGroup, FilterOption, FilterSelection, ListRow } from '@mics/ui'
 import { usePluginContext } from '@mics/sdk/renderer'
-import { sanitizeInstanceName, validateInstanceName } from '@mics/sdk'
-import type { GameVersion, InstallStartResult, InstanceNameCheck, LoaderKind } from '@mics/sdk'
+import { LOADER_LABELS, LOADER_SOURCE_KINDS, sanitizeInstanceName, validateInstanceName } from '@mics/sdk'
+import type {
+  GameVersion,
+  InstallStartResult,
+  InstanceNameCheck,
+  LoaderKind,
+  LoaderSourceKind,
+  LoaderVersion,
+} from '@mics/sdk'
 
 const ctx = usePluginContext()
 
@@ -18,16 +25,9 @@ interface VersionItem {
   date: string
 }
 
-interface LoaderVersion {
-  id: string
-  channel: LoaderChannel
-  date: string
-}
-
 interface LoaderOption {
   id: string
   label: string
-  versions: LoaderVersion[]
 }
 
 const VERSION_TYPES: VersionType[] = ['正式版', '快照', '预览', '旧版']
@@ -78,46 +78,23 @@ const LOADER_FILTER_GROUPS: FilterGroup[] = [
   },
 ]
 
-const VANILLA_LOADER: LoaderOption = { id: 'vanilla', label: '原版', versions: [] }
-
 const LOADERS: LoaderOption[] = [
-  VANILLA_LOADER,
-  {
-    id: 'fabric',
-    label: 'Fabric',
-    versions: [
-      { id: '0.16.10', channel: '稳定版', date: '2025-03-18' },
-      { id: '0.16.9', channel: '稳定版', date: '2025-02-27' },
-      { id: '0.16.5', channel: '稳定版', date: '2025-01-08' },
-      { id: '0.16.11-beta.1', channel: '测试版', date: '2025-04-05' },
-    ],
-  },
-  {
-    id: 'forge',
-    label: 'Forge',
-    versions: [
-      { id: '55.0.3', channel: '稳定版', date: '2025-04-08' },
-      { id: '55.0.2', channel: '稳定版', date: '2025-03-21' },
-      { id: '55.0.1', channel: '稳定版', date: '2025-03-02' },
-      { id: '55.0.4-beta', channel: '测试版', date: '2025-04-12' },
-    ],
-  },
-  {
-    id: 'neoforge',
-    label: 'NeoForge',
-    versions: [
-      { id: '21.5.78', channel: '稳定版', date: '2025-04-11' },
-      { id: '21.5.75', channel: '稳定版', date: '2025-03-28' },
-      { id: '21.5.60', channel: '稳定版', date: '2025-02-19' },
-      { id: '21.5.79-beta', channel: '测试版', date: '2025-04-18' },
-    ],
-  },
+  { id: 'vanilla', label: '原版' },
+  ...LOADER_SOURCE_KINDS.map((kind) => ({ id: kind, label: LOADER_LABELS[kind] })),
 ]
+
+const VANILLA_LOADER = LOADERS[0]!
 
 /** 从 Mojang API 拉取的原始版本数据 */
 const rawVersions = ref<GameVersion[]>([])
 const versionsLoading = ref(true)
 const versionsError = ref('')
+
+/** 当前加载器可用的版本（随所选游戏版本与加载器类型查询） */
+const loaderVersions = ref<LoaderVersion[]>([])
+const loaderLoading = ref(false)
+const loaderError = ref('')
+let loaderSeq = 0
 
 const listQuery = ref('')
 const listFilter = ref<FilterSelection>(defaultSelection(LIST_FILTER_GROUPS))
@@ -140,7 +117,6 @@ let nameCheckSeq = 0
 const currentLoader = computed(
   () => LOADERS.find((item) => item.id === loaderId.value) ?? VANILLA_LOADER,
 )
-const allLoaderVersions = computed(() => currentLoader.value.versions)
 
 const defaultName = computed(() => {
   const target = installTarget.value
@@ -178,14 +154,18 @@ const VERSION_ROWS = computed<ListRow[]>(() =>
   })),
 )
 
+function loaderChannel(channel: LoaderVersion['channel']): LoaderChannel {
+  return channel === 'beta' ? '测试版' : '稳定版'
+}
+
 const loaderRows = computed<ListRow[]>(() =>
-  allLoaderVersions.value.map((item) => ({
+  loaderVersions.value.map((item) => ({
     id: item.id,
     label: item.id,
-    badge: item.channel,
-    badgeAccent: item.channel === '稳定版',
-    meta: item.date,
-    tags: { nature: item.channel },
+    badge: loaderChannel(item.channel),
+    badgeAccent: item.channel !== 'beta',
+    meta: item.date ? item.date.slice(0, 10) : '',
+    tags: { nature: loaderChannel(item.channel) },
   })),
 )
 
@@ -277,11 +257,86 @@ function syncNameDraft(previousDefault: string): void {
   }
 }
 
+/** 主进程元数据请求的超时兜底：网络挂住时页面不能一直停在加载态 */
+const REQUEST_TIMEOUT = 25_000
+
+function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), REQUEST_TIMEOUT)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
+
+/**
+ * 查询当前加载器在目标游戏版本下可用的版本。
+ *
+ * 版本列表来自下载管线（下载设置里配置的加载器源），页面只负责选择；
+ * 快速切换加载器时用序号丢弃过期结果。
+ */
+async function loadLoaderVersions(): Promise<void> {
+  const target = installTarget.value
+  if (!target || loaderId.value === VANILLA_LOADER.id) {
+    loaderVersions.value = []
+    loaderVersion.value = ''
+    loaderError.value = ''
+    loaderLoading.value = false
+    return
+  }
+
+  const kind = loaderId.value as LoaderSourceKind
+  const seq = ++loaderSeq
+  const previousDefault = defaultName.value
+  loaderLoading.value = true
+  loaderError.value = ''
+  loaderVersions.value = []
+  loaderVersion.value = ''
+
+  try {
+    const list = await withTimeout(
+      ctx.ipc.invoke<LoaderVersion[]>(
+        'mics.download.manager',
+        'loaders/versions',
+        { gameVersion: target.id, kind },
+      ),
+      '请求超时，请检查网络或在下载设置中添加镜像源',
+    )
+    if (seq !== loaderSeq) return
+    loaderVersions.value = list
+    // 默认选稳定版；只有测试版可用时才退回第一个
+    loaderVersion.value = (list.find((item) => item.channel === 'stable') ?? list[0])?.id ?? ''
+    if (list.length === 0) {
+      loaderError.value = `没有可用的 ${currentLoader.value.label} 版本`
+    }
+  } catch (cause) {
+    if (seq !== loaderSeq) return
+    const message = cause instanceof Error ? cause.message : String(cause)
+    loaderError.value = `获取 ${currentLoader.value.label} 版本失败：${message}`
+  } finally {
+    if (seq === loaderSeq) {
+      loaderLoading.value = false
+      syncNameDraft(previousDefault)
+    }
+  }
+}
+
 function selectLoader(id: string): void {
+  if (id === loaderId.value) {
+    // 再次点击当前加载器视为重试：上次超时或列表为空时很有用
+    if (id !== VANILLA_LOADER.id && !loaderLoading.value && loaderVersions.value.length === 0) {
+      void loadLoaderVersions()
+    }
+    return
+  }
   const previous = defaultName.value
   loaderId.value = id
-  loaderVersion.value = LOADERS.find((item) => item.id === id)?.versions[0]?.id ?? ''
+  loaderVersions.value = []
+  loaderVersion.value = ''
+  loaderError.value = ''
   syncNameDraft(previous)
+  void loadLoaderVersions()
 }
 
 function selectVersion(id: string): void {
@@ -298,8 +353,12 @@ function openInstall(id: string): void {
   const version = VERSION_ROWS.value.find((item) => item.id === id)
   if (!version) return
   installTarget.value = { id: version.id, type: version.badge as VersionType, date: version.meta ?? '' }
+  loaderSeq += 1
   loaderId.value = VANILLA_LOADER.id
   loaderVersion.value = ''
+  loaderVersions.value = []
+  loaderError.value = ''
+  loaderLoading.value = false
   nameDraft.value = defaultName.value
   notice.value = ''
   noticeError.value = false
@@ -327,15 +386,20 @@ async function install(): Promise<void> {
   noticeError.value = false
 
   try {
+    const loader: LoaderKind | undefined =
+      loaderId.value !== VANILLA_LOADER.id ? (loaderId.value as LoaderKind) : undefined
+    if (loader && !loaderVersion.value) {
+      noticeError.value = true
+      notice.value = '请选择加载器版本'
+      return
+    }
+
     const name = await runNameCheck()
     if (!name.ok) {
       noticeError.value = true
       notice.value = name.message ?? '实例名称不可用'
       return
     }
-
-    const loader: LoaderKind | undefined =
-      loaderId.value !== 'vanilla' ? (loaderId.value as LoaderKind) : undefined
 
     const result = await ctx.ipc.invoke<InstallStartResult>(
       'mics.download.manager',
@@ -373,12 +437,13 @@ async function loadVersions(): Promise<void> {
   versionsLoading.value = true
   versionsError.value = ''
   try {
-    rawVersions.value = await ctx.ipc.invoke<GameVersion[]>(
-      'mics.download.vanilla',
-      'versions/list',
+    rawVersions.value = await withTimeout(
+      ctx.ipc.invoke<GameVersion[]>('mics.download.manager', 'versions/list'),
+      '请求超时，请检查网络或在下载设置中添加镜像源',
     )
   } catch (cause) {
-    versionsError.value = cause instanceof Error ? cause.message : String(cause)
+    const message = cause instanceof Error ? cause.message : String(cause)
+    versionsError.value = `获取版本列表失败：${message}`
   } finally {
     versionsLoading.value = false
   }
@@ -388,6 +453,8 @@ onMounted(loadVersions)
 
 onUnmounted(() => {
   if (nameCheckTimer) clearTimeout(nameCheckTimer)
+  // 丢弃仍在途的加载器版本查询，避免组件卸载后回写状态
+  loaderSeq += 1
 })
 </script>
 
@@ -443,7 +510,7 @@ onUnmounted(() => {
 
             <button
               class="mics-button mics-button--primary install__submit"
-              :disabled="installing || !nameCheck.ok"
+              :disabled="installing || loaderLoading || !nameCheck.ok || (loaderId !== VANILLA_LOADER.id && !loaderVersion)"
               @click="install"
             >
               {{ installing ? '提交中…' : '安装' }}
@@ -477,8 +544,14 @@ onUnmounted(() => {
         </div>
       </section>
 
+      <div v-if="loaderLoading" class="mics-empty">正在获取加载器版本…</div>
+      <div v-else-if="loaderError" class="mics-empty mics-empty--error">
+        {{ loaderError }}
+        <button class="mics-empty__action" @click="loadLoaderVersions">重试</button>
+      </div>
+
       <DataBrowser
-        v-if="allLoaderVersions.length"
+        v-else-if="loaderRows.length"
         :items="loaderRows"
         :groups="LOADER_FILTER_GROUPS"
         title="加载器版本"
@@ -496,7 +569,10 @@ onUnmounted(() => {
       </header>
 
       <div v-if="versionsLoading" class="mics-empty">正在获取版本列表…</div>
-      <div v-else-if="versionsError" class="mics-empty mics-empty--error">{{ versionsError }}</div>
+      <div v-else-if="versionsError" class="mics-empty mics-empty--error">
+        {{ versionsError }}
+        <button class="mics-empty__action" @click="loadVersions">重试</button>
+      </div>
 
       <DataBrowser
         v-else

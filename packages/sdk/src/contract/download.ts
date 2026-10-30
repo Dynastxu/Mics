@@ -16,7 +16,24 @@ export interface GameVersion {
 }
 
 /** 加载器类型标识 */
-export type LoaderKind = 'vanilla' | 'fabric' | 'forge' | 'neoforge' | 'quilt'
+export type LoaderKind = 'vanilla' | 'fabric' | 'forge' | 'neoforge'
+
+/** 可安装的加载器（不含原版），也是下载源必须声明的类型 */
+export const LOADER_SOURCE_KINDS = ['fabric', 'forge', 'neoforge'] as const
+
+export type LoaderSourceKind = (typeof LOADER_SOURCE_KINDS)[number]
+
+/** 加载器显示名；主进程日志与渲染进程徽标共用 */
+export const LOADER_LABELS: Record<LoaderKind, string> = {
+  vanilla: '原版',
+  fabric: 'Fabric',
+  forge: 'Forge',
+  neoforge: 'NeoForge',
+}
+
+export function isLoaderSourceKind(value: unknown): value is LoaderSourceKind {
+  return typeof value === 'string' && (LOADER_SOURCE_KINDS as readonly string[]).includes(value)
+}
 
 /** 加载器版本摘要 */
 export interface LoaderVersion {
@@ -123,6 +140,13 @@ export interface InstallJob {
   instanceName: string
   /** 游戏版本 */
   gameVersion: string
+  /**
+   * 实际写入实例的版本 id。
+   *
+   * 原版安装与 `gameVersion` 相同；加载器安装是加载器生成的版本 id
+   * （例如 `fabric-loader-0.16.10-1.21.1`），旧记录没有该字段。
+   */
+  versionId?: string
   /** 加载器（原版为空） */
   loader?: { kind: LoaderKind; version: string }
   /** 任务 id；终态安装归档后会清空，统计改看 stats */
@@ -131,6 +155,20 @@ export interface InstallJob {
   state?: InstallJobState
   /** 准备阶段失败或被取消的原因 */
   error?: string
+  /**
+   * 准备阶段的当前步骤（例如「下载 Forge 安装器 42%」）。
+   *
+   * 加载器安装要先下载安装器再运行它，这一步可能持续几十秒到几分钟；没有这个
+   * 字段时界面只能显示「正在准备下载清单」，看起来像卡死。就绪后清空。
+   */
+  note?: string
+  /**
+   * 准备阶段的整体进度（0–100）。
+   *
+   * 准备阶段还没有文件级任务，`stats.percent` 是 0；下载页用这个值填总进度条，
+   * 让「下安装器 / 取依赖库」也计入同一根进度条。就绪后清空。
+   */
+  preparePercent?: number
   /** 安装方式；旧记录没有该字段，按 install 处理 */
   mode?: InstallMode
   /** 终态汇总；任务明细被清理后，下载页仍能显示历史统计 */
@@ -151,6 +189,10 @@ export interface InstallJobSummary {
   mode?: InstallMode
   state: InstallJobState
   error?: string
+  /** 准备阶段的当前步骤；与 InstallJob.note 同源 */
+  note?: string
+  /** 准备阶段的整体进度（0–100）；与 InstallJob.preparePercent 同源 */
+  preparePercent?: number
   createdAt: number
   /** 准备阶段之外、已经没有进行中的文件时为 true */
   finished: boolean
@@ -258,6 +300,98 @@ export function normalizeDownloadSources(value: unknown): DownloadSource[] {
   return sources
 }
 
+/**
+ * 模组加载器下载源：一个镜像通常只覆盖一种加载器，因此条目带 `kind`。
+ *
+ * 与原版下载源一样按列表顺序决定优先级：同一加载器可以有多个源，
+ * 前一个失败时自动尝试下一个。
+ */
+export interface LoaderSource {
+  label: string
+  /** 该源提供的加载器类型 */
+  kind: LoaderSourceKind
+  /** 元数据根地址：版本清单、安装档案 */
+  meta: string
+  /** 文件根地址：加载器库、安装器 */
+  maven: string
+  /** 是否参与下载；关闭后该源被跳过 */
+  enabled: boolean
+}
+
+/** 默认加载器下载源：官方地址优先，BMCLAPI 作为国内镜像兜底 */
+export const DEFAULT_LOADER_SOURCES: ReadonlyArray<LoaderSource> = [
+  {
+    label: 'Fabric 官方',
+    kind: 'fabric',
+    meta: 'meta.fabricmc.net',
+    maven: 'maven.fabricmc.net',
+    enabled: true,
+  },
+  {
+    label: 'Forge 官方',
+    kind: 'forge',
+    meta: 'files.minecraftforge.net',
+    maven: 'maven.minecraftforge.net',
+    enabled: true,
+  },
+  {
+    label: 'NeoForge 官方',
+    kind: 'neoforge',
+    // 版本接口在站点根路径 /api 下；文件仍在 /releases
+    meta: 'maven.neoforged.net',
+    maven: 'maven.neoforged.net/releases',
+    enabled: true,
+  },
+  {
+    label: 'Fabric BMCLAPI',
+    kind: 'fabric',
+    meta: 'bmclapi2.bangbang93.com/fabric-meta',
+    maven: 'bmclapi2.bangbang93.com/maven',
+    enabled: true,
+  },
+  {
+    label: 'Forge BMCLAPI',
+    kind: 'forge',
+    meta: 'bmclapi2.bangbang93.com/forge',
+    maven: 'bmclapi2.bangbang93.com/maven',
+    enabled: true,
+  },
+  {
+    label: 'NeoForge BMCLAPI',
+    kind: 'neoforge',
+    meta: 'bmclapi2.bangbang93.com',
+    maven: 'bmclapi2.bangbang93.com/maven',
+    enabled: true,
+  },
+]
+
+/**
+ * 把持久化/外部来源的加载器下载源归一化成当前契约。
+ *
+ * 未知加载器类型的条目会被丢弃（旧版本或手工编辑的数据可能包含它们）；
+ * 地址留空表示使用该加载器的官方地址，旧条目没有 `enabled` 时补成开启。
+ */
+export function normalizeLoaderSources(value: unknown): LoaderSource[] {
+  if (!Array.isArray(value)) return DEFAULT_LOADER_SOURCES.map((source) => ({ ...source }))
+  const sources: LoaderSource[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue
+    const record = entry as Record<string, unknown>
+    if (!isLoaderSourceKind(record.kind)) continue
+    const official = DEFAULT_LOADER_SOURCES.find((source) => source.kind === record.kind)
+    const meta = typeof record.meta === 'string' ? record.meta.trim() : ''
+    const maven = typeof record.maven === 'string' ? record.maven.trim() : ''
+    sources.push({
+      label: typeof record.label === 'string' ? record.label : '',
+      kind: record.kind,
+      meta: meta || official?.meta || '',
+      maven: maven || official?.maven || '',
+      enabled: record.enabled !== false,
+    })
+  }
+  return sources
+}
+
 /** 最大并发下载文件的默认值 */
 export const DEFAULT_DOWNLOAD_CONCURRENCY = '64'
 
@@ -270,4 +404,5 @@ export interface DownloadSettings {
   cacheDir: string
   cacheLimit: string
   sources: DownloadSource[]
+  loaderSources: LoaderSource[]
 }

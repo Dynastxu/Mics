@@ -14,7 +14,7 @@ import {
   resolveInstanceArea,
   setInstanceModEnabled,
 } from './instanceFiles'
-import { launchInstance } from './launch'
+import { InstanceFilesMissingError, launchInstance } from './launch'
 import { waitForGameWindow } from './gameWindow'
 import { LaunchRuntime, isProcessAlive, type PersistedProcess } from './runtime'
 import type {
@@ -23,6 +23,7 @@ import type {
   InstanceModToggleRequest,
   InstanceRef,
   InstanceRevealRequest,
+  LaunchOutcome,
   LaunchRequest,
   LaunchSettings,
   RepeatLaunchBehavior,
@@ -195,7 +196,7 @@ export function apply(ctx: Context): void {
     return { username: name }
   })
 
-  ctx.ipc.handle<LaunchRequest>('instances/launch', async ({ id, username }) => {
+  ctx.ipc.handle<LaunchRequest>('instances/launch', async ({ id, username }): Promise<LaunchOutcome> => {
     const instance = resolveInstance(dataDir, id)
     if (!instance) throw new Error('实例不存在或缺少版本文件')
     if (instance.installState !== 'ready') throw new Error('实例尚未下载完成，暂时无法启动')
@@ -242,8 +243,17 @@ export function apply(ctx: Context): void {
       log.info('实例 %s 已启动：pid=%d', instance.id, launched.pid)
       void followLaunch(instance.id, launched.pid)
 
-      return { pid: launched.pid }
+      return { status: 'launched', pid: launched.pid } satisfies LaunchOutcome
     } catch (error) {
+      // 文件缺失是可预期结果：把清单交回界面，由用户决定是否交给下载管线补全
+      if (error instanceof InstanceFilesMissingError) {
+        log.warn(
+          '实例 %s 缺少 %d 个必要文件，等待用户确认补全',
+          instance.id,
+          error.files.length,
+        )
+        return { status: 'missing-files', files: error.files } satisfies LaunchOutcome
+      }
       log.error('启动实例 %s 失败', id, error)
       throw error
     } finally {

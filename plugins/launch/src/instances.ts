@@ -2,6 +2,8 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from '
 import path from 'node:path'
 import { INSTANCE_STATE_FILE } from '@mics/sdk'
 import type { InstanceInstallRecord, InstanceInstallState } from '@mics/sdk'
+import { instancesRoot, resolveInstanceLayout } from '@mics/sdk/main'
+import type { InstanceLayout } from '@mics/sdk/main'
 import type { InstanceSummary } from './shared'
 import type { VersionJson } from './version'
 
@@ -16,8 +18,11 @@ export interface ResolvedInstance {
   id: string
   name: string
   dir: string
-  versionDir: string
+  /** 版本档案路径（`<实例>/<版本 id>.json`） */
+  versionFile: string
   version: VersionJson
+  /** 资源位置（共享的 libraries / assets + 实例内的 natives / log_configs） */
+  layout: InstanceLayout
   metadataPath: string
   metadata: InstanceMetadata
   installState: InstanceInstallState
@@ -54,46 +59,45 @@ function installStateOf(instanceDir: string): InstanceInstallState {
   return record?.state === 'installing' ? 'installing' : 'ready'
 }
 
-function versionJsonIn(versionDir: string): { version: VersionJson; file: string } | null {
-  if (!existsSync(versionDir)) return null
-  const preferred = path.join(versionDir, `${path.basename(versionDir)}.json`)
-  const files = readdirSync(versionDir).filter((file) => file.toLowerCase().endsWith('.json'))
-  const ordered = existsSync(preferred)
-    ? [preferred, ...files.filter((file) => file !== path.basename(preferred)).map((file) => path.join(versionDir, file))]
-    : files.map((file) => path.join(versionDir, file))
-
-  for (const file of ordered) {
-    const version = readJson<VersionJson>(file)
-    if (version?.id && version.mainClass) return { version, file }
+/**
+ * 找实例里的版本档案。
+ *
+ * 实例目录就是版本目录：`<版本 id>.json` 与客户端 jar 平铺在根下（相当于 PCL
+ * 版本隔离后的 `versions/<版本>`）。根下还有 `instance.json`、`install-state.json`
+ * 这类元数据，用「有 id 且 mainClass」把它们排除掉。
+ */
+function resolveVersion(
+  instanceDir: string,
+  preferredVersion?: string,
+): { file: string; version: VersionJson } | null {
+  let entries: string[]
+  try {
+    entries = readdirSync(instanceDir)
+  } catch {
+    return null
   }
-  return null
-}
 
-function resolveVersion(instanceDir: string, preferredVersion?: string): { versionDir: string; version: VersionJson } | null {
-  const versionsDir = path.join(instanceDir, 'versions')
-  if (!existsSync(versionsDir)) return null
-
-  const candidates: Array<{ dir: string; mtime: number; version: VersionJson }> = []
-  for (const entry of readdirSync(versionsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue
-    const versionDir = path.join(versionsDir, entry.name)
-    const found = versionJsonIn(versionDir)
-    if (!found) continue
+  const candidates: Array<{ file: string; mtime: number; version: VersionJson }> = []
+  for (const entry of entries) {
+    if (!entry.toLowerCase().endsWith('.json')) continue
+    const file = path.join(instanceDir, entry)
+    const version = readJson<VersionJson>(file)
+    if (!version?.id || !version.mainClass) continue
     let mtime = 0
     try {
-      mtime = statSync(found.file).mtimeMs
+      mtime = statSync(file).mtimeMs
     } catch { /* ignore */ }
-    candidates.push({ dir: versionDir, mtime, version: found.version })
+    candidates.push({ file, mtime, version })
   }
 
   if (candidates.length === 0) return null
   if (preferredVersion) {
     const preferred = candidates.find((candidate) => candidate.version.id === preferredVersion)
-    if (preferred) return { versionDir: preferred.dir, version: preferred.version }
+    if (preferred) return { file: preferred.file, version: preferred.version }
   }
   candidates.sort((a, b) => b.mtime - a.mtime)
   const chosen = candidates[0]!
-  return { versionDir: chosen.dir, version: chosen.version }
+  return { file: chosen.file, version: chosen.version }
 }
 
 export function loaderLabel(version: VersionJson): string {
@@ -101,7 +105,6 @@ export function loaderLabel(version: VersionJson): string {
   const id = version.id.toLowerCase()
   if (id.includes('neoforge')) return 'NeoForge'
   if (id.includes('fabric')) return 'Fabric'
-  if (id.includes('quilt')) return 'Quilt'
   if (id.includes('forge')) return 'Forge'
   return 'Mod 加载器'
 }
@@ -132,7 +135,7 @@ function toSummary(instance: ResolvedInstance): InstanceSummary {
 
 export function resolveInstance(userDataDir: string, id: string): ResolvedInstance | null {
   if (!isSafeInstanceId(id)) return null
-  const instanceDir = path.join(userDataDir, 'instances', id)
+  const instanceDir = path.join(instancesRoot(userDataDir), id)
   if (!existsSync(instanceDir)) return null
 
   const { metadataPath, metadata } = readMetadata(instanceDir)
@@ -143,8 +146,9 @@ export function resolveInstance(userDataDir: string, id: string): ResolvedInstan
     id,
     name: metadata.name?.trim() || id,
     dir: instanceDir,
-    versionDir: resolved.versionDir,
+    versionFile: resolved.file,
     version: resolved.version,
+    layout: resolveInstanceLayout(userDataDir, instanceDir),
     metadataPath,
     metadata,
     installState: installStateOf(instanceDir),
@@ -152,7 +156,7 @@ export function resolveInstance(userDataDir: string, id: string): ResolvedInstan
 }
 
 export function listInstances(userDataDir: string): InstanceSummary[] {
-  const root = path.join(userDataDir, 'instances')
+  const root = instancesRoot(userDataDir)
   if (!existsSync(root)) return []
 
   const summaries: InstanceSummary[] = []

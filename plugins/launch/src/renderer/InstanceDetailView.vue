@@ -500,7 +500,7 @@ onMounted(() => {
             </div>
             <div>
               <dt>版本标识</dt>
-              <dd class="detail__ellipsis" :title="detail.versionDir">{{ detail.versionId }}</dd>
+              <dd class="detail__ellipsis" :title="detail.dir">{{ detail.versionId }}</dd>
             </div>
             <div>
               <dt>版本类型</dt>

@@ -19,6 +19,24 @@ export interface LaunchRequest {
   username: string
 }
 
+/** 启动前发现缺失 / 损坏的必要文件 */
+export interface MissingFile {
+  /** 展示名，例如 `org.ow2.asm:asm-tree:9.10.1` */
+  label: string
+  /** 相对版本目录的路径；版本目录之外的文件给绝对路径 */
+  path: string
+}
+
+/**
+ * `instances/launch` 的结果。
+ *
+ * 文件不完整不是异常，而是需要用户确认补全的可预期结果：主进程把清单
+ * 原样返回，界面据此弹窗，确认后交给下载管线的补全任务。
+ */
+export type LaunchOutcome =
+  | { status: 'launched'; pid: number }
+  | { status: 'missing-files'; files: MissingFile[] }
+
 /** 一次启动所处的阶段：等待游戏窗口出现 / 已在运行 */
 export type LaunchPhase = 'starting' | 'running'
 
@@ -65,10 +83,8 @@ export type InstanceArea = 'root' | 'logs' | 'mods'
 export interface InstanceDetail {
   id: string
   name: string
-  /** 实例根目录绝对路径 */
+  /** 实例根目录绝对路径（同时是游戏目录与版本目录） */
   dir: string
-  /** 当前生效的版本目录绝对路径 */
-  versionDir: string
   versionId: string
   minecraft: string
   loader: string

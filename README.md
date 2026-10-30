@@ -67,6 +67,7 @@ mics/
 ├─ packages/
 │  ├─ sdk/                  # @mics/sdk：清单/服务/IPC 契约、插件辅助函数
 │  ├─ ui/                   # @mics/ui：通用 UI 组件（筛选面板、可搜索列表）
+│  ├─ java/                 # @mics/java：本机 Java 运行时探测（启动 / 加载器安装器共用）
 │  └─ plugin-loader/        # @mics/plugin-loader：扫描目录、校验 plugin.json
 ├─ plugins/
 │  ├─ kernel/               # 内核插件（plugins / ipc / commands / storage / permissions / capabilities 服务）

@@ -2,25 +2,21 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   appendFileSync,
-  createWriteStream,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
 } from 'node:fs'
-import http from 'node:http'
-import https from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
-import { pipeline } from 'node:stream/promises'
 import type { ShellExecuteCapability, ShellProcess } from '@mics/sdk'
-import { findJava } from './java'
+import { findJava } from '@mics/java'
 import type { ResolvedInstance } from './instances'
+import type { MissingFile } from './shared'
 import type { ArgumentEntry, Library, LibraryDownload, Rule } from './version'
-import { syncNativeLibraries } from './zip'
+import { isReadableJar, syncNativeLibraries } from './zip'
 
 export interface LaunchOptions {
   username: string
@@ -138,76 +134,54 @@ function fileSha1(file: string): string | null {
   }
 }
 
-function downloadFile(url: string, destination: string, redirects = 0): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (redirects > 8) {
-      reject(new Error('重定向次数过多'))
-      return
-    }
-
-    const secure = url.startsWith('https')
-    const proto = secure ? https : http
-    const request = proto.get(url, (response) => {
-      const status = response.statusCode ?? 0
-      if (status >= 300 && status < 400 && response.headers.location) {
-        response.resume()
-        let next: string
-        try {
-          next = new URL(response.headers.location, url).toString()
-        } catch {
-          reject(new Error('无效的重定向地址'))
-          return
-        }
-        downloadFile(next, destination, redirects + 1).then(resolve, reject)
-        return
-      }
-      if (status >= 400 || status === 0) {
-        response.resume()
-        reject(new Error(`HTTP ${status}`))
-        return
-      }
-
-      mkdirSync(path.dirname(destination), { recursive: true })
-      const temporary = `${destination}.download`
-      const output = createWriteStream(temporary)
-      pipeline(response, output)
-        .then(() => {
-          renameSync(temporary, destination)
-          resolve()
-        })
-        .catch((cause: unknown) => {
-          rmSync(temporary, { force: true })
-          reject(cause)
-        })
-    })
-
-    request.setTimeout(60_000, () => request.destroy(new Error('下载超时')))
-    request.on('error', reject)
-  })
+/** JAR 必须是结构完整的 ZIP；用来识别镜像错误页与断点续传追加造成的损坏 */
+function needsStructuralCheck(file: string, expectedSha1: string | undefined): boolean {
+  return !expectedSha1 && file.toLowerCase().endsWith('.jar')
 }
 
-async function ensureFile(
-  file: string,
-  expectedSha1: string | undefined,
-  url: string | undefined,
-  label: string,
-  onLog?: LaunchOptions['onLog'],
-): Promise<string> {
+/** 文件是否可以直接用于启动：有摘要按摘要，没有摘要的 jar 至少要是可读的 ZIP */
+function fileIsUsable(file: string, expectedSha1: string | undefined): boolean {
   const current = fileSha1(file)
-  if (current && (!expectedSha1 || current === expectedSha1)) return file
+  if (!current) return false
+  if (expectedSha1) return current === expectedSha1
+  return !needsStructuralCheck(file, expectedSha1) || isReadableJar(file)
+}
 
-  if (!url) {
-    throw new Error(`文件缺失或损坏，且没有可用的下载地址：${label}`)
-  }
+/**
+ * 启动准备阶段发现必要文件缺失。
+ *
+ * 这是一个「可预期的结果」，不是异常路径：调用方据此弹窗询问用户是否补全，
+ * 下载交给 `mics.download.manager` 的补全流程（多源、校验、缓存都在那边）。
+ */
+export class InstanceFilesMissingError extends Error {
+  readonly files: MissingFile[]
 
-  onLog?.('warn', `文件缺失或损坏，正在修复：${label}`)
-  await downloadFile(url, file)
-  const repaired = fileSha1(file)
-  if (expectedSha1 && repaired !== expectedSha1) {
-    rmSync(file, { force: true })
-    throw new Error(`文件校验失败：${label}`)
+  constructor(files: MissingFile[]) {
+    super(`缺少 ${files.length} 个必要文件，需要先补全`)
+    this.name = 'InstanceFilesMissingError'
+    this.files = files
   }
-  return file
+}
+
+interface LaunchFile {
+  label: string
+  file: string
+  sha1?: string
+}
+
+function relativeTo(root: string, file: string): string {
+  const relative = path.relative(root, file)
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : file
+}
+
+/** 逐个检查启动需要的文件，返回缺失 / 损坏的清单 */
+function missingFilesOf(root: string, files: LaunchFile[]): MissingFile[] {
+  const missing: MissingFile[] = []
+  for (const entry of files) {
+    if (fileIsUsable(entry.file, entry.sha1)) continue
+    missing.push({ label: entry.label, path: relativeTo(root, entry.file) })
+  }
+  return missing
 }
 
 function nativeClassifier(): string {
@@ -259,15 +233,21 @@ function offlineUuid(username: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
-async function resolveClientJar(
-  instance: ResolvedInstance,
-  onLog?: LaunchOptions['onLog'],
-): Promise<string> {
-  const client = instance.version.downloads?.client
-  const direct = path.join(instance.versionDir, `${instance.version.id}.jar`)
-  const alternative = path.join(instance.versionDir, 'client.jar')
-  const located = locateFile(direct) ?? locateFile(alternative) ?? direct
-  return ensureFile(located, client?.sha1, client?.url, 'client.jar', onLog)
+/** 启动时需要的 native jar 清单（只包含当前平台实际会加载的库） */
+function nativeJarFiles(libraries: Library[], librariesDir: string): LaunchFile[] {
+  const files: LaunchFile[] = []
+  for (const library of libraries) {
+    if (!rulesAllow(library.rules)) continue
+    const native = nativeEntry(library)
+    if (!native) continue
+    const target = path.join(librariesDir, native.relative)
+    files.push({
+      label: library.name,
+      file: locateFile(target) ?? target,
+      sha1: native.artifact?.sha1,
+    })
+  }
+  return files
 }
 
 /** 旧版实现为每次启动创建 run-* 目录；空闲超过这么久才回收 */
@@ -310,40 +290,36 @@ function pruneNatives(root: string, expected: Set<string>): void {
 /**
  * 同步 native 目录。
  *
- * 同一版本的所有启动共用一个 `natives` 目录，不会因为「仍要启动」而清空重建：
- * 文件大小一致就复用；需要更新但被运行中的实例锁住时跳过，沿用现有 DLL。
+ * 实例目录就是版本目录，同一版本的多次启动共用一个 `natives` 目录，不会因为
+ * 「仍要启动」而清空重建：文件大小一致就复用；需要更新但被运行中的实例锁住时
+ * 跳过，沿用现有 DLL。
+ *
+ * 调用前 `nativeJarFiles` 已经确认过所有 jar 完整，这里不再做下载。
  */
-async function prepareNatives(
+function syncNatives(
   instance: ResolvedInstance,
-  libraries: Library[],
-  librariesDir: string,
+  files: LaunchFile[],
   onLog?: LaunchOptions['onLog'],
-): Promise<{ dir: string; jars: string[] }> {
-  const nativesDir = path.join(instance.versionDir, 'natives')
+): { dir: string; jars: string[] } {
+  const nativesDir = instance.layout.nativesDir
   mkdirSync(nativesDir, { recursive: true })
 
   const expected = new Set<string>()
   const jars: string[] = []
   let complete = true
 
-  for (const library of libraries) {
-    if (!rulesAllow(library.rules)) continue
-    const native = nativeEntry(library)
-    if (!native) continue
-    const target = path.join(librariesDir, native.relative)
-    const file = locateFile(target) ?? target
+  for (const entry of files) {
     try {
-      await ensureFile(file, native.artifact?.sha1, native.artifact?.url, library.name, onLog)
-      const synced = syncNativeLibraries(file, nativesDir)
-      for (const entry of synced.files) expected.add(entry)
+      const synced = syncNativeLibraries(entry.file, nativesDir)
+      for (const file of synced.files) expected.add(file)
       if (synced.locked) {
-        onLog?.('warn', `natives 正被运行中的实例占用，跳过更新：${native.relative}`)
+        onLog?.('warn', `natives 正被运行中的实例占用，跳过更新：${entry.label}`)
       }
-      jars.push(file)
+      jars.push(entry.file)
     } catch (cause) {
       // 单个本地库损坏不应阻止启动；游戏可能只是缺少可选加速库。
       complete = false
-      onLog?.('warn', `本地库处理失败：${native.relative}（${(cause as Error).message}）`)
+      onLog?.('warn', `本地库处理失败：${entry.label}（${(cause as Error).message}）`)
     }
   }
 
@@ -357,26 +333,33 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
   const requiredJava = version.javaVersion?.majorVersion ?? 8
   const java = findJava(requiredJava)
 
-  const assetsDir = path.join(instance.versionDir, 'assets')
-  const librariesDir = path.join(instance.versionDir, 'libraries')
-  const clientJar = await resolveClientJar(instance, options.onLog)
+  // 资源在共享目录（跨实例一份），实例目录里只放这个版本自己的文件
+  const assetsDir = instance.layout.assetsDir
+  const librariesDir = instance.layout.librariesDir
   const libraries = version.libraries ?? []
+
+  // 1. 先收集启动需要的全部文件，只校验、不下载：下载属于下载管线的职责。
+  const expectedFiles: LaunchFile[] = []
+
+  const client = version.downloads?.client
+  const direct = path.join(instance.dir, `${version.id}.jar`)
+  const alternative = path.join(instance.dir, 'client.jar')
+  const clientJar = locateFile(direct) ?? locateFile(alternative) ?? direct
+  expectedFiles.push({ label: 'client.jar', file: clientJar, sha1: client?.sha1 })
 
   const assetIndex = version.assetIndex?.id ?? version.assets ?? 'legacy'
   if (assetIndex !== 'legacy') {
-    const indexPath = path.join(assetsDir, 'indexes', `${assetIndex}.json`)
-    await ensureFile(
-      indexPath,
-      version.assetIndex?.sha1,
-      version.assetIndex?.url,
-      `资源索引 ${assetIndex}`,
-      options.onLog,
-    )
+    expectedFiles.push({
+      label: `资源索引 ${assetIndex}`,
+      file: path.join(assetsDir, 'indexes', `${assetIndex}.json`),
+      sha1: version.assetIndex?.sha1,
+    })
   }
 
-  const natives = await prepareNatives(instance, libraries, librariesDir, options.onLog)
+  const natives = nativeJarFiles(libraries, librariesDir)
+  expectedFiles.push(...natives)
 
-  const classpath = [clientJar]
+  const librariesInClasspath: string[] = []
   for (const library of libraries) {
     if (!rulesAllow(library.rules)) continue
     if (isNativeClassifier(library)) continue
@@ -384,10 +367,18 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
     const relative = artifact?.path ?? mavenPath(library.name)
     const target = path.join(librariesDir, relative)
     const file = locateFile(target) ?? target
-    await ensureFile(file, artifact?.sha1, artifact?.url, library.name, options.onLog)
-    classpath.push(file)
+    // 老的合并版本文件把加载器库的 sha1 留在条目顶层，也要用来校验
+    expectedFiles.push({ label: library.name, file, sha1: artifact?.sha1 || library.sha1 })
+    librariesInClasspath.push(file)
   }
-  classpath.push(...natives.jars)
+
+  const missing = missingFilesOf(instance.dir, expectedFiles)
+  if (missing.length > 0) throw new InstanceFilesMissingError(missing)
+
+  // 2. 文件齐全后才解压 native，避免把半损坏的 jar 解出一套残缺的 DLL。
+  const nativesDir = syncNatives(instance, natives, options.onLog)
+
+  const classpath = [clientJar, ...librariesInClasspath, ...nativesDir.jars]
 
   const memoryMb = Math.max(1024, Math.min(32768, Math.round(options.memoryMb ?? 4096)))
   const variables: Record<string, string> = {
@@ -405,7 +396,7 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
     user_properties: '{}',
     clientid: '',
     auth_xuid: '',
-    natives_directory: natives.dir,
+    natives_directory: nativesDir.dir,
     launcher_name: 'Mics',
     launcher_version: options.launcherVersion,
     classpath: classpath.join(path.delimiter),
@@ -423,24 +414,24 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
 
   const logFile = version.logging?.client?.file
   if (logFile) {
-    const configPath = path.join(instance.versionDir, 'log_configs', logFile.id)
-    try {
-      await ensureFile(configPath, logFile.sha1, logFile.url, `日志配置 ${logFile.id}`, options.onLog)
+    const configPath = path.join(instance.layout.logConfigsDir, logFile.id)
+    // 日志配置缺失不影响启动：跳过即可，不为了一个可选项中断整个流程
+    if (fileIsUsable(configPath, logFile.sha1)) {
       variables.path = configPath
       const argument = version.logging?.client?.argument ?? '-Dlog4j.configurationFile=${path}'
       jvmArgs.push(replaceVariables(argument, variables))
-    } catch (cause) {
-      options.onLog?.('warn', `日志配置不可用：${(cause as Error).message}`)
+    } else {
+      options.onLog?.('warn', `日志配置缺失或损坏，已跳过：${logFile.id}`)
     }
   }
 
   const classpathFlag = jvmArgs.includes('-cp') || jvmArgs.includes('-classpath')
   if (!classpathFlag) jvmArgs.push('-cp', variables.classpath!)
   // 26.x 的版本把 java.library.path 指向子目录；追加一项覆盖成本地库根目录。
-  jvmArgs.push(`-Djava.library.path=${natives.dir}`)
+  jvmArgs.push(`-Djava.library.path=${nativesDir.dir}`)
 
   let gameArgs: string[]
-  if (version.arguments?.game) {
+  if (version.arguments?.game && version.arguments.game.length > 0) {
     gameArgs = expandArguments(version.arguments.game, variables)
   } else if (version.minecraftArguments) {
     gameArgs = version.minecraftArguments

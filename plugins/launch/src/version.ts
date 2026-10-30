@@ -21,6 +21,9 @@ export interface LibraryDownload {
 
 export interface Library {
   name: string
+  /** 加载器 profile 可能把摘要/大小放在库条目顶层 */
+  sha1?: string
+  size?: number
   downloads?: {
     artifact?: LibraryDownload
     classifiers?: Record<string, LibraryDownload>

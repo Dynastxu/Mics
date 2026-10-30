@@ -1,8 +1,13 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
+/**
+ * 本机 Java 运行时探测。
+ *
+ * 启动游戏和运行加载器安装器都需要它，因此放在 SDK 主进程入口里共用：
+ * 探测规则只依赖操作系统与磁盘布局，与具体插件无关。
+ */
 export interface JavaRuntime {
   home: string
   java: string
@@ -143,7 +148,8 @@ function runtimes(): JavaRuntime[] {
 }
 
 /**
- * 选择满足版本要求的最低 Java 版本，避免用过高版本启动旧版游戏。
+ * 选择满足版本要求的最低 Java 版本，避免用过高版本启动旧版游戏，
+ * 也避免安装器跑在比游戏更高的 Java 上。
  */
 function runtimePreference(runtime: JavaRuntime): number {
   const name = path.basename(runtime.home).toLowerCase()

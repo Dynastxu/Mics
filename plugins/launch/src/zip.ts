@@ -49,6 +49,42 @@ function readEntries(buffer: Buffer): ZipEntry[] {
 
 const NATIVE_PATTERN = /\.(dll|so|dylib|jnilib)$/i
 
+/**
+ * 检查 jar 是否能被 JVM 正常读取。
+ *
+ * 只看文件头不够：下载中断后重试时，服务端忽略 Range 可能把完整文件追加到
+ * 残缺的 `.part` 后面，得到的文件仍然以 `PK` 开头，但中央目录偏移全部错位，
+ * JVM 会报 ClassNotFoundException。这里对齐 EOCD、中央目录与首个本地头。
+ */
+export function isReadableJar(file: string): boolean {
+  let buffer: Buffer
+  try {
+    buffer = readFileSync(file)
+  } catch {
+    return false
+  }
+  if (buffer.length < 22) return false
+
+  const start = Math.max(0, buffer.length - MAX_COMMENT - 22)
+  let eocd = -1
+  for (let offset = buffer.length - 22; offset >= start; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === EOCD_SIGNATURE) {
+      eocd = offset
+      break
+    }
+  }
+  if (eocd < 0) return false
+
+  const count = buffer.readUInt16LE(eocd + 10)
+  const cdOffset = buffer.readUInt32LE(eocd + 16)
+  if (count === 0 || cdOffset + 46 > buffer.length) return false
+  if (buffer.readUInt32LE(cdOffset) !== CENTRAL_SIGNATURE) return false
+
+  const localOffset = buffer.readUInt32LE(cdOffset + 42)
+  return localOffset + 4 <= buffer.length
+    && buffer.readUInt32LE(localOffset) === LOCAL_SIGNATURE
+}
+
 export interface NativeSyncResult {
   /** 本次同步后期望存在的 DLL 绝对路径，供调用方清理多余文件 */
   files: string[]

@@ -9,7 +9,6 @@ const javaPath = ref('')
 const width = ref('1280')
 const height = ref('720')
 const jvmArgs = ref('')
-const isolation = ref('instance')
 const repeatBehavior = ref<RepeatLaunchBehavior>('prompt')
 const error = ref('')
 
@@ -115,16 +114,6 @@ onMounted(load)
         <div class="mics-field__label">JVM 参数</div>
         <div class="mics-field__control">
           <input v-model="jvmArgs" class="mics-input" placeholder="-XX:+UseG1GC" />
-        </div>
-      </div>
-
-      <div class="mics-field">
-        <div class="mics-field__label">版本隔离</div>
-        <div class="mics-field__control">
-          <select v-model="isolation" class="mics-select">
-            <option value="instance">按实例隔离</option>
-            <option value="shared">共享 .minecraft</option>
-          </select>
         </div>
       </div>
     </div>

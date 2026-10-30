@@ -52,6 +52,7 @@ function makeViteAliases() {
   const alias = [
     { find: /^@mics\/plugin-loader$/, replacement: path.join(loaderDir, 'index.ts') },
     { find: /^@mics\/ui$/, replacement: uiEntry },
+    { find: /^@mics\/java$/, replacement: path.join(root, 'packages', 'java', 'src', 'index.ts') },
     { find: /^vue$/, replacement: path.join(shimDir, 'vue-shim.js') },
     { find: /^cordis$/, replacement: path.join(shimDir, 'cordis-shim.js') },
   ]

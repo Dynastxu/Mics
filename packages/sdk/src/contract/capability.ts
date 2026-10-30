@@ -98,6 +98,13 @@ export interface FileTransferSpec {
    * 所以契约里只声明「透传」，由 provider 自己解释。
    */
   agents?: unknown
+  /**
+   * 附加请求头。
+   *
+   * 部分镜像（例如 BMCLAPI 重定向到的 CERNET 节点）会拒绝没有 User-Agent
+   * 的请求并返回 403，所以调用方必须把品牌头透传下来。
+   */
+  headers?: Record<string, string>
   onProgress?: (progress: TransferProgress) => void
   /** 服务端忽略 Range、从头下载时通知调用方重置进度 */
   onRestart?: () => void

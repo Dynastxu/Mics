@@ -3,6 +3,28 @@
  *
  * 实例名称同时是实例文件夹名，因此渲染进程（即时反馈）与主进程（写盘前把关）
  * 必须共用同一份规则：否则 UI 放行的名称可能在写盘时失败，或写出意料之外的目录。
+ *
+ * 磁盘布局（完整说明见 docs/architecture.md「用户数据与实例布局」）：
+ *
+ *   <userData>/.minecraft/                     游戏根，结构对齐原版启动器
+ *   ├─ versions/<实例名>/                       游戏目录，同时就是版本目录
+ *   │  ├─ <版本 id>.json  <版本 id>.jar         版本档案与客户端
+ *   │  ├─ natives/  log_configs/
+ *   │  ├─ instance.json  install-state.json     元数据与安装状态（见 INSTANCE_STATE_FILE）
+ *   │  └─ mods/  logs/  saves/  options.txt     游戏自己写
+ *   ├─ libraries/                              与版本无关的共享库
+ *   └─ assets/                                 与版本无关的共享资源
+ *
+ * 容器目录沿用 `versions`（与 PCL 的 `.minecraft/versions` 对齐），但里面装的是
+ * 实例目录，且实例内部不再按版本 id 分层。
+ *
+ * 三条容易踩错的约定：
+ *
+ * - 实例根**同时是**游戏目录与版本目录：实例内部不要再套一层 `.minecraft` 或
+ *   `versions/<版本 id>`。插件不该把「属于这个实例」的文件写到实例根之外。
+ * - `libraries` / `assets` 在 `.minecraft` 下，由所有实例共享；位置由 `@mics/sdk/main`
+ *   的 `resolveInstanceLayout` 解析，不要在插件里自己拼。
+ * - 其它创建实例的插件必须复用本文件的校验，否则会写出实例根之外的位置。
  */
 
 // ---------------------------------------------------------------------------

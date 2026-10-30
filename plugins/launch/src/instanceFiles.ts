@@ -2,6 +2,7 @@ import { existsSync, type Dirent, type Stats } from 'node:fs'
 import { mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { gunzipSync } from 'node:zlib'
+import { instancesRoot } from '@mics/sdk/main'
 import type {
   InstanceArea,
   InstanceDetail,
@@ -38,7 +39,7 @@ const UNSAFE_FILE_CHARS = /[\\/:*?"<>|\u0000-\u001f]/
 /** 实例根目录；非法 id 返回 null，绝不拼接出 instances 之外的位置 */
 export function instanceDirOf(userDataDir: string, id: string): string | null {
   if (typeof id !== 'string' || !isSafeInstanceId(id)) return null
-  const root = path.resolve(userDataDir, 'instances')
+  const root = path.resolve(instancesRoot(userDataDir))
   const dir = path.resolve(root, id)
   return path.dirname(dir) === root ? dir : null
 }
@@ -80,7 +81,6 @@ export function describeInstance(userDataDir: string, id: string): InstanceDetai
     id: instance.id,
     name: instance.name,
     dir: instance.dir,
-    versionDir: instance.versionDir,
     versionId: instance.version.id,
     minecraft: instance.version.inheritsFrom ?? instance.version.id,
     loader: loaderLabel(instance.version),

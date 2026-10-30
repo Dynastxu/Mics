@@ -8,7 +8,9 @@
     "src/renderer/**/*.ts",
     "src/renderer/**/*.vue",
     "src/renderer/env.d.ts",
-    "../../packages/sdk/src/**/*.ts",
-    "../../packages/sdk/src/**/*.d.ts"
+    "../../packages/sdk/src/index.ts",
+    "../../packages/sdk/src/renderer.ts",
+    "../../packages/sdk/src/contract/**/*.ts",
+    "../../packages/sdk/src/global.d.ts"
   ]
 }

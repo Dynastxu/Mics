@@ -4,13 +4,16 @@ import { usePluginContext } from '@mics/sdk/renderer'
 import type { InstallStartResult, InstanceInstallStatus } from '@mics/sdk'
 import type {
   InstanceSummary,
+  LaunchOutcome,
   LaunchProcessInfo,
   LaunchSettings,
   LaunchState,
+  MissingFile,
   RepeatLaunchBehavior,
 } from '../shared'
 import { LAUNCH_STATE_TOPIC } from '../shared'
 import InstanceDetailView from './InstanceDetailView.vue'
+import MissingFilesDialog from './MissingFilesDialog.vue'
 import RepeatLaunchDialog from './RepeatLaunchDialog.vue'
 
 const ctx = usePluginContext()
@@ -25,6 +28,8 @@ const username = ref('Steve')
 /** 正在执行启动 IPC（准备依赖、spawn 进程）的实例 */
 const pending = ref<string[]>([])
 const conflict = ref<InstanceSummary | null>(null)
+/** 文件不完整时等待用户确认的实例 */
+const missing = ref<{ instance: InstanceSummary; files: MissingFile[] } | null>(null)
 /** 当前打开的实例详情；为空时展示实例列表 */
 const detailId = ref('')
 
@@ -40,11 +45,11 @@ const repairing = ref<string[]>([])
 type InstallPhase = 'ready' | 'downloading' | 'paused' | 'incomplete'
 
 function phaseOf(instance: InstanceSummary): InstallPhase {
-  if (instance.installState === 'ready') return 'ready'
+  // 补全进行中时即使实例已标记 ready，也要先展示下载阶段，避免重复点启动
   const status = statuses.value[instance.id]
-  if (!status) return 'incomplete'
-  if (status.state === 'preparing' || status.state === 'downloading') return 'downloading'
-  if (status.state === 'paused') return 'paused'
+  if (status?.state === 'preparing' || status?.state === 'downloading') return 'downloading'
+  if (status?.state === 'paused') return 'paused'
+  if (instance.installState === 'ready') return 'ready'
   return 'incomplete'
 }
 
@@ -269,16 +274,53 @@ async function startLaunch(instance: InstanceSummary): Promise<void> {
   notice.value = ''
   try {
     await saveUsername()
-    await ctx.ipc.invoke('mics.launch', 'instances/launch', {
+    const result = await ctx.ipc.invoke<LaunchOutcome>('mics.launch', 'instances/launch', {
       id: instance.id,
       username: username.value,
     })
+    // 文件不完整不是失败：交给用户确认，补全由下载管线负责
+    if (result.status === 'missing-files') {
+      missing.value = { instance, files: result.files }
+      return
+    }
     instance.lastPlayed = Date.now()
     await refreshState()
   } catch (cause) {
     notice.value = `启动失败：${cause instanceof Error ? cause.message : String(cause)}`
   } finally {
     pending.value = pending.value.filter((id) => id !== instance.id)
+  }
+}
+
+/**
+ * 用户确认补全：交给下载管线的补全任务（多源、校验、缓存都在那边），
+ * 然后跳到下载页查看进度。
+ */
+async function confirmRepair(): Promise<void> {
+  const target = missing.value
+  missing.value = null
+  if (!target) return
+
+  const { instance } = target
+  if (isRepairing(instance.id)) return
+  repairing.value = [...repairing.value, instance.id]
+  notice.value = ''
+  try {
+    await saveUsername()
+    const result = await ctx.ipc.invoke<InstallStartResult>(
+      'mics.download.manager',
+      'install/repair',
+      { instanceName: instance.id, versionId: instance.versionId },
+    )
+    if (result.error) throw new Error(result.error)
+    await refreshStatuses()
+    if (!ctx.ui.navigate('download.progress')) {
+      notice.value = '下载页面尚未启用，可以稍后在启动页点击「补全文件」'
+    }
+  } catch (cause) {
+    notice.value = `补全失败：${cause instanceof Error ? cause.message : String(cause)}`
+  } finally {
+    repairing.value = repairing.value.filter((id) => id !== instance.id)
   }
 }
 
@@ -456,6 +498,14 @@ onUnmounted(() => {
     :instance-name="conflict?.name ?? ''"
     @confirm="confirmConflict"
     @cancel="cancelConflict"
+  />
+
+  <MissingFilesDialog
+    :open="Boolean(missing)"
+    :instance-name="missing?.instance.name ?? ''"
+    :files="missing?.files ?? []"
+    @confirm="confirmRepair"
+    @cancel="missing = null"
   />
 </template>
 

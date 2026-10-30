@@ -1,0 +1,10 @@
+{
+  "name": "@mics/java",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "本机 Java 运行时探测：启动游戏与运行加载器安装器共用的环境工具。",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

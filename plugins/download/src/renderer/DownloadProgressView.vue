@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
+import { LOADER_LABELS } from '@mics/sdk'
 import type { InstallJobStats, InstallJobSummary } from '@mics/sdk'
 
 interface JobRow {
@@ -11,6 +12,8 @@ interface JobRow {
   paused: boolean
   /** 已受理、仍在后台构建下载清单 */
   preparing: boolean
+  /** 准备阶段的当前步骤进度（0–100），preparing 时填总进度条 */
+  preparePercent: number
 }
 
 interface SpeedSample {
@@ -49,6 +52,7 @@ const activeRows = computed<JobRow[]>(() =>
       speed: jobSpeeds.value[job.id] ?? 0,
       paused: jobPaused(job.stats),
       preparing: job.state === 'preparing',
+      preparePercent: Math.max(0, Math.min(100, Math.round(job.preparePercent ?? 0))),
     })),
 )
 
@@ -211,7 +215,8 @@ onUnmounted(() => {
               <span class="progress-job__name">{{ row.job.instanceName }}</span>
               <span class="mics-badge">{{ row.job.gameVersion }}</span>
               <span v-if="row.job.loader" class="mics-badge">
-                {{ row.job.loader.kind }} {{ row.job.loader.version }}
+                {{ LOADER_LABELS[row.job.loader.kind] ?? row.job.loader.kind }}
+                {{ row.job.loader.version }}
               </span>
               <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
               <span v-if="isSuperseded(row.job)" class="mics-badge">旧记录</span>
@@ -234,7 +239,22 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div v-if="row.preparing" class="progress-job__preparing">正在准备下载清单…</div>
+          <div v-if="row.preparing" class="progress-job__progress">
+            <div
+              class="progress-job__bar"
+              role="progressbar"
+              :aria-valuenow="row.preparePercent"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <div class="progress-job__bar-fill" :style="{ width: row.preparePercent + '%' }" />
+            </div>
+            <span class="progress-job__percent">{{ row.preparePercent }}%</span>
+          </div>
+
+          <div v-if="row.preparing" class="progress-job__preparing">
+            {{ row.job.note || '正在准备下载清单…' }}
+          </div>
 
           <template v-else>
             <div class="progress-job__progress">

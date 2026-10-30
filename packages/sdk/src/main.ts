@@ -2,6 +2,10 @@ import type { Plugin } from 'cordis'
 import './contract/events'
 import './contract/services'
 
+// 磁盘布局解析是主进程插件的共享实现（启动与下载必须用同一份规则），
+// 因此挂在 `/main` 入口；`node/` 下只放依赖 Node 的模块，渲染进程不引入。
+export * from './node/layout'
+
 /**
  * 主进程插件的类型标注辅助函数。
  *

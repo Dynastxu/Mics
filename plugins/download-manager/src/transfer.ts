@@ -108,9 +108,31 @@ export function createFileTransfer(options: FileTransferOptions): FileTransferHa
       resumeOnIncompleteMaxRetry: 3,
       timeout: 15_000,
       progressThrottle: 500,
+      // 镜像站（尤其是 BMCLAPI 重定向后的 CERNET 节点）会拒绝无 UA 的请求
+      headers: options.headers ?? {},
       httpRequestOptions: { agent: options.agents.http },
       httpsRequestOptions: { agent: options.agents.https },
     })
+
+    // 停滞看门狗：建连成功但长时间收不到数据时，主动结束本轮传输
+    const STALL_TIMEOUT_MS = 30_000
+    let stallTimer: NodeJS.Timeout | null = null
+    let stallReject: ((reason: Error) => void) | null = null
+    const stalled = new Promise<never>((_resolve, reject) => {
+      stallReject = reject
+    })
+    const armStall = (): void => {
+      if (stallTimer) clearTimeout(stallTimer)
+      stallTimer = setTimeout(() => {
+        stallTimer = null
+        stallReject?.(new Error('下载停滞：长时间没有收到数据'))
+      }, STALL_TIMEOUT_MS)
+    }
+    const disarmStall = (): void => {
+      if (!stallTimer) return
+      clearTimeout(stallTimer)
+      stallTimer = null
+    }
 
     // EventEmitter 如果没有 error 监听会在 emit 时抛异常；错误统一走 start() 的 reject
     helper.on('error', () => undefined)
@@ -121,9 +143,11 @@ export function createFileTransfer(options: FileTransferOptions): FileTransferHa
         hash = options.sha1 ? createHash('sha1') : null
         options.onRestart?.()
       }
+      armStall()
       options.onProgress?.({ loaded: info.downloadedSize, total: info.totalSize ?? -1 })
     })
     helper.on('progress.throttled', (stats) => {
+      armStall()
       options.onProgress?.({ loaded: stats.downloaded, total: stats.total ?? -1 })
     })
     helper.on('end', (info) => {
@@ -137,18 +161,25 @@ export function createFileTransfer(options: FileTransferOptions): FileTransferHa
       return { status: 'paused' }
     }
 
+    armStall()
+    const running = resuming
+      ? helper.resumeFromFile(options.partPath, {
+        downloaded: partSize,
+        fileName: path.basename(options.partPath),
+        ...(options.size > 0 ? { total: options.size } : {}),
+      })
+      : helper.start()
+    // 停滞超时后不再等原来的 promise，但要消费掉它的拒绝，避免未处理异常
+    running.catch(() => undefined)
+
     try {
-      if (resuming) {
-        await helper.resumeFromFile(options.partPath, {
-          downloaded: partSize,
-          fileName: path.basename(options.partPath),
-          ...(options.size > 0 ? { total: options.size } : {}),
-        })
-      } else {
-        await helper.start()
-      }
+      await Promise.race([running, stalled])
+      disarmStall()
     } catch (cause) {
+      disarmStall()
       if (stopRequested) return { status: 'paused' }
+      // 连接卡死：停掉本次传输（.part 保留），交给上层换源
+      await helper.stop().catch(() => undefined)
       return { status: 'failed', error: toError(cause) }
     }
 
