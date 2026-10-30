@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Context, Fiber, Plugin } from 'cordis'
 import { Service } from 'cordis'
@@ -1226,6 +1226,26 @@ export class PluginsService extends Service {
     return 'enabled'
   }
 
+  /**
+   * 解析插件渲染端入口 URL。
+   * 开发环境下改道 dev server（ELECTRON_RENDERER_URL），让插件视图源码经过
+   * electron-vite dev server 转换并注入 inspector 定位元数据，从而支持点击跳转源码；
+   * 生产 / 无源码入口时回退到预构建 bundle（mics-plugin://）。
+   */
+  private resolveRenderUrl(record: PluginRecord, renderer?: string): string | undefined {
+    if (!renderer) return undefined
+    const devOrigin = process.env.ELECTRON_RENDERER_URL
+    if (devOrigin) {
+      const sourceEntry = path.join(record.dir, 'src', 'renderer', 'index.ts')
+      if (existsSync(sourceEntry)) {
+        // /@fs/ 期望未编码的绝对路径（盘符冒号不编码），仅统一为 '/' 并处理非法字符
+        const encoded = encodeURI(sourceEntry.split(path.sep).join('/'))
+        return `${devOrigin}/@fs/${encoded}`
+      }
+    }
+    return `${PLUGIN_SCHEME}://${record.manifest.id}/${encodePath(renderer)}`
+  }
+
   private describe(entry: Entry): PluginInfo {
     const { manifest, source } = entry.record
     const builtin = source === 'builtin'
@@ -1250,9 +1270,7 @@ export class PluginsService extends Service {
       manifest,
       hasMain: Boolean(entry.record.entryMain),
       hasRenderer: Boolean(entry.record.entryRenderer),
-      rendererUrl: renderer
-        ? `${PLUGIN_SCHEME}://${manifest.id}/${encodePath(renderer)}`
-        : undefined,
+      rendererUrl: this.resolveRenderUrl(entry.record, renderer),
       styles: (manifest.styles ?? []).map(
         (style) => `${PLUGIN_SCHEME}://${manifest.id}/${encodePath(style)}`,
       ),
