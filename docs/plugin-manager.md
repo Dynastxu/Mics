@@ -170,7 +170,10 @@ export default async function uninstall(context: UninstallScriptContext): Promis
 | 启用 / 禁用 | 不改 | 只切开关 |
 
 第一版不做 HMR：插件是单文件 bundle，卸载再加载就够了。渲染端的 `import()` 带
-`?v=<时间戳>` 绕过 ESM 模块缓存，样式链接同样带版本号。
+`?rev=<修订号>` 绕过 ESM 模块缓存，样式链接同样带修订号。这里刻意不用 `v=`：Vite
+dev server 会把 `v=` 当成依赖版本、回一年期 `immutable` 缓存，而修订号每次启动都从
+1 重新计数，跨会话复用同一个 URL 会命中陈旧入口；入口依赖一旦变化（例如删除某个
+视图），插件就会永久激活失败。
 
 **双进程一致**：主进程 fiber 与页面 fiber 必须一起成功或一起失败。渲染端加载失败时
 会回报内核（`plugins/fail`），内核停下主进程并标记失败，不会出现「后台还在跑、页面已经坏了」。

@@ -13,6 +13,21 @@ import { logDebug, logError, logInfo, logWarn } from '../logging'
 import { applySnapshot, ensureStyle, removeStyle, store } from '../store'
 
 /**
+ * 给插件产物 URL 挂上「本次加载」的修订号，绕过 ESM 模块缓存。
+ *
+ * 参数名刻意不用 `v`：Vite dev server 会把 `v=` 形式的查询当成依赖版本
+ * （DEP_VERSION_RE），回 `max-age=31536000,immutable`；而修订号每个会话都从
+ * 1 重新计数，跨启动复用同一个 URL 时浏览器会直接命中上次的磁盘缓存。插件入口
+ * 只要改过依赖（例如删掉一个视图），旧缓存就会一直引到不存在的模块，表现为
+ * 插件激活永久失败。`rev=` 不在 Vite 的特例里，dev server 会回 `no-cache`
+ * 重新校验，既能绕过模块缓存，又不会留下跨会话的陈旧条目。
+ */
+function withRevision(url: string, revision: number): string {
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}rev=${revision}`
+}
+
+/**
  * 渲染进程的插件宿主。
  *
  * 启动时拉取内核快照（清单层面的贡献点立刻可用），
@@ -34,9 +49,9 @@ export class PluginsService extends Service {
   private readonly scopes = new Map<PluginId, Context>()
   private readonly loading = new Map<PluginId, Promise<void>>()
   private readonly loaded = new Set<PluginId>()
-  /** 插件注册过的样式链接（带版本号），卸载时按这份记录移除 */
+  /** 插件注册过的样式链接（带修订号），卸载时按这份记录移除 */
   private readonly styles = new Map<PluginId, string[]>()
-  /** 单调递增：每次加载插件都用新的 ?v= 绕过 ESM 模块缓存 */
+  /** 单调递增：每次加载插件都用新的修订号绕过 ESM 模块缓存 */
   private stamp = 0
   /** dev 清理审计：每个插件上一次重载后的渲染端注册快照 */
   private readonly auditBaselines = new Map<PluginId, CleanupSnapshot>()
@@ -219,7 +234,7 @@ export class PluginsService extends Service {
 
       if (info.hasRenderer && info.rendererUrl) {
         const version = ++this.stamp
-        const hrefs = info.styles.map((href) => `${href}?v=${version}`)
+        const hrefs = info.styles.map((href) => withRevision(href, version))
         for (const href of hrefs) ensureStyle(href)
         this.styles.set(info.id, hrefs)
 
@@ -232,7 +247,7 @@ export class PluginsService extends Service {
         let module: Record<string, unknown>
         try {
           module = (await import(
-            /* @vite-ignore */ `${info.rendererUrl}?v=${version}`
+            /* @vite-ignore */ withRevision(info.rendererUrl, version)
           )) as Record<string, unknown>
         } catch (error) {
           throw new PluginFailureError(
