@@ -401,7 +401,6 @@ export const DEFAULT_DOWNLOAD_CACHE_LIMIT = '5'
 /** 下载管线持久化设置 */
 export interface DownloadSettings {
   concurrency: string
-  cacheDir: string
   cacheLimit: string
   sources: DownloadSource[]
   loaderSources: LoaderSource[]

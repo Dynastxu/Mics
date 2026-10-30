@@ -8,8 +8,12 @@ import type { FilterGroup, FilterSelection, ListRow } from './types'
 export function defaultSelection(groups: FilterGroup[]): FilterSelection {
   const selection: FilterSelection = {}
   for (const group of groups) {
+    const first = group.options[0]
+    // 单选组取第一个选项，但「全部」意味着不过滤，默认仍是空
     selection[group.key] =
-      (group.mode ?? 'multi') === 'single' ? group.options.slice(0, 1).map((option) => option.value) : []
+      (group.mode ?? 'multi') === 'single' && first && first.value !== group.exclusive
+        ? [first.value]
+        : []
   }
   return selection
 }
@@ -25,6 +29,13 @@ export function isFilterActive(selection: FilterSelection, groups: FilterGroup[]
       current.some((value, index) => value !== fallback[index])
     )
   })
+}
+
+/** 行内某个筛选键的所有取值：允许一个键挂多个值 */
+export function tagValues(row: ListRow, key: string): string[] {
+  const value = row.tags?.[key]
+  if (value === undefined) return []
+  return Array.isArray(value) ? value : [value]
 }
 
 /** 一行是否命中关键字；不传 `searchText` 时使用默认字段 */
@@ -44,7 +55,7 @@ export function matchesQuery(
         ...(row.badges?.map((b) => b.label) ?? []),
         row.meta,
         ...(row.keywords ?? []),
-        ...Object.values(row.tags ?? {}),
+        ...Object.keys(row.tags ?? {}).flatMap((key) => tagValues(row, key)),
       ]
         .filter(Boolean)
         .join(' ')
@@ -68,16 +79,20 @@ export interface FilterRowsOptions {
 /** 先按关键字、再按分组过滤，最后排序；返回新数组 */
 export function filterRows(items: ListRow[], options: FilterRowsOptions = {}): ListRow[] {
   const { groups = [], selection = {}, query = '', searchText, match, sort } = options
-  const activeKeys = groups
+  const activeGroups = groups
     .filter((group) => (group.affects ?? 'rows') === 'rows')
     .filter((group) => (selection[group.key] ?? []).length > 0)
-    .map((group) => group.key)
 
   const rows = items.filter((row) => {
     if (!matchesQuery(row, query, searchText)) return false
-    if (!activeKeys.length) return true
+    if (!activeGroups.length) return true
     if (match) return match(row, selection)
-    return activeKeys.every((key) => (selection[key] ?? []).includes(row.tags?.[key] ?? ''))
+    // 多选按「同时满足」合并：每个选中值都要在行上（一行可以有多个 tag 值）
+    return activeGroups.every((group) => {
+      const chosen = selection[group.key] ?? []
+      const values = tagValues(row, group.key)
+      return chosen.every((value) => values.includes(value))
+    })
   })
 
   return sort ? [...rows].sort((a, b) => sort(a, b, selection)) : rows

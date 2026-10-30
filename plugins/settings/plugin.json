@@ -2,7 +2,7 @@
   "id": "mics.settings",
   "name": "设置",
   "version": "0.1.0",
-  "description": "设置分组与通用设置页；其余设置页由各插件自行贡献。",
+  "description": "设置分组与通用设置页；插件自己的设置放在插件管理页的插件详情里，复杂设置由插件另行提供页面。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
@@ -15,13 +15,6 @@
         "title": "通用",
         "icon": "sliders",
         "order": 10
-      },
-      {
-        "id": "settings.plugins",
-        "group": "settings",
-        "title": "插件配置",
-        "icon": "plugin",
-        "order": 45
       }
     ]
   }

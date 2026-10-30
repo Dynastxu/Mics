@@ -36,6 +36,11 @@ export interface ConfigurationContribution {
   title?: string
   description?: string
   properties: Record<string, ConfigurationProperty>
+  /**
+   * 设置项由插件自己的页面呈现时声明该视图 id（与 `contributes.nav[].id` 一致）。
+   * 插件详情据此只给「打开设置页」入口，不在本地重复渲染同一批设置。
+   */
+  settingsView?: string
 }
 
 /** 当前值的来源：用户保存、profile 默认、schema 默认，或尚未设置 */
@@ -54,6 +59,8 @@ export interface PluginConfigurationInfo {
   title?: string
   description?: string
   properties: ConfigurationPropertyInfo[]
+  /** 自带设置页的视图 id；有此字段时插件详情不再渲染表单，只留页面入口 */
+  settingsView?: string
 }
 
 export type ConfigurationValueResult =
@@ -62,6 +69,8 @@ export type ConfigurationValueResult =
 
 const TYPES = new Set<ConfigurationType>(['string', 'number', 'integer', 'boolean', 'enum'])
 const KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$.-]*$/
+/** 与清单里的视图 id 同一套写法 */
+const VIEW_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -252,5 +261,12 @@ export function validateConfigurationContribution(raw: unknown): {
   const configuration: ConfigurationContribution = { properties }
   if (typeof raw.title === 'string') configuration.title = raw.title
   if (typeof raw.description === 'string') configuration.description = raw.description
+  if (raw.settingsView !== undefined) {
+    if (typeof raw.settingsView !== 'string' || !VIEW_ID_PATTERN.test(raw.settingsView)) {
+      errors.push('配置 settingsView 必须是视图 id，例如 settings.launch')
+    } else {
+      configuration.settingsView = raw.settingsView
+    }
+  }
   return { configuration, errors, warnings }
 }

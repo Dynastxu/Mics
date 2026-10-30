@@ -489,10 +489,33 @@ svg.mics-icon {
 }
 
 .mics-filter__label {
+  display: inline-flex;
   flex: none;
-  width: 64px;
+  align-items: center;
+  gap: 6px;
+  width: 76px;
   color: var(--mics-fg-muted);
   font-size: 12px;
+}
+
+/* 实心圆 = 单选组（只取一个值），空心正方形 = 多选组（选中多项需同时满足） */
+.mics-filter__marker {
+  flex: none;
+  opacity: 0.8;
+}
+
+.mics-filter__marker--single {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.mics-filter__marker--multi {
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  border-radius: 0;
 }
 
 .mics-badge {

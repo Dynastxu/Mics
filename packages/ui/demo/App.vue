@@ -19,7 +19,7 @@ const GROUPS: FilterGroup[] = [
   {
     key: 'mode',
     label: '游戏模式',
-    mode: 'multi',
+    mode: 'single',
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
@@ -31,13 +31,26 @@ const GROUPS: FilterGroup[] = [
   {
     key: 'version',
     label: '版本',
-    mode: 'multi',
+    mode: 'single',
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
       { value: '1.21.5', label: '1.21.5' },
       { value: '1.21.4', label: '1.21.4' },
       { value: '1.21.1', label: '1.21.1' },
+    ],
+  },
+  {
+    key: 'feature',
+    label: '特性',
+    mode: 'multi',
+    exclusive: 'all',
+    options: [
+      { value: 'all', label: '全部' },
+      { value: 'pvp', label: 'PVP' },
+      { value: 'pve', label: 'PVE' },
+      { value: 'build', label: '建造' },
+      { value: 'timed', label: '限时' },
     ],
   },
 ]
@@ -53,7 +66,7 @@ const ITEMS: ListRow[] = [
     ],
     meta: 'v1.21.5 · 12/20 人',
     img: 'https://placehold.co/64x64/4f8/white?text=S',
-    tags: { mode: 'survival', version: '1.21.5' },
+    tags: { mode: 'survival', version: '1.21.5', feature: ['pve'] },
   },
   {
     id: 's2',
@@ -61,7 +74,7 @@ const ITEMS: ListRow[] = [
     badge: '空闲',
     meta: 'v1.21.4 · 3/20 人',
     img: 'https://placehold.co/64x64/48f/white?text=C',
-    tags: { mode: 'creative', version: '1.21.4' },
+    tags: { mode: 'creative', version: '1.21.4', feature: ['build'] },
   },
   {
     id: 's3',
@@ -72,7 +85,7 @@ const ITEMS: ListRow[] = [
     ],
     meta: 'v1.21.1 · 10/20 人',
     img: 'https://placehold.co/64x64/f84/white?text=G',
-    tags: { mode: 'minigame', version: '1.21.1' },
+    tags: { mode: 'minigame', version: '1.21.1', feature: ['pvp'] },
   },
   {
     id: 's4',
@@ -81,7 +94,7 @@ const ITEMS: ListRow[] = [
     badgeAccent: true,
     meta: 'v1.21.5 · 8/20 人',
     img: 'https://placehold.co/64x64/8af/white?text=空',
-    tags: { mode: 'survival', version: '1.21.5' },
+    tags: { mode: 'survival', version: '1.21.5', feature: ['pve'] },
   },
   {
     id: 's5',
@@ -92,7 +105,7 @@ const ITEMS: ListRow[] = [
       { label: '限时' },
     ],
     meta: 'v1.21.4 · 6/12 人',
-    tags: { mode: 'minigame', version: '1.21.4' },
+    tags: { mode: 'minigame', version: '1.21.4', feature: ['pvp', 'timed'] },
   },
 ]
 

@@ -56,6 +56,8 @@ export class ConfigurationService extends Service {
       name: plugin.name,
       title: schema.title ?? plugin.name,
       description: schema.description,
+      // 有自带设置页的插件也照常返回：agent 需要读全部配置，界面只是换成页面入口
+      settingsView: schema.settingsView,
       properties: Object.entries(schema.properties).map(([key, property]) => {
         const resolved = storage.resolveFor(id, key)
         return {

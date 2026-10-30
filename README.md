@@ -46,7 +46,6 @@ pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
 └─ 设置                    mics.settings（分组）
    ├─ 通用                  mics.settings
    ├─ 插件管理               mics.plugin-inspector
-   ├─ 插件配置               mics.settings
    ├─ 启动设置               mics.launch
    ├─ 下载设置               mics.download
    └─ 日志设置               mics.logger
@@ -85,7 +84,7 @@ mics/
 │  ├─ plugin-inspector/     # 插件管理页（安装 / 启用 / 禁用 / 重载 / 卸载）
 │  └─ logger/               # 按启动分文件的日志服务 + 日志设置
 ├─ examples/
-│  └─ hello-tool/           # 验收用示例插件：页面 + 主进程 RPC + 文件读写 + 卸载脚本
+│  └─ hello-tool/           # 验收用示例插件：页面 + 主进程 RPC + 文件读写 + 设置项 + 卸载脚本
 ├─ scripts/build-plugins.mjs
 ├─ boot.config.json         # {"kernel": "mics.kernel", "pluginRoots": ["plugins"]}
 └─ docs/
@@ -205,7 +204,8 @@ import type { FilterGroup, FilterSelection, ListRow } from '@mics/ui'
 
 - `FilterButton`：漏斗按钮 + 「非默认筛选」小圆点，`v-model:open` 控制面板开关；
 - `FilterPanel`：按 `FilterGroup[]` 渲染分组胶囊，`v-model` 的形状是 `Record<string, string[]>`；
-  `mode: 'single'` 单选，`multi` 多选，`exclusive` 选项（如「全部」）与其它选项互斥；
+  `mode: 'single'` 只取一个值，`multi` 选中多项时要求**同时满足**；组名左侧用实心圆 / 空心正方形
+  标出这两种模式，`exclusive` 选项（如「全部」）用于清空这一组；
 - `DataList`：纯行渲染（主文本 + 徽标 + 次要文本），`role="button"` 整行进入、
   `role="radio"` 单选并显示勾、`role="static"` 仅展示（操作放 `#actions`）；`#row` 插槽可整行自定义；
 - `DataBrowser`：搜索框 + 筛选按钮/面板 + 计数标题 + 列表，内部持有查询与筛选状态。
@@ -213,7 +213,8 @@ import type { FilterGroup, FilterSelection, ListRow } from '@mics/ui'
   排序用 `sort(a, b, selection)`，需要跨页面保留状态时再传 `v-model:query` / `v-model:filter`；
 - `ToggleSwitch`：布尔开关，`v-model` 绑定状态。
 
-`ListRow` 的 `tags` 是筛选值（key 与 `FilterGroup.key` 对应），`keywords` 参与默认搜索；
+`ListRow` 的 `tags` 是筛选值（key 与 `FilterGroup.key` 对应）；一行有多值时传数组，
+多选组命中要求每个选中值都在数组里。`keywords` 参与默认搜索；
 「排序方式」这类组在 `FilterGroup` 上标记 `affects: 'order'`，值交给 `sort` 读取而不参与行过滤；
 `defaultSelection()` / `filterRows()` / `isFilterActive()` 也单独导出，供自定义布局复用。
 
@@ -240,10 +241,11 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
   之后不会被页面/命令/启动事件自动重新激活，其导航、命令与样式也会从界面上移除。
 - 第三方插件的安装、启停、重载与卸载都不需要重启应用，详见
   [docs/plugin-manager.md](docs/plugin-manager.md)；验收载体是 `examples/hello-tool`。
-- 插件管理页选中插件后可看「我依赖 / 依赖我 / 我提供 / 我注册」与未满足项；
+- 插件管理页点开插件进入详情页：描述、「依赖 / 被依赖 / 提供 / 贡献」、未满足项与设置；
   同一份诊断经只读 RPC `plugins/diagnostics` 暴露，agent 不需要自己推断依赖关系。
-- 插件可以用清单里的 `contributes.configuration` 声明设置；**设置 → 插件配置**会按
-  schema 自动渲染，`ctx.storage` 自动补默认值并校验，agent 通过 `configuration/*` 读写。
+- 插件可以用清单里的 `contributes.configuration` 声明设置；点开插件后在该详情页里
+  直接编辑，`ctx.storage` 自动补默认值并校验，agent 通过 `configuration/*` 读写。
+  设置项较多、需要自定义界面的插件写 `settingsView` 指向自己的页面，详情里就只给入口。
 - `boot.config.json` 的 `profile` 指向 `<userData>/profiles/<name>.json`，可强制启用/禁用
   一批插件并给设置项提供默认值；用户自己的开关保存在 `disabled-plugins.json`。
 - 开发模式会做清理审计：插件重载后 `ipcMain` / `window` 监听器 / 定时器 / 视图数量

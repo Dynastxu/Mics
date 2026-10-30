@@ -6,18 +6,5 @@
   "author": "mics",
   "main": "dist/main.mjs",
   "activation": ["onStartup"],
-  "dependencies": ["mics.kernel", "mics.shell"],
-  "contributes": {
-    "configuration": {
-      "title": "下载",
-      "properties": {
-        "cacheDir": {
-          "type": "string",
-          "title": "缓存目录",
-          "description": "留空使用默认缓存目录",
-          "default": ""
-        }
-      }
-    }
-  }
+  "dependencies": ["mics.kernel", "mics.shell"]
 }

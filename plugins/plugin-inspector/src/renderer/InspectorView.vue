@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
 import { pluginIdOf } from '@mics/sdk'
 import type {
+  PluginConfigurationInfo,
   PluginContributionRef,
   PluginDependencyDetail,
   PluginDependencyRef,
@@ -18,9 +19,11 @@ import type {
 } from '@mics/sdk'
 import { DataBrowser, ToggleSwitch } from '@mics/ui'
 import type { FilterGroup, ListRow } from '@mics/ui'
+import PluginSettingsPanel from './PluginSettingsPanel.vue'
 
 const ctx = usePluginContext()
 const selfId = pluginIdOf(ctx)
+const root = ref<HTMLElement>()
 const installing = ref(false)
 const error = ref('')
 const busy = ref<Record<string, boolean>>({})
@@ -28,6 +31,8 @@ const failure = ref<Extract<PluginUninstallOutcome, { status: 'failed' }> | unde
 const graph = ref<PluginGraphReport>()
 const graphError = ref('')
 const selectedId = ref<PluginId>('')
+/** 各插件声明了 schema 的配置项；插件详情里直接编辑 */
+const configs = ref<PluginConfigurationInfo[]>([])
 /** 防止快速的状态变化让旧诊断响应覆盖新响应 */
 let graphSeq = 0
 
@@ -44,6 +49,9 @@ const nodeMap = computed<Map<PluginId, PluginGraphNode>>(
 )
 const selectedNode = computed(() => nodeMap.value.get(selectedId.value))
 const selectedInfo = computed(() => pluginOf(selectedId.value))
+const selectedConfig = computed(() =>
+  configs.value.find((config) => config.pluginId === selectedId.value),
+)
 const scanIssues = computed(() => graph.value?.scanIssues ?? [])
 const unmetOfSelected = computed(() =>
   (graph.value?.unmet ?? []).filter((item) => item.neededBy.includes(selectedId.value)),
@@ -53,7 +61,7 @@ const FILTERS: FilterGroup[] = [
   {
     key: 'state',
     label: '状态',
-    mode: 'multi',
+    mode: 'single',
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
@@ -61,6 +69,18 @@ const FILTERS: FilterGroup[] = [
       { value: 'waiting', label: '等待依赖' },
       { value: 'disabled', label: '已禁用' },
       { value: 'failed', label: '失败' },
+    ],
+  },
+  {
+    key: 'form',
+    label: '形态',
+    mode: 'multi',
+    exclusive: 'all',
+    options: [
+      { value: 'all', label: '全部' },
+      { value: 'page', label: '页面' },
+      { value: 'main', label: '后台' },
+      { value: 'manifest', label: '清单' },
     ],
   },
 ]
@@ -91,8 +111,6 @@ const rows = computed<ListRow[]>(() =>
     const detail = [
       plugin.id,
       `v${plugin.version}`,
-      capability(plugin),
-      statusLabel(plugin),
       plugin.waitingFor?.length ? `等待：${plugin.waitingFor.join('、')}` : '',
       plugin.dependencyIssues?.length ? `依赖：${plugin.dependencyIssues.join('；')}` : '',
       plugin.failure ? failureText(plugin) : '',
@@ -102,6 +120,7 @@ const rows = computed<ListRow[]>(() =>
       label: plugin.name,
       badges: [
         { label: plugin.source === 'builtin' ? '内置' : '第三方' },
+        ...formBadges(plugin),
         ...(plugin.core ? [{ label: 'core' }] : []),
         ...(plugin.essential ? [{ label: '必需' }] : []),
         ...(plugin.profileLocked
@@ -115,22 +134,24 @@ const rows = computed<ListRow[]>(() =>
       ],
       meta: detail.join(' · '),
       keywords: [plugin.description ?? '', plugin.author ?? ''],
-      tags: { state: plugin.status },
+      tags: { state: plugin.status, form: formTags(plugin) },
     }
   }),
 )
 
-function capability(plugin: PluginInfo): string {
-  if (plugin.hasMain && plugin.hasRenderer) return '页面 + 后台'
-  if (plugin.hasMain) return '仅后台'
-  if (plugin.hasRenderer) return '仅页面'
-  return '仅清单'
+/** 徽章：页面 / 后台 各自独立，既没有入口也没有主进程时只标「清单」 */
+function formBadges(plugin: PluginInfo): NonNullable<ListRow['badges']> {
+  const badges: NonNullable<ListRow['badges']> = []
+  if (plugin.hasRenderer) badges.push({ label: '页面' })
+  if (plugin.hasMain) badges.push({ label: '后台' })
+  if (!badges.length) badges.push({ label: '清单' })
+  return badges
 }
 
-function statusLabel(plugin: PluginInfo): string {
-  if (plugin.status === 'failed') return '失败'
-  if (plugin.status === 'waiting') return '等待依赖'
-  return plugin.status === 'disabled' ? '已禁用' : '已启用'
+/** 带形态的插件一行可以有多个标签（页面 + 后台），筛选按「同时满足」合并 */
+function formTags(plugin: PluginInfo): string[] {
+  const tags = [plugin.hasRenderer ? 'page' : '', plugin.hasMain ? 'main' : ''].filter(Boolean)
+  return tags.length ? tags : ['manifest']
 }
 
 function statusLabelOf(status?: PluginStatus): string {
@@ -214,6 +235,17 @@ function contributionText(item: PluginContributionRef): string {
 function selectPlugin(id: string): void {
   if (!pluginOf(id)) return
   selectedId.value = id
+  scrollToTop()
+}
+
+/** 切换列表与详情后回到页面顶部，否则点开时看到的是半截详情 */
+function scrollToTop(): void {
+  void nextTick(() => root.value?.scrollIntoView({ block: 'start' }))
+}
+
+function clearSelection(): void {
+  selectedId.value = ''
+  scrollToTop()
 }
 
 /** 依赖失败时把用户送到第一个未满足的依赖上 */
@@ -248,6 +280,25 @@ async function loadGraph(): Promise<void> {
   } catch (cause) {
     if (seq === graphSeq) graphError.value = cause instanceof Error ? cause.message : String(cause)
   }
+}
+
+async function loadConfigs(): Promise<void> {
+  try {
+    configs.value = await ctx.ipc.invoke<PluginConfigurationInfo[]>('mics.kernel', 'configuration/list')
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+
+function replaceConfig(next: PluginConfigurationInfo): void {
+  const index = configs.value.findIndex((config) => config.pluginId === next.pluginId)
+  if (index >= 0) configs.value[index] = next
+  else configs.value.push(next)
+}
+
+/** 插件自带设置页时，详情里只给入口，不在本地重复渲染同一批设置 */
+function openSettings(view: string): void {
+  if (!ctx.ui.navigate(view)) error.value = `设置页 ${view} 当前不可用`
 }
 
 async function refresh(): Promise<void> {
@@ -309,9 +360,13 @@ let stopGraphWatch: (() => void) | undefined
 
 onMounted(() => {
   void loadGraph()
-  // 内核状态变化时重取诊断；页面不自己推断依赖关系
+  void loadConfigs()
+  // 内核状态变化时重取诊断与配置；页面不自己推断依赖关系
   stopGraphWatch = ctx.plugins.onDidChange(() => {
+    // 当前详情所属插件被卸载/移除后回到列表，避免停在一个空详情页
+    if (selectedId.value && !pluginOf(selectedId.value)) selectedId.value = ''
     void loadGraph()
+    void loadConfigs()
   })
 })
 
@@ -321,21 +376,30 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="mics-page">
+  <div ref="root" class="mics-page">
     <header class="mics-page__header">
       <h1 class="mics-page__title">插件管理</h1>
       <div class="mics-page__actions">
-        <span class="mics-badge">已启用 {{ enabledCount }} / {{ plugins.length }}</span>
-        <button class="mics-button mics-button--primary" :disabled="installing" @click="install">
-          {{ installing ? '安装中…' : '安装插件' }}
+        <button
+          v-if="selectedId"
+          class="mics-button mics-button--ghost mics-button--small"
+          @click="clearSelection"
+        >
+          返回列表
         </button>
+        <template v-else>
+          <span class="mics-badge">已启用 {{ enabledCount }} / {{ plugins.length }}</span>
+          <button class="mics-button mics-button--primary" :disabled="installing" @click="install">
+            {{ installing ? '安装中…' : '安装插件' }}
+          </button>
+        </template>
       </div>
     </header>
 
     <p v-if="error" class="inspector__error">{{ error }}</p>
     <p v-if="graphError" class="inspector__error">诊断读取失败：{{ graphError }}</p>
 
-    <div v-if="scanIssues.length" class="inspector__issue">
+    <div v-if="!selectedId && scanIssues.length" class="inspector__issue">
       <strong>{{ scanIssues.length }} 个插件目录无法加载</strong>
       <ul>
         <li v-for="issue in scanIssues" :key="issue.dir">
@@ -345,7 +409,7 @@ onBeforeUnmount(() => {
       </ul>
     </div>
 
-    <div v-if="failure" class="inspector__error inspector__failure">
+    <div v-if="!selectedId && failure" class="inspector__error inspector__failure">
       <span>{{ failure.message }}</span>
       <span class="inspector__failure-actions">
         <button class="mics-button mics-button--ghost mics-button--small" @click="uninstall(failure.id)">
@@ -368,6 +432,7 @@ onBeforeUnmount(() => {
     </div>
 
     <DataBrowser
+      v-if="!selectedId"
       :items="rows"
       :groups="FILTERS"
       :mono="false"
@@ -379,13 +444,6 @@ onBeforeUnmount(() => {
     >
       <template #actions="{ item }">
         <div class="inspector__actions" @click.stop>
-          <ToggleSwitch
-            :model-value="isEnabled(item.id)"
-            :disabled="!pluginOf(item.id)?.canDisable || busyOf(item.id)"
-            :label="`${item.label}：${isEnabled(item.id) ? '已启用' : '已禁用'}`"
-            :title="switchTitle(item.id)"
-            @update:model-value="toggle(item.id, $event)"
-          />
           <button
             class="mics-button mics-button--ghost mics-button--small"
             :disabled="busyOf(item.id) || !isEnabled(item.id)"
@@ -403,25 +461,54 @@ onBeforeUnmount(() => {
           >
             卸载
           </button>
+          <ToggleSwitch
+            :model-value="isEnabled(item.id)"
+            :disabled="!pluginOf(item.id)?.canDisable || busyOf(item.id)"
+            :label="`${item.label}：${isEnabled(item.id) ? '已启用' : '已禁用'}`"
+            :title="switchTitle(item.id)"
+            @update:model-value="toggle(item.id, $event)"
+          />
         </div>
       </template>
     </DataBrowser>
 
-    <section v-if="selectedNode" class="inspector__detail">
+    <section v-else class="inspector__detail">
       <header class="inspector__detail-head">
         <div>
-          <h2 class="inspector__detail-title">{{ selectedNode.name }}</h2>
+          <h2 class="inspector__detail-title">{{ selectedInfo?.name }}</h2>
           <p class="inspector__detail-meta mics-mono">
-            {{ selectedNode.id }} · v{{ selectedNode.version }} ·
-            {{ statusLabelOf(selectedNode.status) }}
+            {{ selectedInfo?.id }} · v{{ selectedInfo?.version }}
+          </p>
+          <p v-if="selectedInfo?.description" class="inspector__detail-desc">
+            {{ selectedInfo.description }}
           </p>
         </div>
-        <button
-          class="mics-button mics-button--ghost mics-button--small"
-          @click="selectedId = ''"
-        >
-          关闭
-        </button>
+        <div class="inspector__actions">
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            :disabled="busyOf(selectedId) || !isEnabled(selectedId)"
+            title="重载插件"
+            @click="reload(selectedId)"
+          >
+            重载
+          </button>
+          <button
+            v-if="selectedInfo?.uninstallable"
+            class="mics-button mics-button--danger mics-button--small"
+            :disabled="busyOf(selectedId)"
+            title="卸载插件"
+            @click="uninstall(selectedId)"
+          >
+            卸载
+          </button>
+          <ToggleSwitch
+            :model-value="isEnabled(selectedId)"
+            :disabled="!selectedInfo?.canDisable || busyOf(selectedId)"
+            :label="`${selectedInfo?.name ?? selectedId}：${isEnabled(selectedId) ? '已启用' : '已禁用'}`"
+            :title="switchTitle(selectedId)"
+            @update:model-value="toggle(selectedId, $event)"
+          />
+        </div>
       </header>
 
       <div v-if="selectedInfo?.failure" class="inspector__failure-detail">
@@ -473,13 +560,33 @@ onBeforeUnmount(() => {
         上次停止超时，旧代码可能仍在运行；需要重启应用后才能继续操作。
       </div>
 
-      <div v-if="selectedNode.warnings.length" class="inspector__notice">
-        {{ selectedNode.warnings.join('；') }}
+      <div v-if="selectedNode?.warnings.length" class="inspector__notice">
+        {{ selectedNode?.warnings.join('；') }}
       </div>
 
-      <div class="inspector__columns">
+      <section v-if="selectedConfig" class="inspector__settings">
+        <h3>设置</h3>
+        <p v-if="selectedConfig.description" class="inspector__muted">
+          {{ selectedConfig.description }}
+        </p>
+        <div v-if="selectedConfig.settingsView" class="inspector__settings-entry">
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            @click="openSettings(selectedConfig.settingsView)"
+          >
+            打开设置页
+          </button>
+        </div>
+        <PluginSettingsPanel
+          v-else
+          :config="selectedConfig"
+          @updated="replaceConfig"
+        />
+      </section>
+
+      <div v-if="selectedNode" class="inspector__columns">
         <section class="inspector__column">
-          <h3>我依赖</h3>
+          <h3>依赖</h3>
           <ul v-if="selectedNode.dependsOn.length">
             <li v-for="dependency in selectedNode.dependsOn" :key="dependency.id">
               <button
@@ -497,7 +604,7 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="inspector__column">
-          <h3>依赖我</h3>
+          <h3>被依赖</h3>
           <ul v-if="selectedNode.dependents.length">
             <li v-for="dependent in selectedNode.dependents" :key="dependent.id">
               <button
@@ -515,7 +622,7 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="inspector__column">
-          <h3>我提供</h3>
+          <h3>提供</h3>
           <ul v-if="selectedNode.provides.length">
             <li
               v-for="item in selectedNode.provides"
@@ -528,7 +635,7 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="inspector__column">
-          <h3>我注册</h3>
+          <h3>贡献</h3>
           <ul v-if="selectedNode.contributes.length">
             <li v-for="item in selectedNode.contributes" :key="`${item.kind}:${item.id}`">
               {{ contributionText(item) }}
@@ -538,7 +645,7 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <div v-if="unmetOfSelected.length" class="inspector__unmet">
+      <div v-if="selectedNode && unmetOfSelected.length" class="inspector__unmet">
         <h3>未满足</h3>
         <ul>
           <li v-for="item in unmetOfSelected" :key="`${item.kind}:${item.name}`">
@@ -577,6 +684,7 @@ onBeforeUnmount(() => {
 
 .inspector__actions {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
 }
@@ -627,6 +735,13 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.inspector__detail-desc {
+  margin: 6px 0 0;
+  color: var(--mics-fg-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .inspector__failure-detail {
   display: flex;
   flex-wrap: wrap;
@@ -662,11 +777,28 @@ onBeforeUnmount(() => {
 }
 
 .inspector__column h3,
+.inspector__settings h3,
 .inspector__unmet h3 {
   margin: 0 0 6px;
   color: var(--mics-fg-muted);
   font-size: 12px;
   font-weight: 600;
+}
+
+.inspector__settings {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--mics-border);
+}
+
+.inspector__settings .inspector__muted {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.inspector__settings-entry {
+  display: flex;
+  gap: 8px;
 }
 
 .inspector__column ul,

@@ -14,6 +14,11 @@
 「未安装」是内部状态，不是列表里的一行。插件管理页只列**已安装**的插件，
 卸载后直接从列表消失；将来做插件市场时，才在市场页展示「未安装」。
 
+列表每行是「名称 + 徽章 + `id · 版本`」：徽章标注来源（内置 / 第三方）与形态
+（页面 / 后台 / 清单），启用状态不再写成文字，只由行尾的开关表示。筛选面板里
+**状态**是单选（一个插件只有一个状态），**形态**是多选且按「同时满足」合并：
+只勾「页面」会列出所有带页面的插件，勾上「页面」和「后台」则只剩两者都有的插件。
+
 已安装但加载失败的插件单独显示为**失败**（红色徽标 + 错误信息），可以重载或修复后重试。
 还有一种运行期状态**等待依赖**：插件已启用，但它 `inject` 的服务没人提供，fiber 停在
 pending（代码没有执行）。它不是安装状态，界面只在插件管理里标出来，缺哪些服务写在
@@ -182,7 +187,7 @@ export default async function uninstall(context: UninstallScriptContext): Promis
 | `mics-plugin://` id → 目录映射 | bootstrap | `apps/desktop/src/main/protocol.ts` |
 | 清单扫描 / 校验（含配置 schema） | `@mics/plugin-loader` | `packages/plugin-loader/src/discovery.ts` |
 | 配置 schema / 默认值 / 校验 | `StorageService` + `ConfigurationService` | `plugins/kernel/src/services/{storage,configuration}.ts` |
-| 配置自动渲染 | `mics.settings` 的「插件配置」页 | `plugins/settings/src/renderer/PluginConfigurationView.vue` |
+| 配置编辑界面 | 插件管理页的插件详情（`PluginSettingsPanel`）；声明 `settingsView` 的插件跳到自己的页面 | `plugins/plugin-inspector/src/renderer/{InspectorView,PluginSettingsPanel}.vue` |
 | profile 读取与启用集合合并 | bootstrap + `PluginsService` | `apps/desktop/src/main/config.ts`、`plugins/kernel/src/services/plugins.ts` |
 | dev 清理审计 | 内核 / 渲染端 cleanupAudit | `plugins/kernel/src/cleanupAudit.ts`、`apps/desktop/src/renderer/runtime/cleanupAudit.ts` |
 
@@ -208,14 +213,14 @@ entry、一个 fiber，禁用即 dispose，重载即 remove + create。没有引
 
 ## 7. 诊断：依赖图与贡献点
 
-插件管理页选中任一插件后，下方显示四栏：
+插件管理页点开任一插件后进入它的详情页，显示四栏：
 
 | 栏 | 内容 | 数据来源 |
 | --- | --- | --- |
-| 我依赖 | 清单依赖、非内核服务提供方、能力提供方 | `manifest.dependencies` + `fiber.inject` + `capabilities` |
-| 依赖我 | 上面那张图的反向边 | 由「我依赖」聚合 |
-| 我提供 | 该插件注册的 cordis 服务与能力（含 provider 标签/优先级） | `fiber.provisions` + `capabilities.providers` |
-| 我注册 | RPC、命令、页面、导航分组、状态栏、主题、布局、配置 schema | `IpcService` / `CommandsService` / 清单贡献点 |
+| 依赖 | 清单依赖、非内核服务提供方、能力提供方 | `manifest.dependencies` + `fiber.inject` + `capabilities` |
+| 被依赖 | 上面那张图的反向边 | 由「依赖」聚合 |
+| 提供 | 该插件注册的 cordis 服务与能力（含 provider 标签/优先级） | `fiber.provisions` + `capabilities.providers` |
+| 贡献 | RPC、命令、页面、导航分组、状态栏、主题、布局、配置 schema | `IpcService` / `CommandsService` / 清单贡献点 |
 
 底部「未满足」列出这个插件当前拿不到的服务、能力或插件。失败行按 `stage` 显示
 不同按钮：`dependency` → 「查看依赖」，`manifest` → 「重新安装」，
@@ -264,14 +269,29 @@ const report = await ctx.ipc.invoke('mics.kernel', 'plugins/diagnostics')
 
 1. **默认值与校验**：`ctx.storage.get/set` 按 schema 取值。没有用户值时返回
    `profile` 默认或 schema 默认；`set` 写入非法值会直接抛错，不会污染 JSON。
-2. **设置页自动渲染**：**设置 → 插件配置** 会列出所有声明了 schema 的插件，
-   按类型渲染输入框 / 数字框 / 开关 / 下拉，并支持「恢复默认」。
+2. **插件详情里直接编辑**：点开插件后，详情页按类型渲染输入框 / 数字框 /
+   开关 / 下拉，并支持「恢复默认」。
 3. **agent 结构化读写**：内核 RPC `configuration/list`、`configuration/set`、
    `configuration/reset`；返回值是 `PluginConfigurationInfo`，包含每个键的
    `value` 与 `source`（`user` / `profile` / `default` / `unset`）。
 
-设置页仍然可以保留自定义页面（日志目录、下载源编辑器等）；只要它们继续用
-`ctx.storage`，就共享同一套默认值与校验。
+需要自定义界面时（日志目录、下载源编辑器等），插件仍然贡献自己的设置页，并在
+`contributes.configuration` 里把 `settingsView` 指向该视图 id：插件详情里就只留
+「打开设置页」入口，同一项设置只有一个编辑位置。这类页面继续用 `ctx.storage`，
+因此共享同一套默认值与校验。
+
+```json
+{
+  "configuration": {
+    "title": "启动",
+    "settingsView": "settings.launch",
+    "properties": { "maxMemory": { "type": "integer", "default": 4096 } }
+  }
+}
+```
+
+`settingsView` 只是界面约定，不影响 `configuration/list` 的返回：agent 仍然能看到
+所有插件的全部配置项。
 
 ### 8.2 profile：启用集合适配
 
@@ -320,6 +340,7 @@ pnpm dev
 3. 点「安装插件」选 `examples/hello-tool` → 确认框显示 id、版本、作者、能力与风险 → 列表出现，
    状态「已禁用」。
 4. 打开开关 → 左侧出现「示例插件」页；页面显示页面/后台版本号，能写入并读回 note.txt。
+   选中该插件 → 详情里的「设置」直接渲染「笔记文件名」；改成 `memo.txt` 后写入的文件随之改名。
 5. 关闭开关 → 页面与导航消失，后台停止；`<userData>/hello-tool/note.txt` 仍在。
 6. 点「卸载」并确认 → 执行卸载脚本，`<userData>/hello-tool/` 被删，插件目录与存储被删，列表消失。
 7. 把 `uninstall.ts` 改成抛错后重装并卸载 → 中止卸载、插件保持禁用、界面出现「重试 / 强制卸载」。
@@ -333,12 +354,15 @@ pnpm dev
     修好后重载恢复。
 11. 重启应用 → 已安装插件与启用/禁用状态保留。
 12. 连续重载 10 次 → 导航、命令、IPC、样式数量不增长。
-13. 选中一个插件 → 下方四栏显示「我依赖 / 依赖我 / 我提供 / 我注册」；选中 `mics.logger`
-    能看到它提供 `logs` 服务，依赖它的插件出现在「依赖我」。
+13. 点开一个插件 → 列表换成该插件的详情页，四栏显示「依赖 / 被依赖 / 提供 / 贡献」；
+    右上角「返回列表」回到列表。点开 `mics.logger` 能看到「提供」里有 `logs` 服务，
+    依赖它的插件出现在「被依赖」。
 14. 调用 `plugins/diagnostics` → 返回与界面一致的 `PluginGraphReport`；禁用提供方后
     `unmet` / 依赖方的「未满足」随之出现。
-15. 打开 **设置 → 插件配置**：能看到日志/启动/下载的 schema 项；把日志保留数改成 10 →
-    `plugin-storage/mics.logger.json` 写入 10；输入 999 → 保存被拒绝并显示错误。
+15. 点开 `mics.logger` → 详情里出现「设置」，显示「打开设置页」；点进去改保留数为 10 →
+    `plugin-storage/mics.logger.json` 写入 10，重启后仍生效。点开声明了 schema 又没有
+    `settingsView` 的插件（可用 `examples/hello-tool` 验证）→ 详情里直接出现表单，
+    改值后写入 `plugin-storage/<id>.json`，输入越界值被拒绝并显示错误。
 16. 在 `boot.config.json` 写 `"profile": "lite"`，创建 `<userData>/profiles/lite.json`
     禁用某个普通插件、设置 `mics.logger.maxFiles = 3` → 重启后该插件开关灰掉、
     日志默认保留 3；在设置页手动改成 5 后用户值优先。

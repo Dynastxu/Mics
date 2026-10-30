@@ -2,7 +2,7 @@
   "id": "demo.hello-tool",
   "name": "示例插件",
   "version": "0.1.0",
-  "description": "验收用示例：一个页面、一个主进程 RPC、一次文件读写、一个卸载脚本。",
+  "description": "验收用示例：一个页面、一个主进程 RPC、一次文件读写、一个说明清单 schema 的设置项、一个卸载脚本。",
   "author": "mics",
   "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",
@@ -17,6 +17,17 @@
         "icon": "plugin",
         "order": 90
       }
-    ]
+    ],
+    "configuration": {
+      "title": "示例设置",
+      "properties": {
+        "noteFileName": {
+          "type": "string",
+          "title": "笔记文件名",
+          "description": "写在 hello-tool 目录里的文件名",
+          "default": "note.txt"
+        }
+      }
+    }
   }
 }

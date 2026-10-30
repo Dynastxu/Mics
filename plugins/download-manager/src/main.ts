@@ -2260,7 +2260,6 @@ export function apply(ctx: Context): void {
 
   ctx.ipc.handle('settings/get', () => ({
     concurrency: String(maxConcurrency()),
-    cacheDir: ctx.storage.get<string>('cacheDir', ''),
     cacheLimit: ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT),
     sources: loadSources(),
     loaderSources: loadLoaderSources(),

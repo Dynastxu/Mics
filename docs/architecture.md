@@ -124,8 +124,9 @@ Service 是「一个名字一个实现」，而有些能力需要**多份实现*
 `ConfigurationService` 持有（从 `PluginsService` 的清单实时读取），因此热重载后立刻生效，
 插件代码仍然只需要 `ctx.storage.get/set`。
 
-- 设置页：`mics.settings` 的「插件配置」页面通过 `configuration/list|set|reset`
-  自动渲染简单类型；复杂设置页继续保留，但共享同一套校验。
+- 设置界面：插件管理页的插件详情通过 `configuration/list|set|reset` 渲染简单类型；
+  设置项多或需要专门界面的插件用 `settingsView` 指向自己的页面，详情里只给入口，
+  双方共享同一套 schema 校验。
 - profile：`boot.config.json` 的 `profile` 指向 `userData/profiles/<name>.json`。
   `enable` / `disable` 是强制开关（`disable` 优先），`settings` 是 schema 原始类型键的
   默认值（用户保存过的值优先）。

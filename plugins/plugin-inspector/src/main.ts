@@ -13,8 +13,8 @@ function messageOf(error: unknown): string {
 }
 
 function describeCapability(plugin: PluginInstallSummary): string {
-  if (plugin.hasMain && plugin.hasRenderer) return '页面 + 主进程'
-  if (plugin.hasMain) return '仅主进程'
+  if (plugin.hasMain && plugin.hasRenderer) return '页面 + 后台'
+  if (plugin.hasMain) return '仅后台'
   if (plugin.hasRenderer) return '仅页面'
   return '仅清单'
 }

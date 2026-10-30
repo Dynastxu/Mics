@@ -21,6 +21,7 @@
     ],
     "configuration": {
       "title": "启动",
+      "settingsView": "settings.launch",
       "properties": {
         "repeatLaunchBehavior": {
           "type": "enum",

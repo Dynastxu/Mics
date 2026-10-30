@@ -78,7 +78,7 @@ onMounted(load)
       <div class="mics-field">
         <div>
           <div class="mics-field__label">最大内存</div>
-          <div class="mics-field__hint">单位 MB，留空由启动器自动分配</div>
+          <div class="mics-field__hint">单位 MB，范围 1024–32768</div>
         </div>
         <div class="mics-field__control">
           <input

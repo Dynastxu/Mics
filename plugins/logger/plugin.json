@@ -22,6 +22,7 @@
     ],
     "configuration": {
       "title": "日志",
+      "settingsView": "settings.logger",
       "properties": {
         "maxFiles": {
           "type": "integer",

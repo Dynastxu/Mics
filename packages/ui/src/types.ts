@@ -7,8 +7,9 @@ export interface FilterOption {
 /**
  * 筛选面板里的一组条件。
  *
- * - `single`：单选（例如排序方式）；
- * - `multi`：多选（例如版本性质），`exclusive` 是「全部」这类与其它选项互斥的值。
+ * - `single`：单选，只取一个值（状态、排序方式这类一行只有一个值的键）；
+ * - `multi`：多选，选中多项时要求**同时满足**（例如形态：勾「页面」「后台」只剩两者都有的行）。
+ *   面板上在组名左侧用实心圆 / 空心正方形标出单选与多选，选项本身只靠选中态表达。
  */
 export interface FilterGroup {
   key: string
@@ -55,8 +56,8 @@ export interface ListRow {
   meta?: string
   /** 额外参与默认搜索的文本 */
   keywords?: string[]
-  /** 筛选分组值，key 与 FilterGroup.key 对应 */
-  tags?: Record<string, string>
+  /** 筛选分组值，key 与 FilterGroup.key 对应；一行有多值时用数组（例如同时有页面与后台） */
+  tags?: Record<string, string | string[]>
   /** 左侧图片/头像 URL */
   img?: string
   /** 图片的 alt 文本 */

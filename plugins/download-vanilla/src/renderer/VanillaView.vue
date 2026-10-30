@@ -55,7 +55,7 @@ const LIST_FILTER_GROUPS: FilterGroup[] = [
   {
     key: 'nature',
     label: '版本性质',
-    mode: 'multi',
+    mode: 'single',
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
@@ -69,7 +69,7 @@ const LOADER_FILTER_GROUPS: FilterGroup[] = [
   {
     key: 'nature',
     label: '版本性质',
-    mode: 'multi',
+    mode: 'single',
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
