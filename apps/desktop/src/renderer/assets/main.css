@@ -184,11 +184,14 @@ svg.mics-icon {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  /* 顶层项（页面与分组）间距统一，分组内部的行间距另由 2px 控制 */
+  gap: 8px;
   padding: 10px 8px 12px;
 }
 
 .mics-nav__item {
+  /* 列表高度不够时让导航滚动，而不是把行高压缩到图标高度 */
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -225,10 +228,11 @@ svg.mics-icon {
 }
 
 .mics-nav__group {
+  /* 分组整体不可压缩：内部行高由子项决定 */
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 6px;
 }
 
 .mics-nav__group-header {
