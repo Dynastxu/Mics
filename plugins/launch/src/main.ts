@@ -6,6 +6,7 @@ import type { AuthCredentialsCapability, ShellExecuteCapability } from '@mics/sd
 import { listInstances, markInstanceLaunched, resolveInstance } from './instances'
 import {
   deleteInstanceDirectory,
+  deleteInstanceMod,
   describeInstance,
   listInstanceLogs,
   listInstanceMods,
@@ -20,6 +21,7 @@ import { LaunchRuntime, isProcessAlive, type PersistedProcess } from './runtime'
 import type {
   InstanceArea,
   InstanceLogRequest,
+  InstanceModDeleteRequest,
   InstanceModToggleRequest,
   InstanceRef,
   InstanceRevealRequest,
@@ -154,6 +156,14 @@ export function apply(ctx: Context): void {
     const enabled = params?.enabled === true
     const result = setInstanceModEnabled(dataDir, id, fileName, enabled)
     log.info('实例 %s 的 Mod %s 已%s', id, fileName, enabled ? '启用' : '禁用')
+    return result
+  })
+
+  ctx.ipc.handle<InstanceModDeleteRequest>('instances/mods/delete', (params) => {
+    const id = instanceIdOf(params)
+    const fileName = typeof params?.fileName === 'string' ? params.fileName : ''
+    const result = deleteInstanceMod(dataDir, id, fileName)
+    log.info('实例 %s 的 Mod %s 已删除', id, fileName)
     return result
   })
 

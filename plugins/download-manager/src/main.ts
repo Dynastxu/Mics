@@ -22,12 +22,16 @@ import {
   DEFAULT_DOWNLOAD_CONCURRENCY,
   DEFAULT_DOWNLOAD_SOURCES,
   DEFAULT_LOADER_SOURCES,
+  DEFAULT_MOD_SOURCES,
   FILE_TRANSFER,
   INSTANCE_STATE_FILE,
   LOADER_LABELS,
+  MOD_SOURCE_LABELS,
   SHELL_EXECUTE,
+  isModLoader,
   normalizeDownloadSources,
   normalizeLoaderSources,
+  normalizeModSources,
   validateInstanceName,
 } from '@mics/sdk'
 import type {
@@ -45,14 +49,33 @@ import type {
   InstanceInstallStatus,
   InstanceNameCheck,
   InstallRequest,
+  InstallStartResult,
   LoaderSource,
   LoaderSourceKind,
   LoaderVersion,
+  ModCategory,
+  ModIdentifyFile,
+  ModIdentifyRequest,
+  ModIdentity,
+  ModInstallRequest,
+  ModSearchRequest,
+  ModSearchResult,
+  ModSource,
+  ModSourceInfo,
+  ModVersion,
+  ModVersionRequest,
   ShellExecuteCapability,
   ShellProcess,
   TransferOutcome,
   TransferProgress,
 } from '@mics/sdk'
+import {
+  identifyMods,
+  listCategories,
+  listModVersions,
+  modSourceReady,
+  searchMods,
+} from './mods'
 import { createFileTransfer, type FileTransferOptions } from './transfer'
 import { listLoaderVersions, prepareLoaderInstall, safeLoaderKind } from './loaders'
 import { tailLastLine } from './loaders/fs'
@@ -147,6 +170,8 @@ interface TaskSpec {
   savePath: string
   sha1: string
   size: number
+  /** Mod 等外链文件：不经过原版下载源改写 */
+  direct?: boolean
 }
 
 interface MojangManifestSummary {
@@ -304,6 +329,15 @@ export function apply(ctx: Context): void {
   /** 加载器版本列表缓存：官方源响应慢时避免每次切加载器都重新请求 */
   const loaderVersionCache = new Map<string, { at: number; versions: LoaderVersion[] }>()
   const LOADER_VERSION_TTL = 5 * 60 * 1000
+  /** Mod 搜索/版本列表的短时缓存：筛选切换与返回详情时避免重复打接口 */
+  const modSearchCache = new Map<string, { at: number; value: ModSearchResult }>()
+  const modVersionCache = new Map<string, { at: number; value: ModVersion[] }>()
+  const modIdentityCache = new Map<string, { at: number; value: ModIdentity[] }>()
+  const MOD_SEARCH_TTL = 90 * 1000
+  const MOD_VERSION_TTL = 5 * 60 * 1000
+  const MOD_IDENTITY_TTL = 6 * 60 * 60 * 1000
+  const MOD_CACHE_LIMIT = 64
+  const MOD_METADATA_TIMEOUT = 40 * 1000
 
   const dataDir = app.getPath('userData')
   const cacheRoot = path.join(dataDir, 'cache', 'downloads')
@@ -493,6 +527,31 @@ export function apply(ctx: Context): void {
     return normalizeLoaderSources(DEFAULT_LOADER_SOURCES)
   }
 
+  function loadModSources(): ModSource[] {
+    try {
+      const raw = ctx.storage.get<string>('modSources', '')
+      if (raw) return normalizeModSources(JSON.parse(raw))
+    } catch { /* fall through */ }
+    return normalizeModSources(DEFAULT_MOD_SOURCES)
+  }
+
+  /** 页面只需要来源标识，不把 API Key 送进渲染进程 */
+  function modSourceInfos(): ModSourceInfo[] {
+    return loadModSources().map((source) => {
+      const ready = modSourceReady(source)
+      const info: ModSourceInfo = {
+        kind: source.kind,
+        label: source.label.trim() || MOD_SOURCE_LABELS[source.kind],
+        enabled: source.enabled,
+        ready,
+      }
+      if (!ready && source.enabled && source.kind === 'curseforge') {
+        info.hint = '缺少 API Key（下载设置 → Mod 下载源）'
+      }
+      return info
+    })
+  }
+
   /** 参与下载的原版源下标（保持优先级顺序） */
   function enabledSourceIndexes(sources: DownloadSource[]): number[] {
     const indexes: number[] = []
@@ -619,6 +678,32 @@ export function apply(ctx: Context): void {
     } catch {
       return 0
     }
+  }
+
+  function readModCache<T>(
+    cache: Map<string, { at: number; value: T }>,
+    key: string,
+    ttl: number,
+  ): T | undefined {
+    const cached = cache.get(key)
+    if (!cached) return undefined
+    if (Date.now() - cached.at > ttl) {
+      cache.delete(key)
+      return undefined
+    }
+    return cached.value
+  }
+
+  function writeModCache<T>(
+    cache: Map<string, { at: number; value: T }>,
+    key: string,
+    value: T,
+  ): void {
+    if (cache.size >= MOD_CACHE_LIMIT) {
+      const oldest = cache.keys().next().value
+      if (oldest !== undefined) cache.delete(oldest)
+    }
+    cache.set(key, { at: Date.now(), value })
   }
 
   function flushRecords(): void {
@@ -802,9 +887,15 @@ export function apply(ctx: Context): void {
     job.taskIds = []
   }
 
+  /** 旧记录没有 kind，按游戏安装处理；Mod 安装不参与实例状态机 */
+  function isGameJob(job: InstallJob): boolean {
+    return job.kind !== 'mod'
+  }
+
   /** 新安装接手实例名后，旧终态记录既不能重试也不能删除，明细可以立刻归档 */
   function archiveSupersededJobs(instanceName: string, currentJobId: string): void {
     for (const job of jobs.values()) {
+      if (!isGameJob(job)) continue
       if (job.id === currentJobId || job.instanceName !== instanceName) continue
       if (job.state === 'done' || job.state === 'cancelled' || job.state === 'failed') {
         archiveJob(job)
@@ -816,6 +907,9 @@ export function apply(ctx: Context): void {
     const stats = statsOf(job)
     return {
       id: job.id,
+      kind: job.kind,
+      title: job.title,
+      detail: job.detail,
       instanceName: job.instanceName,
       gameVersion: job.gameVersion,
       loader: job.loader,
@@ -837,13 +931,15 @@ export function apply(ctx: Context): void {
   function latestJobFor(instanceName: string): InstallJob | undefined {
     let latest: InstallJob | undefined
     for (const job of jobs.values()) {
-      if (job.instanceName !== instanceName) continue
+      if (!isGameJob(job) || job.instanceName !== instanceName) continue
       if (!latest || jobSequence(job) >= jobSequence(latest)) latest = job
     }
     return latest
   }
 
   function isCurrentJob(job: InstallJob): boolean {
+    // Mod 安装不接管实例目录，也不存在「被更新安装取代」的问题
+    if (!isGameJob(job)) return true
     const latest = latestJobFor(job.instanceName)
     return !latest || latest.id === job.id
   }
@@ -856,6 +952,27 @@ export function apply(ctx: Context): void {
    */
   async function completeJob(job: InstallJob): Promise<void> {
     if (job.state === 'done' || completingJobs.has(job.id) || cancelledJobs.has(job.id)) return
+
+    // Mod 安装没有实例就绪标记：文件写进各实例的 mods/ 目录即可收尾
+    if (!isGameJob(job)) {
+      completingJobs.add(job.id)
+      try {
+        job.state = 'done'
+        delete job.error
+        const fileCount = job.taskIds.length
+        archiveJob(job)
+        persistRecords(true)
+        log.info(
+          'Mod 安装「%s」已完成：%d 个文件，job %s',
+          job.title || job.instanceName,
+          fileCount,
+          job.id,
+        )
+      } finally {
+        completingJobs.delete(job.id)
+      }
+      return
+    }
 
     // 旧记录即使下完了也不能再写实例标记：同名的实例可能已经被新记录接管
     if (!isCurrentJob(job)) {
@@ -966,6 +1083,7 @@ export function apply(ctx: Context): void {
   async function reconcileInstalls(): Promise<void> {
     const latest = new Map<string, InstallJob>()
     for (const job of jobs.values()) {
+      if (!isGameJob(job)) continue
       const current = latest.get(job.instanceName)
       if (!current || jobSequence(job) >= jobSequence(current)) latest.set(job.instanceName, job)
     }
@@ -1000,6 +1118,23 @@ export function apply(ctx: Context): void {
       } catch (cause) {
         log.warn('校正实例「%s」的安装状态失败：%s', job.instanceName, toError(cause).message)
       }
+    }
+
+    // Mod 安装只校正任务状态，不碰实例安装标记
+    for (const job of jobs.values()) {
+      if (isGameJob(job)) continue
+      if (job.state === 'done' || job.state === 'cancelled') continue
+      if (job.taskIds.length === 0) {
+        if ((job.state ?? 'ready') === 'ready') await completeJob(job)
+        continue
+      }
+      const list = job.taskIds.map((id) => tasks.get(id))
+      if (list.length !== job.taskIds.length) continue
+      if (list.every((task) => task?.state === 'done')) {
+        await completeJob(job)
+        continue
+      }
+      await settleJob(job.id)
     }
   }
 
@@ -1498,6 +1633,24 @@ export function apply(ctx: Context): void {
     const partPath = task.savePath + '.part'
     const pausedNow = (): boolean => pausedJobs.has(task.installId) || task.state === 'paused'
 
+    // Mod 任务的目标在实例目录内；实例可能在排队期间被用户删除，
+    // 不能靠 ensureDir 把空目录重新建出来。
+    if (task.direct) {
+      const job = jobs.get(task.installId)
+      if (job && !isGameJob(job)) {
+        const instanceDir = path.dirname(path.dirname(task.savePath))
+        if (!existsSync(instanceDir)) {
+          task.state = 'failed'
+          task.error = '目标实例已被删除'
+          task.progress.speed = 0
+          persistRecords()
+          scheduleLoop()
+          void settleJob(task.installId)
+          return
+        }
+      }
+    }
+
     /** 进入暂停态；.part 保留，恢复时从已有字节续传 */
     const settlePaused = (): void => {
       if (!current()) return
@@ -1543,7 +1696,15 @@ export function apply(ctx: Context): void {
     }
     if (!current()) return
 
-    const candidates = downloadCandidates(task.url)
+    // Mod 文件来自第三方 CDN，不受「原版下载源」开关影响
+    const candidates: DownloadCandidate[] = task.direct
+      ? [{
+          key: `direct:${task.id}`,
+          label: '直链',
+          url: task.url,
+          category: 'other',
+        }]
+      : downloadCandidates(task.url)
     if (candidates.length === 0) {
       task.state = 'failed'
       task.error = '所有下载源均已禁用'
@@ -1994,6 +2155,7 @@ export function apply(ctx: Context): void {
         sha1: spec.sha1,
         size: spec.size,
         label: spec.label,
+        direct: spec.direct,
         state: paused ? 'paused' : 'pending',
         progress: {
           loaded: 0,
@@ -2263,19 +2425,30 @@ export function apply(ctx: Context): void {
     cacheLimit: ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT),
     sources: loadSources(),
     loaderSources: loadLoaderSources(),
+    modSources: loadModSources(),
   }))
 
   ctx.ipc.handle<{ key: string; value: string }>('settings/set', ({ key, value }) => {
-    if (key === 'sources' || key === 'loaderSources') {
+    if (key === 'sources' || key === 'loaderSources' || key === 'modSources') {
       let parsed: unknown
       try { parsed = JSON.parse(value) } catch { parsed = null }
       const normalized = key === 'sources'
         ? normalizeDownloadSources(parsed)
-        : normalizeLoaderSources(parsed)
+        : key === 'loaderSources'
+          ? normalizeLoaderSources(parsed)
+          : normalizeModSources(parsed)
       ctx.storage.set(key, JSON.stringify(normalized))
       sourceHealth.clear()
       loaderVersionCache.clear()
-      log.info('%s设置已更新', key === 'sources' ? '下载源' : '模组加载器下载源')
+      modSearchCache.clear()
+      modVersionCache.clear()
+      modIdentityCache.clear()
+      log.info(
+        '%s设置已更新',
+        key === 'sources'
+          ? '下载源'
+          : key === 'loaderSources' ? '模组加载器下载源' : 'Mod 下载源',
+      )
       return
     }
     ctx.storage.set(key, value)
@@ -2314,6 +2487,239 @@ export function apply(ctx: Context): void {
       // 慢源（例如 Forge 官方 promotions）不再需要：结果已返回或已失败
       abort.abort()
     }
+  })
+
+  // ── Mod 目录（Modrinth / CurseForge）──
+
+  /** 来源列表给页面渲染筛选器；不包含 API Key */
+  ctx.ipc.handle('mods/sources', (): ModSourceInfo[] => modSourceInfos())
+
+  ctx.ipc.handle('mods/categories', (): ModCategory[] => listCategories())
+
+  /**
+   * 通过本地文件指纹精确识别来源项目。
+   *
+   * 只依赖 jar 字节，不需要这个 Mod 是 Mics 安装的；查不到时返回空数组，
+   * 由页面回退到名称搜索。
+   */
+  ctx.ipc.handle<ModIdentifyRequest>('mods/identify', async (request): Promise<ModIdentity[]> => {
+    const rawFiles = Array.isArray(request?.files) ? request.files.slice(0, 256) : []
+    const files: ModIdentifyFile[] = []
+    const seen = new Set<string>()
+    for (const entry of rawFiles) {
+      if (!entry || typeof entry.key !== 'string') continue
+      const key = entry.key.trim().slice(0, 180)
+      if (!key || seen.has(key)) continue
+      const sha1 = typeof entry.sha1 === 'string' && /^[0-9a-f]{40}$/i.test(entry.sha1.trim())
+        ? entry.sha1.trim().toLowerCase()
+        : undefined
+      const murmur2 = typeof entry.murmur2 === 'number'
+        && Number.isInteger(entry.murmur2)
+        && entry.murmur2 >= 0
+        && entry.murmur2 <= 0xffffffff
+        ? entry.murmur2
+        : undefined
+      if (!sha1 && murmur2 === undefined) continue
+      seen.add(key)
+      files.push({ key, ...(sha1 ? { sha1 } : {}), ...(murmur2 !== undefined ? { murmur2 } : {}) })
+    }
+    if (files.length === 0) return []
+
+    const cacheKey = files
+      .map((file) => `${file.key}:${file.sha1 ?? ''}:${file.murmur2 ?? ''}`)
+      .sort()
+      .join('|')
+    const cached = readModCache(modIdentityCache, cacheKey, MOD_IDENTITY_TTL)
+    if (cached) return cached
+
+    const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+    try {
+      const identities = await identifyMods(loadModSources(), files, abort.signal)
+      if (identities.length > 0) writeModCache(modIdentityCache, cacheKey, identities)
+      log.debug('Mod 指纹识别：%d / %d 个文件命中', identities.length, files.length)
+      return identities
+    } finally {
+      clearTimeout(timeout)
+      abort.abort()
+    }
+  })
+
+  /** 搜索参数来自渲染进程，页码与枚举值在这里做一次收敛 */
+  function normalizeModSearch(request: ModSearchRequest): ModSearchRequest {
+    const page = Number.isInteger(request?.page) && request.page > 0 ? request.page : 1
+    const rawSize = Number.isInteger(request?.pageSize) ? Number(request.pageSize) : 20
+    const pageSize = Math.max(1, Math.min(50, rawSize))
+    const source = request?.source === 'curseforge' || request?.source === 'modrinth'
+      ? request.source
+      : 'all'
+    const loader = isModLoader(request?.loader) ? request.loader : 'all'
+    return {
+      query: typeof request?.query === 'string' ? request.query.trim().slice(0, 120) : '',
+      source,
+      gameVersion: safeVersionId(request?.gameVersion) ?? '',
+      loader,
+      category: typeof request?.category === 'string' ? request.category.trim() : '',
+      page,
+      pageSize,
+    }
+  }
+
+  ctx.ipc.handle<ModSearchRequest>('mods/search', async (request): Promise<ModSearchResult> => {
+    const normalized = normalizeModSearch(request)
+    const cacheKey = JSON.stringify(normalized)
+    const cached = readModCache(modSearchCache, cacheKey, MOD_SEARCH_TTL)
+    if (cached) return cached
+
+    const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+    try {
+      const result = await searchMods(loadModSources(), normalized, abort.signal)
+      // 只缓存完整成功的结果；部分来源失败时下次仍应重新尝试
+      if (result.errors.length === 0) writeModCache(modSearchCache, cacheKey, result)
+      return result
+    } finally {
+      clearTimeout(timeout)
+      abort.abort()
+    }
+  })
+
+  ctx.ipc.handle<ModVersionRequest>('mods/versions', async (request): Promise<ModVersion[]> => {
+    const source = request?.source === 'curseforge'
+      ? 'curseforge'
+      : request?.source === 'modrinth' ? 'modrinth' : null
+    if (!source) throw new Error('不支持的 Mod 下载源')
+    const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的 Mod 项目 id')
+
+    const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
+    const normalized: ModVersionRequest = {
+      source,
+      ...(sourceApi ? { sourceApi } : {}),
+      projectId,
+      gameVersion: safeVersionId(request?.gameVersion) ?? '',
+      loader: isModLoader(request?.loader) ? request.loader : 'all',
+    }
+    const cacheKey = `${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}:${normalized.gameVersion}:${normalized.loader}`
+    const cached = readModCache(modVersionCache, cacheKey, MOD_VERSION_TTL)
+    if (cached) return cached
+
+    const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+    try {
+      const versions = await listModVersions(loadModSources(), normalized, abort.signal)
+      writeModCache(modVersionCache, cacheKey, versions)
+      return versions
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)
+    } finally {
+      clearTimeout(timeout)
+      abort.abort()
+    }
+  })
+
+  /**
+   * 把同一个 Mod 文件登记为下载任务，写进多个实例的 mods/ 目录。
+   *
+   * 与游戏安装一样「受理即返回」：真正的传输由下载页的队列展示，支持暂停、
+   * 取消、失败重试；每个实例一个任务，目标文件已有相同 SHA1 时会被快速跳过。
+   */
+  ctx.ipc.handle<ModInstallRequest>('mods/install', (request): InstallStartResult => {
+    const file: ModInstallRequest['file'] | undefined = request?.file
+    if (!file) throw new Error('缺少 Mod 文件信息')
+
+    const rawUrl = typeof file.url === 'string' ? file.url.trim() : ''
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(rawUrl)
+    } catch {
+      throw new Error('无效的 Mod 下载地址')
+    }
+    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+      throw new Error('Mod 下载地址必须使用 HTTP(S)')
+    }
+
+    const rawName = typeof file.fileName === 'string' ? file.fileName : ''
+    const fileName = path.basename(rawName)
+    if (
+      !fileName
+      || fileName !== rawName
+      || !/\.jar$/i.test(fileName)
+      || /[\\/:*?"<>|\u0000-\u001f]/.test(fileName)
+    ) {
+      throw new Error('无效的 Mod 文件名')
+    }
+
+    const rawSha1 = typeof file.sha1 === 'string' ? file.sha1.trim().toLowerCase() : ''
+    const sha1 = /^[0-9a-f]{40}$/.test(rawSha1) ? rawSha1 : ''
+    const size = typeof file.size === 'number' && Number.isFinite(file.size)
+      ? Math.max(0, file.size)
+      : 0
+
+    const requested = Array.isArray(request?.instanceNames) ? request.instanceNames : []
+    const names = [...new Set(requested.filter((name): name is string => typeof name === 'string'))]
+    if (names.length === 0) throw new Error('请选择至少一个实例')
+    if (names.length > 64) throw new Error('一次最多安装到 64 个实例')
+
+    // Windows 上实例名大小写不敏感，按同一份 key 去重，避免写两次同一目录
+    const targets = new Map<string, { instanceName: string; target: string }>()
+    for (const rawInstance of names) {
+      const instanceName = safeInstanceName(rawInstance)
+      if (!instanceName) throw new Error(`无效的实例名称：${rawInstance}`)
+      const instanceDir = instanceDirOf(instanceName)
+      if (!existsSync(instanceDir) || !statSync(instanceDir).isDirectory()) {
+        throw new Error(`实例「${instanceName}」不存在`)
+      }
+      targets.set(instanceKey(instanceName), {
+        instanceName,
+        target: path.join(instanceDir, 'mods', fileName),
+      })
+    }
+
+    const title = typeof request?.title === 'string' && request.title.trim()
+      ? request.title.trim().slice(0, 120)
+      : fileName
+    const detail = typeof request?.detail === 'string' && request.detail.trim()
+      ? request.detail.trim().slice(0, 80)
+      : `${targets.size} 个实例`
+
+    const job: InstallJob = {
+      id: nextJobId(),
+      kind: 'mod',
+      title,
+      detail,
+      instanceName: title,
+      gameVersion: '',
+      taskIds: [],
+      createdAt: Date.now(),
+      state: 'ready',
+    }
+    jobs.set(job.id, job)
+
+    enqueueTasks(
+      job,
+      [...targets.values()].map(({ instanceName, target }): TaskSpec => ({
+        label: `${fileName} → ${instanceName}`,
+        url: parsedUrl.toString(),
+        savePath: target,
+        sha1,
+        size,
+        direct: true,
+      })),
+      false,
+    )
+
+    persistRecords(true)
+    log.info(
+      '已受理 Mod 安装「%s」：%s → %d 个实例，job %s',
+      title,
+      fileName,
+      job.taskIds.length,
+      job.id,
+    )
+    scheduleLoop()
+    return { jobId: job.id }
   })
 
   ctx.ipc.handle('tasks/list', () => [...tasks.values()])
@@ -2368,6 +2774,8 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle('install/status', (): InstanceInstallStatus[] => {
     const latest = new Map<string, InstallJob>()
     for (const job of jobs.values()) {
+      // 启动页只关心真实实例；Mod 安装任务不能混进实例状态
+      if (!isGameJob(job)) continue
       const current = latest.get(job.instanceName)
       if (!current || jobSequence(job) >= jobSequence(current)) latest.set(job.instanceName, job)
     }
@@ -2402,8 +2810,11 @@ export function apply(ctx: Context): void {
     // 取消的任务只会出现在历史行里，汇总后即可丢掉逐文件明细
     archiveJob(job)
     // 取消的安装不保留半成品：清掉实例目录，名称可以立即重新使用。
-    // 补全任务只停下载，实例本身要保留；旧记录也不能删掉新版实例的文件。
-    if (isCurrentJob(job) && job.mode !== 'repair') await discardInstanceDir(job)
+    // 补全任务只停下载，实例本身要保留；Mod 安装只清理自己排队的任务，
+    // 旧记录也不能删掉新版实例的文件。
+    if (isGameJob(job) && isCurrentJob(job) && job.mode !== 'repair') {
+      await discardInstanceDir(job)
+    }
     persistRecords(true)
   })
 
@@ -2442,7 +2853,7 @@ export function apply(ctx: Context): void {
     if (!job || job.state === 'done' || job.state === 'cancelled' || job.state === 'preparing') return
     if (!isCurrentJob(job)) throw new Error('该安装记录已被更新的安装取代，不能重试')
     if (job.taskIds.length === 0) throw new Error('该安装没有可续传的下载记录，请删除后重新安装')
-    if (!existsSync(versionJsonOf(job.instanceName, installedVersionId(job)))) {
+    if (isGameJob(job) && !existsSync(versionJsonOf(job.instanceName, installedVersionId(job)))) {
       throw new Error('实例版本文件已丢失，请删除该安装后重新下载')
     }
 
@@ -2453,7 +2864,9 @@ export function apply(ctx: Context): void {
       ))
     if (failed.length === 0) return
 
-    await writeInstallState(instanceDirOf(job.instanceName), installRecordOf(job, 'installing'))
+    if (isGameJob(job)) {
+      await writeInstallState(instanceDirOf(job.instanceName), installRecordOf(job, 'installing'))
+    }
     job.state = 'ready'
     delete job.error
     pausedJobs.delete(job.id)
@@ -2465,7 +2878,13 @@ export function apply(ctx: Context): void {
       task.progress.speed = 0
     }
 
-    log.info('重试安装「%s」：%d 个失败任务重新排队，job %s', job.instanceName, failed.length, job.id)
+    log.info(
+      isGameJob(job) ? '重试安装「%s」：%d 个失败任务重新排队，job %s'
+        : '重试 Mod 安装「%s」：%d 个失败任务重新排队，job %s',
+      job.title || job.instanceName,
+      failed.length,
+      job.id,
+    )
     persistRecords(true)
     scheduleLoop()
   })
@@ -2478,7 +2897,11 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle<{ jobId: string }>('install/discard', async ({ jobId }) => {
     const job = jobs.get(jobId)
     if (!job) return
-    if (job.state === 'done') throw new Error('安装已完成，请到启动页删除实例')
+    if (job.state === 'done') {
+      throw new Error(isGameJob(job)
+        ? '安装已完成，请到启动页删除实例'
+        : 'Mod 安装已完成，记录会保留在历史中')
+    }
     if (!isCurrentJob(job)) throw new Error('该安装记录已被更新的安装取代，不能删除')
 
     const active = job.state === 'preparing' || job.taskIds.some((taskId) => {
@@ -2487,8 +2910,9 @@ export function apply(ctx: Context): void {
     })
     if (active) throw new Error('安装仍在进行，请先取消')
 
-    // 补全任务只丢弃记录，实例目录留给启动页的「补全文件」继续处理
-    if (job.mode !== 'repair') await discardInstanceDir(job)
+    // 补全任务只丢弃记录，实例目录留给启动页的「补全文件」继续处理；
+    // Mod 安装没有半成品实例目录需要清理
+    if (isGameJob(job) && job.mode !== 'repair') await discardInstanceDir(job)
     for (const taskId of job.taskIds) tasks.delete(taskId)
     jobs.delete(jobId)
     pausedJobs.delete(jobId)
@@ -2515,12 +2939,14 @@ export function apply(ctx: Context): void {
     }
 
     // 已有进行中的任务时直接复用，避免同一实例并发下载
-    const active = [...jobs.values()].find((job) => job.instanceName === instanceName
+    const active = [...jobs.values()].find((job) => isGameJob(job)
+      && job.instanceName === instanceName
       && job.state !== 'done' && job.state !== 'failed' && job.state !== 'cancelled')
     if (active) return { jobId: active.id }
 
     const job: InstallJob = {
       id: nextJobId(),
+      kind: 'game',
       instanceName,
       gameVersion: versionId,
       taskIds: [],
@@ -2558,6 +2984,7 @@ export function apply(ctx: Context): void {
     const instanceName = check.name
     const job: InstallJob = {
       id: nextJobId(),
+      kind: 'game',
       instanceName,
       gameVersion,
       loader,

@@ -14,6 +14,7 @@ import type {
   InstanceUsageEntry,
 } from './shared'
 import { countMods, isSafeInstanceId, loaderLabel, resolveInstance } from './instances'
+import { readJarModInfo } from './zip'
 
 /** 详情页一次最多读取的日志字节数 */
 const MAX_LOG_BYTES = 512 * 1024
@@ -321,13 +322,20 @@ export async function listInstanceMods(userDataDir: string, id: string): Promise
   for (const entry of entries) {
     if (!entry.isFile() || !isModFile(entry.name)) continue
     try {
-      const info = await stat(path.join(dir, entry.name))
+      const fullPath = path.join(dir, entry.name)
+      const info = await stat(fullPath)
+      const meta = readJarModInfo(fullPath)
       mods.push({
         fileName: entry.name,
         name: entry.name.replace(MOD_FILE, ''),
         size: info.size,
         modified: info.mtimeMs,
         enabled: entry.name.toLowerCase().endsWith('.jar'),
+        ...(meta.icon ? { icon: meta.icon } : {}),
+        ...(meta.id ? { modId: meta.id } : {}),
+        ...(meta.name ? { modName: meta.name } : {}),
+        ...(meta.sha1 ? { sha1: meta.sha1 } : {}),
+        ...(meta.murmur2 !== undefined ? { murmur2: meta.murmur2 } : {}),
       })
     } catch {
       // 读取期间被删除的文件直接忽略
@@ -374,6 +382,29 @@ export async function setInstanceModEnabled(
   if (existsSync(target)) throw new Error(`目标文件已存在：${targetName}`)
 
   await rename(source, target)
+  return listInstanceMods(userDataDir, id)
+}
+
+/** 删除实例里的一个 Mod 文件（启用或禁用状态都允许） */
+export async function deleteInstanceMod(
+  userDataDir: string,
+  id: string,
+  fileName: string,
+): Promise<InstanceMods> {
+  if (!isPlainFileName(fileName) || !isModFile(fileName)) throw new Error('无效的 Mod 文件')
+
+  const dir = path.join(await requireInstanceDir(userDataDir, id), 'mods')
+  const target = path.join(dir, fileName)
+
+  let info: Stats
+  try {
+    info = await stat(target)
+  } catch {
+    return listInstanceMods(userDataDir, id)
+  }
+  if (!info.isFile()) throw new Error('Mod 文件不存在')
+
+  await rm(target, { force: true })
   return listInstanceMods(userDataDir, id)
 }
 

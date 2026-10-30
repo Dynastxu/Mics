@@ -91,10 +91,11 @@ function historyLabel(job: InstallJobSummary, stats: InstallJobStats): string {
   return stats.cancelled === stats.failed ? '已取消' : '部分失败'
 }
 
-/** 同一实例名只认最新的一条安装记录，旧记录只能查看 */
+/** 同一实例名只认最新的一条游戏安装记录；Mod 安装不参与实例替代关系 */
 const latestJobByInstance = computed(() => {
   const latest = new Map<string, InstallJobSummary>()
   for (const job of jobs.value) {
+    if (job.kind === 'mod') continue
     const current = latest.get(job.instanceName)
     if (!current || jobSequence(job) >= jobSequence(current)) latest.set(job.instanceName, job)
   }
@@ -107,7 +108,12 @@ function jobSequence(job: InstallJobSummary): number {
 }
 
 function isSuperseded(job: InstallJobSummary): boolean {
+  if (job.kind === 'mod') return false
   return latestJobByInstance.value.get(job.instanceName)?.id !== job.id
+}
+
+function jobTitle(job: InstallJobSummary): string {
+  return job.title || job.instanceName
 }
 
 /** 还有非取消原因失败的文件时可以重试，已完成的文件不会重新下载 */
@@ -212,13 +218,19 @@ onUnmounted(() => {
         <div v-for="row in activeRows" :key="row.job.id" class="progress-job">
           <div class="progress-job__head">
             <div class="progress-job__title">
-              <span class="progress-job__name">{{ row.job.instanceName }}</span>
-              <span class="mics-badge">{{ row.job.gameVersion }}</span>
-              <span v-if="row.job.loader" class="mics-badge">
-                {{ LOADER_LABELS[row.job.loader.kind] ?? row.job.loader.kind }}
-                {{ row.job.loader.version }}
-              </span>
-              <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
+              <span class="progress-job__name">{{ jobTitle(row.job) }}</span>
+              <template v-if="row.job.kind === 'mod'">
+                <span class="mics-badge">Mod</span>
+                <span v-if="row.job.detail" class="mics-badge">{{ row.job.detail }}</span>
+              </template>
+              <template v-else>
+                <span class="mics-badge">{{ row.job.gameVersion }}</span>
+                <span v-if="row.job.loader" class="mics-badge">
+                  {{ LOADER_LABELS[row.job.loader.kind] ?? row.job.loader.kind }}
+                  {{ row.job.loader.version }}
+                </span>
+                <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
+              </template>
               <span v-if="isSuperseded(row.job)" class="mics-badge">旧记录</span>
             </div>
 
@@ -296,9 +308,15 @@ onUnmounted(() => {
         <div v-for="row in historyRows" :key="row.job.id" class="mics-list__row">
           <div class="mics-list__main">
             <div class="mics-list__title">
-              <span>{{ row.job.instanceName }}</span>
-              <span class="mics-badge">{{ row.job.gameVersion }}</span>
-              <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
+              <span>{{ jobTitle(row.job) }}</span>
+              <template v-if="row.job.kind === 'mod'">
+                <span class="mics-badge">Mod</span>
+                <span v-if="row.job.detail" class="mics-badge">{{ row.job.detail }}</span>
+              </template>
+              <template v-else>
+                <span class="mics-badge">{{ row.job.gameVersion }}</span>
+                <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
+              </template>
               <span
                 class="mics-badge"
                 :class="{ 'mics-badge--accent': row.ok }"

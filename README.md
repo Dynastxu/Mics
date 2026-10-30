@@ -78,11 +78,12 @@ mics/
 │  ├─ launch/               # 启动页 + 启动设置（依赖账户插件，按凭据启动）
 │  ├─ download/             # 下载分组 + 下载设置
 │  ├─ download-vanilla/     # 原版版本列表
-│  ├─ download-mod/         # Mod 目录
+│  ├─ download-mod/         # Mod 目录（Modrinth / CurseForge，可多实例安装）
 │  ├─ download-modpack/     # 整合包目录
 │  ├─ download-datapack/    # 数据包目录
 │  ├─ download-resourcepack/# 资源包目录
 │  ├─ download-shader/      # 光影包目录
+│  ├─ notifications/        # 右下角通知服务（ctx.notifications + toast 宿主）
 │  ├─ settings/             # 设置分组 + 通用设置页
 │  ├─ plugin-inspector/     # 插件管理页（安装 / 启用 / 禁用 / 重载 / 卸载）
 │  └─ logger/               # 按启动分文件的日志服务 + 日志设置
@@ -198,6 +199,17 @@ interface LaunchCredentials {
 - 填的是 GUID 时自动切到 Entra 端点，数字串则使用 Live 端点，不需要额外开关。
 - 清空该设置后正版登录不可用，账户页会提示先填 client id。
 
+## 下载与 Mod
+
+- 原版页负责游戏版本与加载器的安装；Mod 页从 Modrinth / CurseForge 搜索 Mod，搜索条件包括名称、来源、MC 版本、加载器与类型（使用通用漏斗筛选面板），结果在底部按页翻页，点击卡片进入 Mod 详情。
+- 进入 Mod 详情时会把搜索页选中的 MC 版本 / 加载器自动设为详情筛选的初始值；筛选选项仍来自该 Mod 的全部版本，用户随时可以改，不存在被搜索条件锁死的情况。
+- 实例 Mod 列表的每一行可点击。优先用 jar 的 SHA1 / CurseForge 指纹精确识别项目，带着 `sourceApi + projectId` 直接打开详情；指纹查不到时才按 mod id / 名称搜索回退。外部导入的 Mod 不依赖下载记录，同样可以识别。点击删除或开关不会触发跳转。
+- 指纹识别结果按 `hash` 缓存 6 小时；多个同类型来源时用 `sourceApi` 锁定实际命中的镜像，避免版本查询串源。
+- 来源在「设置 → 下载设置 → Mod 下载源」里增删、排序与启停。Modrinth 无需配置；CurseForge 官方接口要求 API Key（按其第三方 API 流程申请，按凭据保管，不要提交到仓库或随客户端分发），未填写时该来源自动跳过并在 Mod 页提示，不会影响 Modrinth。需要给所有用户开箱即用时，可以把来源接口地址改成自建代理、Key 留空；桌面客户端里内置 Key 只能防普通用户，无法真正保密。
+- 点开一个 Mod 后，搜索页选中的 MC 版本与加载器固定在页面顶部；其余条件（版本搜索、版本类型、排序）照常筛选。
+- 选择文件后可以一次把同一个 jar 安装到多个实例：实例列表按文件的游戏版本与加载器标记兼容性，原版实例、安装未完成的实例与不匹配的实例不可选；提交后关闭弹窗并在右下角提示，下载任务在「下载进度」里显示每个实例的进度，可暂停、取消或重试，已存在且 SHA1 一致的文件会直接跳过。
+- 实例详情的 Mod 列表：左侧显示 jar 内嵌图标（没有图标也保留空位），右侧是删除按钮与启停开关（`.jar` ↔ `.jar.disabled`）；删除会二次确认，避免误删。
+
 ## 日志
 
 `mics.logger` 是主进程插件，提供 `ctx.logs`；其它插件在清单里声明依赖，再注入即可：
@@ -276,7 +288,11 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
 - `pnpm dev` 只负责 shell 的 HMR；改动 `plugins/*/src` 后需要重新 `pnpm build:plugins`
   （或另开一个终端跑 `pnpm watch:plugins`）。
 - 插件清单里未声明 `activation` 的插件是**懒激活**的：导航先由清单渲染，
-  第一次打开页面 / 执行命令时才加载代码。
+  第一次打开页面 / 执行命令时才加载代码；声明 `onStartup` / `*` 且有渲染端的
+  服务型插件（例如 `mics.notifications`）会随外壳一起启动。
+- 右下角通知：渲染端插件声明 `inject: ['notifications']` 后调用
+  `ctx.notifications.show({ title, message, level })`；`mics.notifications`
+  随外壳启动，并把通知宿主挂到 `body` 上，不占用导航页。
 - `ctx.effect()`、`ctx.ipc.handle()`、`ctx.ui.registerView()` 等注册都绑定在调用方插件
   的 fiber 上，插件禁用或卸载时自动清理；禁用状态会持久化到 `userData/disabled-plugins.json`，
   之后不会被页面/命令/启动事件自动重新激活，其导航、命令与样式也会从界面上移除。

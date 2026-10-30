@@ -104,6 +104,7 @@ export function loaderLabel(version: VersionJson): string {
   if (!version.inheritsFrom) return '原版'
   const id = version.id.toLowerCase()
   if (id.includes('neoforge')) return 'NeoForge'
+  if (id.includes('quilt')) return 'Quilt'
   if (id.includes('fabric')) return 'Fabric'
   if (id.includes('forge')) return 'Forge'
   return 'Mod 加载器'

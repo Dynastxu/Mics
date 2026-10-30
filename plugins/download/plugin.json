@@ -2,7 +2,7 @@
   "id": "mics.download",
   "name": "下载",
   "version": "0.1.0",
-  "description": "下载分类的导航分组与下载设置（下载行为、原版源、模组加载器源）；各分类页面由独立插件提供。",
+  "description": "下载分类的导航分组与下载设置（下载行为、原版源、模组加载器源、Mod 来源）；各分类页面由独立插件提供。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],

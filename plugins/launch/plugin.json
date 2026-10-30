@@ -2,7 +2,7 @@
   "id": "mics.launch",
   "name": "启动",
   "version": "0.1.0",
-  "description": "实例扫描（未下载完成的实例可见但不可启动）、详情、日志与 Mod 查看、删除；启动页依赖账户插件，用所选账户的凭据启动，并在启动前自动校验、修复损坏的依赖文件。",
+  "description": "实例扫描（未下载完成的实例可见但不可启动）、详情、日志与 Mod 查看、启停、删除；启动页依赖账户插件，用所选账户的凭据启动，并在启动前自动校验、修复损坏的依赖文件。",
   "author": "mics",
   "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",

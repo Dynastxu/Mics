@@ -46,6 +46,25 @@ export const INSTANCE_STATE_FILE = 'install-state.json'
 /** 安装状态：installing 表示仍在下载/校验，ready 表示已经可以启动 */
 export type InstanceInstallState = 'installing' | 'ready'
 
+/**
+ * 实例摘要：启动页、实例选择器与其它需要列举实例的插件共用。
+ *
+ * 这是跨插件契约，不是启动页的内部类型：Mod 安装要在「选实例」时读取
+ * 游戏版本与加载器，不能各自去解析实例目录。
+ */
+export interface InstanceSummary {
+  id: string
+  name: string
+  minecraft: string
+  loader: string
+  mods: number
+  /** 上次启动时间戳；从未启动为 null */
+  lastPlayed: number | null
+  versionId: string
+  /** 安装状态：installing 的实例仍会列出，但不提供启动入口 */
+  installState: InstanceInstallState
+}
+
 export interface InstanceInstallRecord {
   state: InstanceInstallState
   /** 触发本次安装的下载任务 id，便于日志排查 */

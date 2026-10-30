@@ -67,6 +67,7 @@ export class PluginsService extends Service {
       // 主进程的内核服务可能还在注册系统 RPC，这里做有限重试
       await this.waitForKernel()
       this.owner.theme.restore()
+      await this.activateStartupPlugins()
       logInfo('渲染端插件快照已同步：%d 个插件', store.plugins.length)
     } catch (error) {
       store.bootError = error instanceof Error ? error.message : String(error)
@@ -87,6 +88,33 @@ export class PluginsService extends Service {
       }
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError))
+  }
+
+  /**
+   * 渲染端也会遵守清单的 `activation`。
+   *
+   * 有页面的插件可以懒加载，但服务型插件（例如通知）没有页面可打开；它们
+   * 声明 onStartup / * 后必须随外壳一起启动，否则 inject 该服务的插件会一直
+   * 停在 waiting。单个插件失败只记录错误，不影响外壳继续启动。
+   */
+  private async activateStartupPlugins(): Promise<void> {
+    const startup = store.plugins.filter((plugin) => {
+      if (!plugin.hasRenderer || plugin.state === 'disabled') return false
+      const activation = plugin.manifest.activation ?? []
+      return activation.includes('*') || activation.includes('onStartup')
+    })
+
+    for (const plugin of startup) {
+      try {
+        await this.activate(plugin.id)
+      } catch (error) {
+        logWarn(
+          '启动插件 %s 失败：%s',
+          plugin.id,
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+    }
   }
 
   list(): PluginInfo[] {

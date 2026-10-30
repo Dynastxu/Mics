@@ -4,6 +4,7 @@ import type { CapabilitiesServiceApi } from './capability'
 import type { PluginConfigurationInfo } from './configuration'
 import type { PluginGraphReport } from './diagnostics'
 import type { LogsServiceApi } from './logs'
+import type { NotificationsServiceApi } from './notifications'
 import type { Permission, PluginId } from './manifest'
 import type { PluginFailureStage, PluginInstallSummary } from './plugins'
 import type {
@@ -230,6 +231,7 @@ declare module 'cordis' {
     /** 由 mics.logger 插件提供；其它插件通过 inject: ['logs'] 使用 */
     logs: LogsServiceApi
     ui: UiServiceApi
+    notifications: NotificationsServiceApi
     theme: ThemeServiceApi
     bridge: BridgeApi
   }

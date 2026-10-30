@@ -5,6 +5,8 @@
  * 之间通过 IPC 交换数据的通用契约。
  */
 
+import type { ModSource } from './mod'
+
 /** 下载源提供的游戏版本摘要 */
 export interface GameVersion {
   id: string
@@ -86,6 +88,11 @@ export interface DownloadTask {
   sha1: string
   size: number
   label: string
+  /**
+   * 直链下载：不再经过原版下载源改写，也不再要求启用任何原版源。
+   * Mod 文件来自 Modrinth / CurseForge 的 CDN，必须走这条路径。
+   */
+  direct?: boolean
   state: DownloadTaskState
   progress: DownloadProgress
   error?: string
@@ -113,6 +120,14 @@ export type InstallJobState = 'preparing' | 'ready' | 'done' | 'failed' | 'cance
  */
 export type InstallMode = 'install' | 'repair'
 
+/**
+ * 下载任务的种类。
+ *
+ * - `game`：安装 / 补全游戏实例（旧记录没有该字段，按 game 处理）；
+ * - `mod`：把 Mod 文件写进一个或多个实例，额外的任务字段见 title/detail。
+ */
+export type InstallJobKind = 'game' | 'mod'
+
 /** 一次安装的聚合进度；下载页只依赖这份汇总，不拉取逐文件任务 */
 export interface InstallJobStats {
   /** 任务总数 */
@@ -136,9 +151,15 @@ export interface InstallJobStats {
 /** 一组关联的下载任务（一次安装操作） */
 export interface InstallJob {
   id: string
-  /** 实例名称 */
+  /** 安装种类；旧记录没有该字段，按 game 处理 */
+  kind?: InstallJobKind
+  /** 下载页展示标题；Mod 安装用它显示 Mod / 版本名 */
+  title?: string
+  /** 下载页副标题，例如「2 个实例」 */
+  detail?: string
+  /** 实例名称；Mod 安装时是展示标题，不代表真实实例 */
   instanceName: string
-  /** 游戏版本 */
+  /** 游戏版本；Mod 安装为空 */
   gameVersion: string
   /**
    * 实际写入实例的版本 id。
@@ -183,6 +204,9 @@ export interface InstallJob {
  */
 export interface InstallJobSummary {
   id: string
+  kind?: InstallJobKind
+  title?: string
+  detail?: string
   instanceName: string
   gameVersion: string
   loader?: { kind: LoaderKind; version: string }
@@ -404,4 +428,6 @@ export interface DownloadSettings {
   cacheLimit: string
   sources: DownloadSource[]
   loaderSources: LoaderSource[]
+  /** Mod 目录的来源（Modrinth / CurseForge 及其镜像） */
+  modSources: ModSource[]
 }

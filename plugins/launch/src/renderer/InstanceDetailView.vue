@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { MOD_OPEN_INTENT_KEY } from '@mics/sdk'
+import type { ModIdentity, ModLoader, ModOpenIntent } from '@mics/sdk'
 import { usePluginContext } from '@mics/sdk/renderer'
+import { ToggleSwitch } from '@mics/ui'
 import type {
   InstanceArea,
   InstanceDetail,
@@ -14,6 +17,7 @@ import type {
   LaunchProcessInfo,
 } from '../shared'
 import DeleteInstanceDialog from './DeleteInstanceDialog.vue'
+import DeleteModDialog from './DeleteModDialog.vue'
 
 const props = defineProps<{
   instance: InstanceSummary
@@ -88,6 +92,9 @@ const modsLoading = ref(false)
 const modsError = ref('')
 const modQuery = ref('')
 const modBusy = ref('')
+const modDeleteTarget = ref<InstanceModEntry | null>(null)
+const modDeleting = ref(false)
+const brokenModIcons = ref<Record<string, boolean>>({})
 
 const deleteOpen = ref(false)
 const deleting = ref(false)
@@ -95,6 +102,7 @@ const deleting = ref(false)
 let logsLoaded = false
 let modsLoaded = false
 let logSequence = 0
+let identifySequence = 0
 
 const alive = computed(() => props.processes.length > 0)
 const statusLabel = computed(() => {
@@ -339,14 +347,50 @@ async function openLog(name: string): Promise<void> {
   }
 }
 
+async function identifyMods(entries: InstanceModEntry[]): Promise<void> {
+  const sequence = ++identifySequence
+  const files = entries
+    .filter((entry) => entry.sha1 || entry.murmur2 !== undefined)
+    .map((entry) => ({
+      key: entry.fileName,
+      ...(entry.sha1 ? { sha1: entry.sha1 } : {}),
+      ...(entry.murmur2 !== undefined ? { murmur2: entry.murmur2 } : {}),
+    }))
+  if (files.length === 0) return
+
+  try {
+    const identities = await ctx.ipc.invoke<ModIdentity[]>(
+      'mics.download.manager',
+      'mods/identify',
+      { files },
+    )
+    if (sequence !== identifySequence) return
+    const currentEntries = mods.value?.entries
+    if (!currentEntries) return
+    const byFile = new Map(identities.map((identity) => [identity.key, identity]))
+    for (const entry of currentEntries) {
+      const identity = byFile.get(entry.fileName)
+      if (!identity) continue
+      entry.identity = identity
+      // jar 没有图标时用项目的图标补上；仍没有则界面保留空位。
+      if (!entry.icon && identity.project.icon) entry.icon = identity.project.icon
+      if (!entry.modName && identity.project.name) entry.modName = identity.project.name
+    }
+  } catch {
+    // 识别是增强信息，失败不影响本地列表与删除/启停
+  }
+}
+
 async function loadMods(): Promise<void> {
   modsLoading.value = true
   modsError.value = ''
   try {
-    mods.value = await ctx.ipc.invoke<InstanceMods>('mics.launch', 'instances/mods', {
+    const updated = await ctx.ipc.invoke<InstanceMods>('mics.launch', 'instances/mods', {
       id: props.instance.id,
     })
+    mods.value = updated
     modsLoaded = true
+    void identifyMods(updated.entries)
   } catch (cause) {
     modsError.value = `读取 Mod 失败：${messageOf(cause)}`
     modsLoaded = true
@@ -355,15 +399,15 @@ async function loadMods(): Promise<void> {
   }
 }
 
-async function toggleMod(entry: InstanceModEntry): Promise<void> {
-  if (modBusy.value) return
+async function toggleMod(entry: InstanceModEntry, enabled = !entry.enabled): Promise<void> {
+  if (modBusy.value === entry.fileName) return
   modBusy.value = entry.fileName
   modsError.value = ''
   try {
     const updated = await ctx.ipc.invoke<InstanceMods>('mics.launch', 'instances/mods/toggle', {
       id: props.instance.id,
       fileName: entry.fileName,
-      enabled: !entry.enabled,
+      enabled,
     })
     mods.value = updated
     emit('changed', updated.entries.filter((item) => item.enabled).length)
@@ -371,6 +415,85 @@ async function toggleMod(entry: InstanceModEntry): Promise<void> {
     modsError.value = `切换 Mod 状态失败：${messageOf(cause)}`
   } finally {
     modBusy.value = ''
+  }
+}
+
+function markModIconFailed(fileName: string): void {
+  brokenModIcons.value = { ...brokenModIcons.value, [fileName]: true }
+}
+
+/** 从文件名兜底推导搜索词：去掉加载器和版本尾巴 */
+function modSearchQuery(entry: InstanceModEntry): string {
+  if (entry.modId) return entry.modId
+  if (entry.modName) return entry.modName
+  const cleaned = entry.name
+    .replace(/[-_+](fabric|forge|neoforge|quilt).*$/i, '')
+    .replace(/[-_+]v?\d.*$/i, '')
+    .trim()
+  return cleaned || entry.name
+}
+
+function instanceLoaderKind(): ModLoader | 'all' {
+  const label = props.instance.loader
+  if (label === 'Fabric') return 'fabric'
+  if (label === 'Forge') return 'forge'
+  if (label === 'NeoForge') return 'neoforge'
+  if (label === 'Quilt') return 'quilt'
+  return 'all'
+}
+
+function openModDetail(entry: InstanceModEntry): void {
+  const identity = entry.identity
+  const intent: ModOpenIntent = identity
+    ? {
+        project: identity.project,
+        query: identity.project.name,
+        name: identity.project.name,
+        fileName: entry.fileName,
+        gameVersion: props.instance.minecraft,
+        loader: instanceLoaderKind(),
+        versionId: identity.versionId,
+      }
+    : {
+        query: modSearchQuery(entry),
+        ...(entry.modName ? { name: entry.modName } : {}),
+        fileName: entry.fileName,
+      }
+  const globalStore = globalThis as typeof globalThis & Record<string, unknown>
+  globalStore[MOD_OPEN_INTENT_KEY] = intent
+  if (ctx.ui.navigate('download.mod')) return
+  delete globalStore[MOD_OPEN_INTENT_KEY]
+  notice.value = '无法打开 Mod 下载页，请确认下载插件已启用'
+}
+
+function requestDeleteMod(entry: InstanceModEntry): void {
+  if (modBusy.value) return
+  modDeleteTarget.value = entry
+}
+
+function closeDeleteMod(): void {
+  if (modDeleting.value) return
+  modDeleteTarget.value = null
+}
+
+async function confirmDeleteMod(): Promise<void> {
+  const entry = modDeleteTarget.value
+  if (!entry || modDeleting.value) return
+  modDeleting.value = true
+  modsError.value = ''
+  try {
+    const updated = await ctx.ipc.invoke<InstanceMods>('mics.launch', 'instances/mods/delete', {
+      id: props.instance.id,
+      fileName: entry.fileName,
+    })
+    mods.value = updated
+    modDeleteTarget.value = null
+    emit('changed', updated.entries.filter((item) => item.enabled).length)
+  } catch (cause) {
+    modsError.value = `删除 Mod 失败：${messageOf(cause)}`
+    modDeleteTarget.value = null
+  } finally {
+    modDeleting.value = false
   }
 }
 
@@ -655,26 +778,58 @@ onMounted(() => {
         <div v-else-if="!modCount" class="mics-empty">Mod 文件夹为空。</div>
         <div v-else-if="!filteredMods.length" class="mics-empty">没有匹配的 Mod。</div>
         <div v-else class="mics-list">
-          <div v-for="entry in filteredMods" :key="entry.fileName" class="mics-list__row">
+          <div
+            v-for="entry in filteredMods"
+            :key="entry.fileName"
+            class="mics-list__row detail__mod-row"
+            role="button"
+            tabindex="0"
+            :aria-label="`查看 ${entry.name} 的详情`"
+            @click="openModDetail(entry)"
+            @keydown.enter="openModDetail(entry)"
+          >
+            <img
+              v-if="entry.icon && !brokenModIcons[entry.fileName]"
+              class="detail__mod-icon"
+              :src="entry.icon"
+              :alt="entry.name"
+              @error="markModIconFailed(entry.fileName)"
+            />
+            <span v-else class="detail__mod-icon detail__mod-icon--empty" aria-hidden="true" />
+
             <div class="mics-list__main">
               <div class="mics-list__title">
                 <span class="detail__mod-name" :title="entry.fileName">{{ entry.name }}</span>
-                <span class="mics-badge" :class="{ 'mics-badge--accent': entry.enabled }">
-                  {{ entry.enabled ? '已启用' : '已禁用' }}
-                </span>
               </div>
               <div class="mics-list__meta">
                 {{ formatBytes(entry.size) }} · {{ formatDate(entry.modified) }}
               </div>
             </div>
+
             <button
-              class="mics-button mics-button--ghost mics-button--small"
+              class="detail__mod-delete"
               type="button"
+              title="删除 Mod"
+              :aria-label="`删除 ${entry.name}`"
               :disabled="modBusy === entry.fileName"
-              @click="toggleMod(entry)"
+              @click.stop="requestDeleteMod(entry)"
+              @keydown.stop
             >
-              {{ entry.enabled ? '禁用' : '启用' }}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18" />
+                <path d="M8 6V4h8v2" />
+                <path d="M19 6l-1 14H6L5 6" />
+              </svg>
             </button>
+
+            <ToggleSwitch
+              :model-value="entry.enabled"
+              :disabled="modBusy === entry.fileName"
+              :label="`${entry.name}：${entry.enabled ? '已启用' : '已禁用'}`"
+              :title="entry.enabled ? '点击禁用' : '点击启用'"
+              @update:model-value="toggleMod(entry, $event)"
+              @keydown.stop
+            />
           </div>
         </div>
       </section>
@@ -687,6 +842,14 @@ onMounted(() => {
       :busy="deleting"
       @confirm="confirmDelete"
       @cancel="closeDeleteDialog"
+    />
+
+    <DeleteModDialog
+      :open="modDeleteTarget !== null"
+      :name="modDeleteTarget?.fileName ?? ''"
+      :busy="modDeleting"
+      @confirm="confirmDeleteMod"
+      @cancel="closeDeleteMod"
     />
   </div>
 </template>
@@ -941,6 +1104,48 @@ onMounted(() => {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.detail__mod-row {
+  gap: 10px;
+  cursor: pointer;
+}
+
+.detail__mod-icon,
+.detail__mod-icon--empty {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.detail__mod-icon--empty {
+  background: var(--mics-bg-hover);
+}
+
+.detail__mod-delete {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--mics-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mics-fg-muted);
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.detail__mod-delete:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--mics-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--mics-danger) 10%, transparent);
+  color: var(--mics-danger);
+}
+
+.detail__mod-delete:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 @media (max-width: 900px) {

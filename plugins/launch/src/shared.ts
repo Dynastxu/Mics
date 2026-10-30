@@ -1,18 +1,9 @@
-import type { InstanceInstallState } from '@mics/sdk'
-
-/** 启动页展示的实例摘要；主进程与渲染器共用同一份结构 */
-export interface InstanceSummary {
-  id: string
-  name: string
-  minecraft: string
-  loader: string
-  mods: number
-  /** 上次启动时间戳；从未启动为 null */
-  lastPlayed: number | null
-  versionId: string
-  /** 安装状态：installing 的实例仍会列出，但不提供启动入口 */
-  installState: InstanceInstallState
-}
+/**
+ * 实例摘要已上移到 `@mics/sdk`：Mod 安装的实例选择器也消费同一份结构。
+ * 这里继续导出，启动页内部原有的 `./shared` 导入不需要改。
+ */
+export type { InstanceSummary } from '@mics/sdk'
+import type { ModIdentity } from '@mics/sdk'
 
 export interface LaunchRequest {
   id: string
@@ -127,6 +118,17 @@ export interface InstanceModEntry {
   size: number
   modified: number
   enabled: boolean
+  /** jar 内嵌图标（data URL）；没有时为空 */
+  icon?: string
+  /** 元数据里的 mod id / 名称，用于跳转到 Mod 目录详情 */
+  modId?: string
+  modName?: string
+  /** Modrinth 指纹 */
+  sha1?: string
+  /** CurseForge 指纹 */
+  murmur2?: number
+  /** 指纹识别到的精确项目（异步补全；识别失败时为空） */
+  identity?: ModIdentity
 }
 
 export interface InstanceMods {
@@ -149,6 +151,10 @@ export interface InstanceRevealRequest extends InstanceRef {
 export interface InstanceModToggleRequest extends InstanceRef {
   fileName: string
   enabled: boolean
+}
+
+export interface InstanceModDeleteRequest extends InstanceRef {
+  fileName: string
 }
 
 /** 主进程广播运行状态的事件主题 */

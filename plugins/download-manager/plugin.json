@@ -2,7 +2,7 @@
   "id": "mics.download.manager",
   "name": "下载管线",
   "version": "0.1.0",
-  "description": "下载队列管理、进度追踪、SHA1 校验与断点续传；安装原版/模组加载器（Fabric、Forge、NeoForge）并合并版本文件，完成后写入实例就绪标记，失败可重试，已有实例可补全缺失文件。",
+  "description": "下载队列管理、进度追踪、SHA1 校验与断点续传；安装原版/模组加载器（Fabric、Forge、NeoForge）并合并版本文件，完成后写入实例就绪标记，失败可重试，已有实例可补全缺失文件；Modrinth / CurseForge 的 Mod 搜索与多实例安装也走同一套文件缓存。",
   "author": "mics",
   "main": "dist/main.mjs",
   "activation": ["onStartup"],

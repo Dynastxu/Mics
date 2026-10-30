@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync, type Stats } from 'node:fs'
 import path from 'node:path'
 import { inflateRawSync } from 'node:zlib'
@@ -45,6 +46,199 @@ function readEntries(buffer: Buffer): ZipEntry[] {
   }
 
   return entries
+}
+
+export interface JarModInfo {
+  /** mod id；用于在 Mod 目录里搜索对应项目 */
+  id?: string
+  /** 展示名称 */
+  name?: string
+  /** 内嵌图标，data URL；没有图标时为空 */
+  icon?: string
+  /** Modrinth 指纹 */
+  sha1?: string
+  /** CurseForge 指纹 */
+  murmur2?: number
+}
+
+/**
+ * CurseForge 使用的 MurmurHash2（seed 1）。
+ *
+ * 算法本身是公开规范；这里按字节流实现，空白字节 9/10/13/32 会被跳过，
+ * 与外置 Mod 的 jar 内容无关，因此不依赖下载记录。
+ */
+function murmur2(buffer: Buffer): number {
+  const filtered = Buffer.allocUnsafe(buffer.length)
+  let length = 0
+  for (const byte of buffer) {
+    if (byte === 9 || byte === 10 || byte === 13 || byte === 32) continue
+    filtered[length] = byte
+    length += 1
+  }
+
+  const data = filtered.subarray(0, length)
+  let h = (1 ^ length) >>> 0
+  let i = 0
+  while (length - i >= 4) {
+    let k = data[i]! | (data[i + 1]! << 8) | (data[i + 2]! << 16) | (data[i + 3]! << 24)
+    k = Math.imul(k, 0x5bd1e995)
+    k ^= k >>> 24
+    k = Math.imul(k, 0x5bd1e995)
+    h = Math.imul(h, 0x5bd1e995) ^ k
+    i += 4
+  }
+
+  const remaining = length - i
+  if (remaining === 3) {
+    h ^= data[i + 2]! << 16
+    h ^= data[i + 1]! << 8
+    h ^= data[i]!
+    h = Math.imul(h, 0x5bd1e995)
+  } else if (remaining === 2) {
+    h ^= data[i + 1]! << 8
+    h ^= data[i]!
+    h = Math.imul(h, 0x5bd1e995)
+  } else if (remaining === 1) {
+    h ^= data[i]!
+    h = Math.imul(h, 0x5bd1e995)
+  }
+
+  h ^= h >>> 13
+  h = Math.imul(h, 0x5bd1e995)
+  h ^= h >>> 15
+  return h >>> 0
+}
+
+const MOD_INFO_CACHE_LIMIT = 256
+const MAX_ICON_BYTES = 512 * 1024
+const ICON_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+}
+
+const modInfoCache = new Map<string, { key: string; info: JarModInfo }>()
+
+function imageMime(name: string): string | undefined {
+  const dot = name.lastIndexOf('.')
+  if (dot < 0) return undefined
+  return ICON_MIME[name.slice(dot).toLowerCase()]
+}
+
+function iconRank(name: string, modId?: string): number {
+  const lower = name.toLowerCase()
+  if (/^assets\/[^/]+\/icon\.(png|jpe?g|webp)$/i.test(name)) return 0
+  if (modId && /^[^/]+\.(png|jpe?g|webp)$/i.test(name)) {
+    const base = lower.slice(0, lower.lastIndexOf('.'))
+    const id = modId.toLowerCase()
+    // 不少模组把图标放在根目录，例如 sodium-icon.png
+    if (base === `${id}-icon` || base === id) return 1
+  }
+  if (/^icon\.(png|jpe?g|webp)$/i.test(name)) return 2
+  if (/^[^/]*(?:^|[-_])icon\.(png|jpe?g|webp)$/i.test(name)) return 3
+  if (/^[^/]*(?:logo|pack)\.(png|jpe?g|webp)$/i.test(name)) return 4
+  if (/(^|\/)(icon|logo|pack)[^/]*\.(png|jpe?g|webp)$/i.test(name)) return 5
+  return 99
+}
+
+function metadataOf(entries: ZipEntry[], buffer: Buffer): { id?: string; name?: string } {
+  const readJson = (entry: ZipEntry | undefined): Record<string, unknown> | null => {
+    if (!entry) return null
+    const data = entryData(buffer, entry)
+    if (!data) return null
+    try {
+      return JSON.parse(data.toString('utf8')) as Record<string, unknown>
+    } catch {
+      return null
+    }
+  }
+
+  const fabric = readJson(entries.find((entry) => entry.name === 'fabric.mod.json'))
+  if (fabric) {
+    return {
+      id: typeof fabric.id === 'string' ? fabric.id : undefined,
+      name: typeof fabric.name === 'string' ? fabric.name : undefined,
+    }
+  }
+
+  const quilt = readJson(entries.find((entry) => entry.name === 'quilt.mod.json'))
+  if (quilt) {
+    const loader = quilt.quilt_loader as Record<string, unknown> | undefined
+    const metadata = quilt.metadata as Record<string, unknown> | undefined
+    return {
+      id: typeof loader?.id === 'string' ? loader.id : undefined,
+      name: typeof metadata?.name === 'string' ? metadata.name : undefined,
+    }
+  }
+
+  const tomlEntry = entries.find(
+    (entry) => entry.name === 'META-INF/mods.toml' || entry.name === 'META-INF/neoforge.mods.toml',
+  )
+  if (tomlEntry) {
+    const data = entryData(buffer, tomlEntry)
+    if (data) {
+      const text = data.toString('utf8')
+      const id = /^\s*modId\s*=\s*["']([^"']+)["']/m.exec(text)?.[1]
+      const name = /^\s*displayName\s*=\s*["']([^"']+)["']/m.exec(text)?.[1]
+      if (id || name) return { id, name }
+    }
+  }
+
+  return {}
+}
+
+/**
+ * 读取 Mod jar 的基本信息：mod id / 名称 / 内嵌图标。
+ *
+ * 实例 Mod 列表用它显示图标并支持「点击跳到 Mod 目录详情」；读取失败或没有
+ * 图标时返回空信息，界面会保留一个同样大小的空位。
+ */
+export function readJarModInfo(file: string): JarModInfo {
+  let info: Stats
+  try {
+    info = statSync(file)
+  } catch {
+    return {}
+  }
+
+  const cacheKey = `${info.size}:${info.mtimeMs}`
+  const cached = modInfoCache.get(file)
+  if (cached?.key === cacheKey) return cached.info
+
+  let result: JarModInfo = {}
+  try {
+    const buffer = readFileSync(file)
+    const entries = readEntries(buffer)
+    const metadata = metadataOf(entries, buffer)
+    const sha1 = createHash('sha1').update(buffer).digest('hex')
+    const fingerprint = murmur2(buffer)
+
+    let icon: string | undefined
+    const candidates = entries
+      .filter((entry) => imageMime(entry.name) !== undefined)
+      .map((entry) => ({ entry, rank: iconRank(entry.name, metadata.id) }))
+      .filter((item) => item.rank < 99 && item.entry.uncompressedSize <= MAX_ICON_BYTES)
+      .sort((a, b) => a.rank - b.rank || a.entry.name.length - b.entry.name.length)
+
+    const chosen = candidates[0]?.entry
+    if (chosen) {
+      const data = entryData(buffer, chosen)
+      const mime = imageMime(chosen.name)
+      if (data && mime) icon = `data:${mime};base64,${data.toString('base64')}`
+    }
+
+    result = { ...metadata, sha1, murmur2: fingerprint, ...(icon ? { icon } : {}) }
+  } catch {
+    result = {}
+  }
+
+  if (modInfoCache.size >= MOD_INFO_CACHE_LIMIT) {
+    const oldest = modInfoCache.keys().next().value
+    if (oldest !== undefined) modInfoCache.delete(oldest)
+  }
+  modInfoCache.set(file, { key: cacheKey, info: result })
+  return result
 }
 
 const NATIVE_PATTERN = /\.(dll|so|dylib|jnilib)$/i

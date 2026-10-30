@@ -6,14 +6,19 @@ import {
   DEFAULT_DOWNLOAD_CONCURRENCY,
   DEFAULT_DOWNLOAD_SOURCES,
   DEFAULT_LOADER_SOURCES,
+  DEFAULT_MOD_SOURCES,
   LOADER_LABELS,
+  MOD_SOURCE_LABELS,
+  modSourceNeedsKey,
   normalizeDownloadSources,
   normalizeLoaderSources,
+  normalizeModSources,
 } from '@mics/sdk'
-import type { DownloadSource, LoaderSource } from '@mics/sdk'
+import type { DownloadSource, LoaderSource, ModSource } from '@mics/sdk'
 import { ToggleSwitch } from '@mics/ui'
 import SourceEditorDialog from './SourceEditorDialog.vue'
 import LoaderSourceDialog from './LoaderSourceDialog.vue'
+import ModSourceDialog from './ModSourceDialog.vue'
 
 const ctx = usePluginContext()
 const loading = ref(true)
@@ -23,21 +28,30 @@ const sources = ref<DownloadSource[]>(DEFAULT_DOWNLOAD_SOURCES.map((source) => (
 const loaderSources = ref<LoaderSource[]>(
   DEFAULT_LOADER_SOURCES.map((source) => ({ ...source })),
 )
+const modSources = ref<ModSource[]>(DEFAULT_MOD_SOURCES.map((source) => ({ ...source })))
 const saved = ref(true)
 const loaderSaved = ref(true)
+const modSaved = ref(true)
 const dragIndex = ref(-1)
 const overIndex = ref(-1)
 const loaderDragIndex = ref(-1)
 const loaderOverIndex = ref(-1)
+const modDragIndex = ref(-1)
+const modOverIndex = ref(-1)
 const editorOpen = ref(false)
 const editorIndex = ref<number | null>(null)
 const loaderEditorOpen = ref(false)
 const loaderEditorIndex = ref<number | null>(null)
+const modEditorOpen = ref(false)
+const modEditorIndex = ref<number | null>(null)
 const sourcesAreDefault = computed(
   () => JSON.stringify(sources.value) === JSON.stringify(DEFAULT_DOWNLOAD_SOURCES),
 )
 const loaderSourcesAreDefault = computed(
   () => JSON.stringify(loaderSources.value) === JSON.stringify(DEFAULT_LOADER_SOURCES),
+)
+const modSourcesAreDefault = computed(
+  () => JSON.stringify(modSources.value) === JSON.stringify(DEFAULT_MOD_SOURCES),
 )
 const editorSource = computed<DownloadSource | null>(() => {
   if (editorIndex.value === null) return null
@@ -46,6 +60,10 @@ const editorSource = computed<DownloadSource | null>(() => {
 const loaderEditorSource = computed<LoaderSource | null>(() => {
   if (loaderEditorIndex.value === null) return null
   return loaderSources.value[loaderEditorIndex.value] ?? null
+})
+const modEditorSource = computed<ModSource | null>(() => {
+  if (modEditorIndex.value === null) return null
+  return modSources.value[modEditorIndex.value] ?? null
 })
 
 let concurrencyTimer: ReturnType<typeof setTimeout> | null = null
@@ -58,6 +76,14 @@ const loaderDisplayName = (index: number): string => {
   if (!source) return `加载器源 ${index + 1}`
   return source.label.trim() || `${LOADER_LABELS[source.kind]} 源 ${index + 1}`
 }
+
+const modDisplayName = (index: number): string => {
+  const source = modSources.value[index]
+  if (!source) return `Mod 源 ${index + 1}`
+  return source.label.trim() || `${MOD_SOURCE_LABELS[source.kind]} 源 ${index + 1}`
+}
+
+
 
 function markDirty(): void {
   saved.value = false
@@ -78,13 +104,16 @@ async function loadSettings(): Promise<void> {
       cacheLimit: string
       sources: DownloadSource[]
       loaderSources: LoaderSource[]
+      modSources: ModSource[]
     }>('mics.download.manager', 'settings/get')
     concurrency.value = settings.concurrency
     cacheLimit.value = settings.cacheLimit
     sources.value = normalizeDownloadSources(settings.sources)
     loaderSources.value = normalizeLoaderSources(settings.loaderSources)
+    modSources.value = normalizeModSources(settings.modSources)
     saved.value = true
     loaderSaved.value = true
+    modSaved.value = true
   } finally {
     loading.value = false
   }
@@ -239,6 +268,95 @@ function setLoaderSourceEnabled(index: number, enabled: boolean): void {
 function removeLoaderSource(index: number): void {
   loaderSources.value.splice(index, 1)
   markLoaderDirty()
+}
+
+async function saveModSources(): Promise<void> {
+  const normalized = modSources.value.map((source, index) => {
+    const official = DEFAULT_MOD_SOURCES.find((item) => item.kind === source.kind)
+    return {
+      label: source.label.trim() || modDisplayName(index),
+      kind: source.kind,
+      // 留空表示使用官方地址；与主进程的归一化保持一致
+      api: source.api.trim() || official?.api || '',
+      key: source.key.trim(),
+      enabled: source.enabled !== false,
+    }
+  })
+  await ctx.ipc.invoke('mics.download.manager', 'settings/set', {
+    key: 'modSources',
+    value: JSON.stringify(normalized),
+  })
+  modSources.value = normalized
+  modSaved.value = true
+}
+
+async function resetModSources(): Promise<void> {
+  modSources.value = DEFAULT_MOD_SOURCES.map((source) => ({ ...source }))
+  await saveModSources()
+}
+
+function markModDirty(): void {
+  modSaved.value = false
+}
+
+function resetModDrag(): void {
+  modDragIndex.value = -1
+  modOverIndex.value = -1
+}
+
+function onModDragStart(index: number, event: DragEvent): void {
+  modDragIndex.value = index
+  modOverIndex.value = index
+  event.dataTransfer?.setData('text/plain', String(index))
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function onModDragOver(index: number, event: DragEvent): void {
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  modOverIndex.value = index
+}
+
+function onModDrop(index: number): void {
+  const from = modDragIndex.value
+  resetModDrag()
+  if (from < 0 || from === index) return
+  const list = [...modSources.value]
+  const [item] = list.splice(from, 1)
+  if (!item) return
+  list.splice(index, 0, item)
+  modSources.value = list
+  markModDirty()
+}
+
+function openModEditor(index: number | null): void {
+  modEditorIndex.value = index
+  modEditorOpen.value = true
+}
+
+function closeModEditor(): void {
+  modEditorOpen.value = false
+  modEditorIndex.value = null
+}
+
+function applyModEditor(source: ModSource): void {
+  const index = modEditorIndex.value
+  if (index === null) modSources.value.push(source)
+  else modSources.value[index] = source
+  closeModEditor()
+  markModDirty()
+}
+
+function setModSourceEnabled(index: number, enabled: boolean): void {
+  const source = modSources.value[index]
+  if (!source) return
+  source.enabled = enabled
+  markModDirty()
+}
+
+function removeModSource(index: number): void {
+  modSources.value.splice(index, 1)
+  markModDirty()
 }
 
 function resetDrag(): void {
@@ -580,6 +698,116 @@ onUnmounted(() => {
         </div>
       </section>
 
+      <section class="mics-section">
+        <div class="settings-sources__head">
+          <div class="settings-sources__heading">
+            <h2 class="mics-section__title">Mod 下载源</h2>
+            <span class="settings-sources__note">可添加镜像；CurseForge 需要 API Key</span>
+          </div>
+          <div class="settings-sources__actions">
+            <button class="mics-button mics-button--ghost mics-button--small" @click="openModEditor(null)">
+              添加源
+            </button>
+            <button
+              class="mics-button mics-button--ghost mics-button--small"
+              title="恢复默认值"
+              :disabled="modSourcesAreDefault"
+              @click="resetModSources"
+            >
+              重置
+            </button>
+            <button
+              class="mics-button mics-button--small"
+              :class="modSaved ? 'mics-button--ghost' : 'mics-button--primary'"
+              :disabled="modSaved"
+              @click="saveModSources"
+            >
+              {{ modSaved ? '已保存' : '保存' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="mics-list">
+          <div v-if="modSources.length === 0" class="mics-empty">尚未配置 Mod 下载源</div>
+
+          <div
+            v-for="(src, index) in modSources"
+            :key="index"
+            class="settings-source"
+            :class="{
+              'settings-source--dragging': index === modDragIndex,
+              'settings-source--over': index === modOverIndex && index !== modDragIndex,
+              'settings-source--disabled': !src.enabled,
+            }"
+            @dragover="onModDragOver(index, $event)"
+            @drop="onModDrop(index)"
+          >
+            <button
+              class="settings-source__handle"
+              type="button"
+              title="拖拽排序"
+              aria-label="拖拽排序"
+              draggable="true"
+              @dragstart="onModDragStart(index, $event)"
+              @dragend="resetModDrag"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                <line x1="8" y1="6" x2="16" y2="6" />
+                <line x1="8" y1="12" x2="16" y2="12" />
+                <line x1="8" y1="18" x2="16" y2="18" />
+              </svg>
+            </button>
+
+            <span class="mics-badge">{{ MOD_SOURCE_LABELS[src.kind] }}</span>
+            <span class="settings-source__name" :title="modDisplayName(index)">
+              {{ modDisplayName(index) }}
+            </span>
+            <span v-if="!src.enabled" class="settings-source__state">已禁用</span>
+            <span
+              v-else-if="modSourceNeedsKey(src) && !src.key.trim()"
+              class="settings-source__state"
+            >
+              缺少 API Key
+            </span>
+
+            <div class="settings-source__actions">
+              <button
+                class="settings-source__action"
+                type="button"
+                title="编辑"
+                aria-label="编辑"
+                @click="openModEditor(index)"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                </svg>
+              </button>
+
+              <button
+                class="settings-source__action settings-source__action--danger"
+                type="button"
+                title="删除"
+                aria-label="删除"
+                @click="removeModSource(index)"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4h8v2" />
+                  <path d="M19 6l-1 14H6L5 6" />
+                </svg>
+              </button>
+
+              <ToggleSwitch
+                :model-value="src.enabled"
+                :label="`${modDisplayName(index)}：${src.enabled ? '已启用' : '已禁用'}`"
+                title="关闭后跳过该来源"
+                @update:model-value="setModSourceEnabled(index, $event)"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
       <SourceEditorDialog
         :open="editorOpen"
         :source="editorSource"
@@ -592,6 +820,13 @@ onUnmounted(() => {
         :source="loaderEditorSource"
         @submit="applyLoaderEditor"
         @cancel="closeLoaderEditor"
+      />
+
+      <ModSourceDialog
+        :open="modEditorOpen"
+        :source="modEditorSource"
+        @submit="applyModEditor"
+        @cancel="closeModEditor"
       />
     </template>
   </div>
