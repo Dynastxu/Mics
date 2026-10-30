@@ -1,8 +1,8 @@
 import { app, shell } from 'electron'
 import type { Context } from 'cordis'
 import { defineMainPlugin } from '@mics/sdk/main'
-import { SHELL_EXECUTE } from '@mics/sdk'
-import type { ShellExecuteCapability } from '@mics/sdk'
+import { AUTH_CREDENTIALS, SHELL_EXECUTE } from '@mics/sdk'
+import type { AuthCredentialsCapability, ShellExecuteCapability } from '@mics/sdk'
 import { listInstances, markInstanceLaunched, resolveInstance } from './instances'
 import {
   deleteInstanceDirectory,
@@ -43,11 +43,6 @@ const BEHAVIOR_KEY = 'repeatLaunchBehavior'
 const WINDOW_PROBE_TIMEOUT = 120_000
 /** 无法探测窗口的平台（非 Windows / 无 PowerShell）下，稍等片刻就恢复按钮 */
 const FALLBACK_RUNNING_DELAY = 4_000
-
-function sanitizeUsername(value: unknown): string {
-  const name = typeof value === 'string' ? value.trim() : ''
-  return name ? name.slice(0, 16) : 'Steve'
-}
 
 function normalizeBehavior(value: unknown): RepeatLaunchBehavior {
   return value === 'launch' || value === 'ignore' ? value : 'prompt'
@@ -185,18 +180,7 @@ export function apply(ctx: Context): void {
     return { id }
   })
 
-  ctx.ipc.handle('account/get', () => ({
-    username: sanitizeUsername(ctx.storage.get<string>('username', 'Steve')),
-  }))
-
-  ctx.ipc.handle<{ username: string }>('account/set', ({ username }) => {
-    const name = sanitizeUsername(username)
-    ctx.storage.set('username', name)
-    log.info('玩家名称已更新为 %s', name)
-    return { username: name }
-  })
-
-  ctx.ipc.handle<LaunchRequest>('instances/launch', async ({ id, username }): Promise<LaunchOutcome> => {
+  ctx.ipc.handle<LaunchRequest>('instances/launch', async ({ id, accountId }): Promise<LaunchOutcome> => {
     const instance = resolveInstance(dataDir, id)
     if (!instance) throw new Error('实例不存在或缺少版本文件')
     if (instance.installState !== 'ready') throw new Error('实例尚未下载完成，暂时无法启动')
@@ -204,14 +188,18 @@ export function apply(ctx: Context): void {
 
     preparing.add(id)
     try {
-      const name = sanitizeUsername(username || ctx.storage.get<string>('username', 'Steve'))
+      // 账户凭据由账户插件决定（正版 / 离线），启动管线只消费结果
+      const credentials = await ctx.capabilities
+        .require<AuthCredentialsCapability>(AUTH_CREDENTIALS)
+        .resolve(accountId)
+
       const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
       const memoryMb = Number.isFinite(memory) ? memory : 4096
       log.info(
-        '开始启动实例 %s（版本 %s，用户 %s，内存 %dMB）',
+        '开始启动实例 %s（版本 %s，账户 %s，内存 %dMB）',
         instance.id,
         instance.version.id,
-        name,
+        credentials.name,
         memoryMb,
       )
 
@@ -219,7 +207,7 @@ export function apply(ctx: Context): void {
       const shellCapability = ctx.capabilities.require<ShellExecuteCapability>(SHELL_EXECUTE)
 
       const launched = await launchInstance(shellCapability, instance, {
-        username: name,
+        credentials,
         launcherVersion: app.getVersion(),
         memoryMb,
         onLog: (level, message) => {
@@ -227,7 +215,7 @@ export function apply(ctx: Context): void {
           else log.info('%s', message)
         },
       })
-      markInstanceLaunched(instance, name)
+      markInstanceLaunched(instance, credentials.name)
 
       runtime.add(instance.id, launched.pid, launched.child)
       // 游戏进程退出时记一条日志；监听只触发一次，不需要额外回收

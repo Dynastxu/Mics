@@ -11,7 +11,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { ShellExecuteCapability, ShellProcess } from '@mics/sdk'
+import type { LaunchCredentials, ShellExecuteCapability, ShellProcess } from '@mics/sdk'
 import { findJava } from '@mics/java'
 import type { ResolvedInstance } from './instances'
 import type { MissingFile } from './shared'
@@ -19,7 +19,8 @@ import type { ArgumentEntry, Library, LibraryDownload, Rule } from './version'
 import { isReadableJar, syncNativeLibraries } from './zip'
 
 export interface LaunchOptions {
-  username: string
+  /** 由账户插件解析出的启动凭据（名字、UUID、令牌、user_type、额外 JVM 参数） */
+  credentials: LaunchCredentials
   launcherVersion: string
   memoryMb?: number
   /** 启动准备阶段的告警出口；由调用方接到插件日志器上 */
@@ -225,14 +226,6 @@ function nativeEntry(library: Library): NativeEntry | null {
   }
 }
 
-function offlineUuid(username: string): string {
-  const digest = createHash('md5').update(`OfflinePlayer:${username}`, 'utf8').digest()
-  digest[6] = ((digest[6] ?? 0) & 0x0f) | 0x30
-  digest[8] = ((digest[8] ?? 0) & 0x3f) | 0x80
-  const hex = digest.toString('hex')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
 /** 启动时需要的 native jar 清单（只包含当前平台实际会加载的库） */
 function nativeJarFiles(libraries: Library[], librariesDir: string): LaunchFile[] {
   const files: LaunchFile[] = []
@@ -381,16 +374,17 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
   const classpath = [clientJar, ...librariesInClasspath, ...nativesDir.jars]
 
   const memoryMb = Math.max(1024, Math.min(32768, Math.round(options.memoryMb ?? 4096)))
+  const credentials = options.credentials
   const variables: Record<string, string> = {
-    auth_player_name: options.username,
+    auth_player_name: credentials.name,
     version_name: version.id,
     game_directory: instance.dir,
     assets_root: assetsDir,
     assets_index_name: assetIndex,
-    auth_uuid: offlineUuid(options.username),
-    auth_access_token: '0',
-    auth_session: '0',
-    user_type: 'legacy',
+    auth_uuid: credentials.uuid,
+    auth_access_token: credentials.accessToken,
+    auth_session: credentials.accessToken,
+    user_type: credentials.userType,
     version_type: version.type ?? 'release',
     game_assets: assetsDir,
     user_properties: '{}',
@@ -408,6 +402,9 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
   }
 
   const jvmArgs: string[] = [`-Xms${Math.min(1024, memoryMb)}M`, `-Xmx${memoryMb}M`]
+  // 账户插件提供的额外参数（例如第三方登录要注入的 javaagent）原样拼在前面，
+  // 启动管线不判断账户类型，也不假设一定有。
+  jvmArgs.push(...(credentials.jvmArgs ?? []))
   if (version.arguments?.jvm) {
     jvmArgs.push(...expandArguments(version.arguments.jvm, variables))
   }

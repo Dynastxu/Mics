@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
-import type { InstallStartResult, InstanceInstallStatus } from '@mics/sdk'
+import type { AccountSnapshot, AccountSummary, InstallStartResult, InstanceInstallStatus } from '@mics/sdk'
+import { ACCOUNT_CHANGED_TOPIC, ACCOUNT_KIND_LABELS } from '@mics/sdk'
 import type {
   InstanceSummary,
   LaunchOutcome,
@@ -24,7 +25,9 @@ const loading = ref(true)
 const error = ref('')
 const notice = ref('')
 const selected = ref('')
-const username = ref('Steve')
+/** 账户列表与当前选择；没有账户时不能启动 */
+const accounts = ref<AccountSummary[]>([])
+const accountId = ref('')
 /** 正在执行启动 IPC（准备依赖、spawn 进程）的实例 */
 const pending = ref<string[]>([])
 const conflict = ref<InstanceSummary | null>(null)
@@ -73,7 +76,12 @@ function isRepairing(id: string): boolean {
 }
 
 let offState: (() => void) | null = null
+let offAccounts: (() => void) | null = null
 let statusTimer: ReturnType<typeof setInterval> | null = null
+
+function messageOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
 
 const ACCENTS = ['', 'mics-avatar--amber', 'mics-avatar--teal', 'mics-avatar--rose']
 
@@ -237,24 +245,36 @@ async function loadSettings(): Promise<void> {
   } catch { /* 使用默认的「提示」 */ }
 }
 
-async function loadAccount(): Promise<void> {
-  try {
-    const account = await ctx.ipc.invoke<{ username: string }>('mics.launch', 'account/get')
-    username.value = account.username
-  } catch { /* 使用默认离线名 */ }
+/** 账户快照：当前选择不在列表里时回退到账户插件记录的当前账户 */
+function applyAccounts(snapshot: AccountSnapshot): void {
+  accounts.value = snapshot.accounts
+  const fallback = snapshot.activeId ?? snapshot.accounts[0]?.id ?? ''
+  if (!snapshot.accounts.some((account) => account.id === accountId.value)) {
+    accountId.value = fallback
+  }
 }
 
-async function saveUsername(): Promise<void> {
+async function loadAccounts(): Promise<void> {
   try {
-    const account = await ctx.ipc.invoke<{ username: string }>(
-      'mics.launch',
-      'account/set',
-      { username: username.value },
-    )
-    username.value = account.username
-  } catch (cause) {
-    notice.value = `保存用户名失败：${cause instanceof Error ? cause.message : String(cause)}`
+    applyAccounts(await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/list'))
+  } catch {
+    // 账户插件未就绪时保持空列表，启动入口会提示先添加账户
   }
+}
+
+async function selectAccount(): Promise<void> {
+  if (!accountId.value) return
+  try {
+    applyAccounts(await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/setActive', {
+      id: accountId.value,
+    }))
+  } catch (cause) {
+    notice.value = `切换账户失败：${messageOf(cause)}`
+  }
+}
+
+function openAccounts(): void {
+  if (!ctx.ui.navigate('account')) notice.value = '账户页面尚未启用'
 }
 
 async function rememberBehavior(behavior: RepeatLaunchBehavior): Promise<void> {
@@ -269,14 +289,17 @@ async function rememberBehavior(behavior: RepeatLaunchBehavior): Promise<void> {
 
 async function startLaunch(instance: InstanceSummary): Promise<void> {
   if (isStarting(instance)) return
+  if (!accountId.value) {
+    notice.value = '还没有添加账户，请先在「账户」页添加'
+    return
+  }
   selected.value = instance.id
   pending.value = [...pending.value, instance.id]
   notice.value = ''
   try {
-    await saveUsername()
     const result = await ctx.ipc.invoke<LaunchOutcome>('mics.launch', 'instances/launch', {
       id: instance.id,
-      username: username.value,
+      accountId: accountId.value,
     })
     // 文件不完整不是失败：交给用户确认，补全由下载管线负责
     if (result.status === 'missing-files') {
@@ -306,7 +329,6 @@ async function confirmRepair(): Promise<void> {
   repairing.value = [...repairing.value, instance.id]
   notice.value = ''
   try {
-    await saveUsername()
     const result = await ctx.ipc.invoke<InstallStartResult>(
       'mics.download.manager',
       'install/repair',
@@ -368,17 +390,23 @@ onMounted(() => {
     const state = payload as LaunchState | undefined
     if (state && Array.isArray(state.instances)) runtime.value = state
   })
+  offAccounts = ctx.ipc.on(ACCOUNT_CHANGED_TOPIC, (payload) => {
+    const snapshot = payload as AccountSnapshot | undefined
+    if (snapshot && Array.isArray(snapshot.accounts)) applyAccounts(snapshot)
+  })
   void load()
   void loadStatuses()
   void refreshState()
   void loadSettings()
-  void loadAccount()
+  void loadAccounts()
   statusTimer = setInterval(() => { void refreshStatuses() }, 3000)
 })
 
 onUnmounted(() => {
   offState?.()
   offState = null
+  offAccounts?.()
+  offAccounts = null
   if (statusTimer) {
     clearInterval(statusTimer)
     statusTimer = null
@@ -395,6 +423,7 @@ onUnmounted(() => {
     :install-phase="phases[detailInstance.id] ?? 'incomplete'"
     :can-launch="phases[detailInstance.id] === 'ready' && !isLaunchHidden(detailInstance)"
     :repairing="isRepairing(detailInstance.id)"
+    :account-ready="Boolean(accountId)"
     @repair="repair(detailInstance)"
     @back="closeDetail"
     @play="playDetail"
@@ -407,18 +436,28 @@ onUnmounted(() => {
     <header class="mics-page__header">
       <h1 class="mics-page__title">启动</h1>
       <div class="mics-page__actions">
-        <label class="launch__account" title="离线用户名">
-          <span class="launch__account-dot" />
-          <span class="launch__account-label">离线</span>
-          <input
-            v-model="username"
-            class="mics-input launch__account-input"
-            maxlength="16"
-            aria-label="离线用户名"
-            spellcheck="false"
-            @change="saveUsername"
-          />
-        </label>
+        <template v-if="accounts.length">
+          <select
+            v-model="accountId"
+            class="mics-select launch__account"
+            aria-label="启动账户"
+            @change="selectAccount"
+          >
+            <option v-for="account in accounts" :key="account.id" :value="account.id">
+              {{ account.name }} · {{ ACCOUNT_KIND_LABELS[account.kind] }}{{ account.authorized ? '' : '（需重新登录）' }}
+            </option>
+          </select>
+          <button class="mics-button mics-button--ghost mics-button--small" @click="openAccounts">
+            账户
+          </button>
+        </template>
+        <button
+          v-else
+          class="mics-button mics-button--primary mics-button--small"
+          @click="openAccounts"
+        >
+          添加账户
+        </button>
       </div>
     </header>
 
@@ -475,7 +514,8 @@ onUnmounted(() => {
             <button
               v-if="phases[instance.id] === 'ready' && !isLaunchHidden(instance)"
               class="mics-button mics-button--primary mics-button--small"
-              :disabled="isStarting(instance)"
+              :disabled="isStarting(instance) || !accountId"
+              :title="accountId ? '' : '先添加账户'"
               @click="play(instance)"
             >
               {{ isStarting(instance) ? '启动中…' : '开始游戏' }}
@@ -511,41 +551,7 @@ onUnmounted(() => {
 
 <style scoped>
 .launch__account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--mics-border);
-  border-radius: 7px;
-}
-
-.launch__account-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #4ade80;
-}
-
-.launch__account-label {
-  color: var(--mics-fg-muted);
-  font-size: 12px;
-}
-
-.launch__account-input {
-  width: 104px;
-  height: 24px;
-  padding: 0 6px;
-  border-color: transparent;
-  background: transparent;
-}
-
-.launch__account-input:hover {
-  border-color: var(--mics-border);
-}
-
-.launch__account-input:focus {
-  border-color: var(--mics-accent);
+  width: 180px;
 }
 
 .launch__row {

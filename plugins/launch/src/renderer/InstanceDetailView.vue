@@ -22,6 +22,8 @@ const props = defineProps<{
   /** 启动页汇总的安装阶段：下载中 / 已暂停 / 不完整 */
   installPhase: 'ready' | 'downloading' | 'paused' | 'incomplete'
   canLaunch: boolean
+  /** 已有可用账户；没有账户时启动按钮禁用 */
+  accountReady: boolean
   repairing: boolean
 }>()
 
@@ -433,7 +435,8 @@ onMounted(() => {
           v-if="canLaunch"
           class="mics-button mics-button--primary mics-button--small"
           type="button"
-          :disabled="starting"
+          :disabled="starting || !accountReady"
+          :title="accountReady ? '' : '先添加账户'"
           @click="requestPlay"
         >
           {{ starting ? '启动中…' : alive ? '再次启动' : '开始游戏' }}

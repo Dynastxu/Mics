@@ -16,7 +16,8 @@ export interface InstanceSummary {
 
 export interface LaunchRequest {
   id: string
-  username: string
+  /** 使用哪个账户启动；省略时由账户插件使用当前选中的账户 */
+  accountId?: string
 }
 
 /** 启动前发现缺失 / 损坏的必要文件 */

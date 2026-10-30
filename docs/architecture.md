@@ -106,8 +106,8 @@ Service 是「一个名字一个实现」，而有些能力需要**多份实现*
 
 | 角色 | 位置 | 例子 |
 | --- | --- | --- |
-| definition | `@mics/sdk` 的 `capability.ts`：能力名 + 接口 | `SHELL_EXECUTE` / `FileTransferCapability` |
-| provider | 插件在 `apply()` 里 `ctx.capabilities.provide(name, impl, { priority })` | `mics.shell` 提供本机进程，`download-manager` 提供本机传输 |
+| definition | `@mics/sdk` 的 `capability.ts` / `account.ts`：能力名 + 接口 | `SHELL_EXECUTE` / `FILE_TRANSFER` / `AUTH_CREDENTIALS` |
+| provider | 插件在 `apply()` 里 `ctx.capabilities.provide(name, impl, { priority })` | `mics.shell` 提供本机进程，`download-manager` 提供本机传输，`mics.account` 提供启动凭据 |
 | consumer | `ctx.capabilities.require(name)` | `mics.launch` 启动游戏、下载管线传输文件 |
 
 选择规则是「priority 高的赢，同优先级后注册的赢」。因此沙箱插件只要注册同名能力并给
@@ -116,6 +116,11 @@ Service 是「一个名字一个实现」，而有些能力需要**多份实现*
 
 与 Service 的分工：**能力名是契约，Service 名是实现入口**。需要「换实现」的用能力，
 需要「拿运行时服务」的（storage / ipc / logs）继续用 inject。
+
+`AUTH_CREDENTIALS` 是这条分工的另一个例子：账户插件负责 Microsoft 设备码登录与离线账户，
+启动插件只要求一份 `LaunchCredentials`（名字、UUID、令牌、`user_type`、额外 JVM 参数）。
+新增第三方登录（Yggdrasil / authlib-injector）只需要在账户插件里加一个 provider，
+启动插件与页面不受影响。
 
 ### 配置 schema 与 profile
 

@@ -1,0 +1,27 @@
+{
+  "id": "mics.account",
+  "name": "账户",
+  "version": "0.1.0",
+  "description": "账户管理：Microsoft 正版登录（设备码）与离线账户；通过 auth.credentials 能力向启动页提供启动凭据。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "dependencies": ["mics.kernel"],
+  "permissions": ["shell:openExternal"],
+  "contributes": {
+    "nav": [{ "id": "account", "title": "账户", "icon": "user", "order": 0 }],
+    "configuration": {
+      "title": "账户",
+      "description": "与部署相关的登录参数。",
+      "properties": {
+        "microsoftClientId": {
+          "type": "string",
+          "title": "Microsoft 应用 client id",
+          "description": "临时占位：官方启动器的 Live id；注册 Mics 的 Azure 应用后替换为它的 GUID",
+          "default": "00000000402b5328"
+        }
+      }
+    }
+  }
+}
