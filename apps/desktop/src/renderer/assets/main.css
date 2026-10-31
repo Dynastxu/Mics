@@ -275,10 +275,24 @@ svg.mics-icon {
 }
 
 .mics-main__body {
+  position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* 访问过的页面叠在这里：切换导航只切 visibility，页面 DOM 不参与重排，
+   列表、表单和各自的滚动位置都原地保留 */
+.mics-main__page {
+  position: absolute;
+  inset: 0;
   overflow: auto;
   padding: 26px 32px 40px;
+  visibility: hidden;
+}
+
+.mics-main__page.is-active {
+  visibility: visible;
 }
 
 .mics-page {
@@ -970,7 +984,7 @@ svg.mics-icon {
 
 /* 窗口可以缩到 640×420，表单在窄宽度下改为上下排布，避免横向溢出 */
 @media (max-width: 900px) {
-  .mics-main__body {
+  .mics-main__page {
     padding: 18px 18px 28px;
   }
 
