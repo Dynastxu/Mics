@@ -2,9 +2,11 @@
   "id": "mics.download.datapack",
   "name": "数据包下载",
   "version": "0.1.0",
-  "description": "数据包目录：按游戏版本筛选。",
+  "description": "数据包目录：从 Modrinth / CurseForge 搜索数据包，安装到实例的指定存档。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "dependencies": ["mics.download.manager", "mics.notifications"],
   "contributes": {
     "nav": [
       {

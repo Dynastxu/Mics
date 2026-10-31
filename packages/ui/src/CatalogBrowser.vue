@@ -42,6 +42,8 @@ const props = withDefaults(
     pageSize?: number
     /** 加载器筛选项；由页面传入，组件不绑定具体业务枚举 */
     loaders: CatalogLoaderOption[]
+    /** 是否显示加载器筛选；资源包 / 光影包 / 数据包没有 Mod 加载器概念 */
+    showLoaderFilter?: boolean
     /** 发布渠道显示名，默认 release / beta / alpha */
     channelLabels?: Record<string, string>
     fetchSources: () => Promise<CatalogSourceInfo[]>
@@ -60,6 +62,7 @@ const props = withDefaults(
     versionSearchPlaceholder: '搜索版本',
     pageSize: 20,
     channelLabels: () => ({ release: '正式版', beta: '测试版', alpha: '早期版' }),
+    showLoaderFilter: true,
     intent: null
   }
 )
@@ -165,50 +168,61 @@ function channelLabel(value: string): string {
   return props.channelLabels[value] ?? value
 }
 
-const filterGroups = computed<FilterGroup[]>(() => [
-  {
-    key: 'source',
-    label: '来源',
-    mode: 'single',
-    exclusive: 'all',
-    options: [
-      { value: 'all', label: '全部' },
-      ...sourceOptions.value.map((item) => ({ value: item.kind, label: item.label }))
-    ]
-  },
-  {
-    key: 'gameVersion',
-    label: 'MC 版本',
-    mode: 'single',
-    exclusive: 'all',
-    options: [
-      { value: 'all', label: '全部' },
-      ...gameVersions.value
-        .filter((item) => item.type === 'release')
-        .map((item) => ({ value: item.id, label: item.id }))
-    ]
-  },
-  {
-    key: 'loader',
-    label: '加载器',
-    mode: 'single',
-    exclusive: 'all',
-    options: [
-      { value: 'all', label: '全部' },
-      ...props.loaders.map((item) => ({ value: item.value, label: item.label }))
-    ]
-  },
-  {
-    key: 'category',
-    label: '类型',
-    mode: 'single',
-    exclusive: 'all',
-    options: [
-      { value: 'all', label: '全部' },
-      ...categories.value.map((item) => ({ value: item.id, label: item.label }))
-    ]
+const filterGroups = computed<FilterGroup[]>(() => {
+  const groups: FilterGroup[] = [
+    {
+      key: 'source',
+      label: '来源',
+      mode: 'single',
+      exclusive: 'all',
+      options: [
+        { value: 'all', label: '全部' },
+        ...sourceOptions.value.map((item) => ({ value: item.kind, label: item.label }))
+      ]
+    },
+    {
+      key: 'gameVersion',
+      label: 'MC 版本',
+      mode: 'single',
+      exclusive: 'all',
+      options: [
+        { value: 'all', label: '全部' },
+        ...gameVersions.value
+          .filter((item) => item.type === 'release')
+          .map((item) => ({ value: item.id, label: item.id }))
+      ]
+    }
+  ]
+
+  if (props.showLoaderFilter) {
+    groups.push({
+      key: 'loader',
+      label: '加载器',
+      mode: 'single',
+      exclusive: 'all',
+      options: [
+        { value: 'all', label: '全部' },
+        ...props.loaders.map((item) => ({ value: item.value, label: item.label }))
+      ]
+    })
   }
-])
+
+  // 没有分类数据时整组隐藏：只留一个「全部」的空筛选没有意义。
+  if (categories.value.length > 0) {
+    groups.push({
+      key: 'category',
+      label: '类型',
+      mode: 'single',
+      exclusive: 'all',
+      options: [
+        { value: 'all', label: '全部' },
+        ...categories.value.map((item) => ({ value: item.id, label: item.label }))
+      ]
+    })
+  }
+
+  return groups
+})
 
 const filterActive = computed(() => isFilterActive(filterSelection.value, filterGroups.value))
 
@@ -243,21 +257,27 @@ const versionFilterGroups = computed<FilterGroup[]>(() => {
     (value) => ({ value, label: loaderLabel(value) })
   )
 
-  return [
+  const groups: FilterGroup[] = [
     {
       key: 'gameVersion',
       label: 'MC 版本',
       mode: 'single',
       exclusive: 'all',
       options: [{ value: 'all', label: '全部' }, ...versionOptions]
-    },
-    {
+    }
+  ]
+
+  if (props.showLoaderFilter && loaderOptions.length > 0) {
+    groups.push({
       key: 'loader',
       label: '加载器',
       mode: 'single',
       exclusive: 'all',
       options: [{ value: 'all', label: '全部' }, ...loaderOptions]
-    },
+    })
+  }
+
+  groups.push(
     {
       key: 'channel',
       label: '版本类型',
@@ -278,7 +298,9 @@ const versionFilterGroups = computed<FilterGroup[]>(() => {
         { value: 'oldest', label: '最早发布' }
       ]
     }
-  ]
+  )
+
+  return groups
 })
 
 const versionRows = computed<ListRow[]>(() =>

@@ -1,136 +1,207 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
+import type {
+  GameVersion,
+  InstallStartResult,
+  InstanceSummary,
+  ModCategory,
+  ModSourceInfo,
+  ModSourceKind,
+  ModSummary,
+  ModVersion,
+  ModVersionRequest,
+  NotificationsServiceApi,
+  PackKind
+} from '@mics/sdk'
+import { usePluginContext } from '@mics/sdk/renderer'
+import { CatalogBrowser, PackInstallDialog } from '@mics/ui'
+import type {
+  CatalogCategory,
+  CatalogGameVersion,
+  CatalogItem,
+  CatalogSearchRequest,
+  CatalogSearchResult,
+  CatalogSourceInfo,
+  CatalogVersion
+} from '@mics/ui'
 
-interface ResourcepackItem {
-  id: string
-  name: string
-  author: string
-  summary: string
-  downloads: string
-  versions: string[]
-  resolution: string
+const KIND: PackKind = 'resourcepack'
+const ctx = usePluginContext()
+
+const installOpen = ref(false)
+const installVersion = ref<CatalogVersion | null>(null)
+const instances = ref<InstanceSummary[]>([])
+const instancesLoading = ref(false)
+const instancesError = ref('')
+const installing = ref(false)
+const installError = ref('')
+
+async function fetchSources(): Promise<CatalogSourceInfo[]> {
+  return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.manager', 'packs/sources', { kind: KIND })
 }
 
-const PACKS: ResourcepackItem[] = [
-  {
-    id: 'clean-ui',
-    name: '清爽界面',
-    author: '白露',
-    summary: '低饱和的 GUI 与字体，适合长时间游玩。',
-    downloads: '22 万',
-    versions: ['1.21.4', '1.21.1', '1.20.1'],
-    resolution: '16×'
-  },
-  {
-    id: 'realistic-64',
-    name: '写实材质 64×',
-    author: '石匠',
-    summary: '保留原版风格的高分辨率材质。',
-    downloads: '48 万',
-    versions: ['1.21.4', '1.20.1'],
-    resolution: '64×'
-  },
-  {
-    id: 'medieval',
-    name: '中世纪纹理',
-    author: '城堡',
-    summary: '石砖、木材与布料的复古配色。',
-    downloads: '31 万',
-    versions: ['1.21.1', '1.20.1'],
-    resolution: '32×'
-  },
-  {
-    id: 'low-end',
-    name: '低配优化',
-    author: '轻风',
-    summary: '把复杂方块压缩成简单色块，帧数更稳。',
-    downloads: '17 万',
-    versions: ['1.21.4', '1.21.1'],
-    resolution: '16×'
-  },
-  {
-    id: 'minimal-sky',
-    name: '极简天空',
-    author: '远山',
-    summary: '去掉云层噪点，只保留渐变与星点。',
-    downloads: '11 万',
-    versions: ['1.21.4'],
-    resolution: '32×'
-  },
-  {
-    id: 'hand-font',
-    name: '手绘字体',
-    author: '墨线',
-    summary: '重新绘制全部界面文字，更适合小屏。',
-    downloads: '8.4 万',
-    versions: ['1.21.4', '1.21.1', '1.20.1'],
-    resolution: '16×'
+async function fetchCategories(): Promise<CatalogCategory[]> {
+  return ctx.ipc.invoke<ModCategory[]>('mics.download.manager', 'packs/categories', { kind: KIND })
+}
+
+async function fetchGameVersions(): Promise<CatalogGameVersion[]> {
+  return ctx.ipc.invoke<GameVersion[]>('mics.download.manager', 'versions/list')
+}
+
+async function search(request: CatalogSearchRequest): Promise<CatalogSearchResult> {
+  return ctx.ipc.invoke('mics.download.manager', 'packs/search', {
+    kind: KIND,
+    query: request.query,
+    source: request.source as ModSourceKind | 'all',
+    gameVersion: request.gameVersion,
+    loader: 'all',
+    category: '',
+    page: request.page,
+    pageSize: request.pageSize
+  })
+}
+
+async function fetchVersions(item: CatalogItem): Promise<CatalogVersion[]> {
+  const request: ModVersionRequest = {
+    source: item.source as ModSourceKind,
+    ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
+    projectId: item.projectId,
+    gameVersion: '',
+    loader: 'all'
   }
-]
+  return ctx.ipc.invoke<ModVersion[]>('mics.download.manager', 'packs/versions', {
+    kind: KIND,
+    ...request
+  })
+}
 
-const VERSIONS = ['1.21.4', '1.21.1', '1.20.1']
-const RESOLUTIONS = ['16×', '32×', '64×']
+async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
+  return ctx.ipc.invoke<ModSummary>('mics.download.manager', 'packs/project', {
+    kind: KIND,
+    source: item.source as ModSourceKind,
+    ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
+    projectId: item.projectId
+  })
+}
 
-const query = ref('')
-const gameVersion = ref('all')
-const resolution = ref('all')
-const notice = ref('')
+async function loadInstances(): Promise<void> {
+  instancesLoading.value = true
+  instancesError.value = ''
+  try {
+    // 启动插件是懒激活的：打开实例选择器时再把它拉起来。
+    await ctx.plugins.activate('mics.launch')
+    instances.value = await ctx.ipc.invoke<InstanceSummary[]>('mics.launch', 'instances/list')
+  } catch (cause) {
+    instancesError.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    instancesLoading.value = false
+  }
+}
 
-const visible = computed(() => {
-  const keyword = query.value.trim().toLowerCase()
-  return PACKS.filter(
-    (pack) =>
-      (gameVersion.value === 'all' || pack.versions.includes(gameVersion.value)) &&
-      (resolution.value === 'all' || pack.resolution === resolution.value) &&
-      (!keyword || `${pack.name} ${pack.author} ${pack.summary}`.toLowerCase().includes(keyword))
-  )
-})
+function openInstall(version: CatalogVersion): void {
+  installVersion.value = version
+  installError.value = ''
+  installOpen.value = true
+  void loadInstances()
+}
+
+function closeInstall(): void {
+  if (installing.value) return
+  installOpen.value = false
+  installVersion.value = null
+}
+
+function notify(version: CatalogVersion, instanceCount: number): void {
+  const options = {
+    level: 'info' as const,
+    title: '已开始安装',
+    message: `资源包 ${version.name} 已加入下载队列（${instanceCount} 个实例），可在「下载进度」查看。`,
+    duration: 0
+  }
+
+  // 优先走通知插件暴露的全局入口；它不受插件 fiber 之间服务可见性的影响。
+  const globalApi = (
+    globalThis as typeof globalThis & {
+      __MICS_NOTIFICATIONS__?: NotificationsServiceApi
+    }
+  ).__MICS_NOTIFICATIONS__
+  if (globalApi) {
+    globalApi.show(options)
+    return
+  }
+  ctx.notifications.show(options)
+}
+
+async function install(payload: { instanceNames: string[] }): Promise<void> {
+  const version = installVersion.value
+  if (!version || installing.value) return
+  installing.value = true
+  installError.value = ''
+  try {
+    const outcome = await ctx.ipc.invoke<InstallStartResult>(
+      'mics.download.manager',
+      'packs/install',
+      {
+        kind: KIND,
+        file: {
+          url: version.fileUrl,
+          fileName: version.fileName,
+          sha1: version.sha1,
+          size: version.size
+        },
+        instanceNames: payload.instanceNames,
+        title: version.name
+      }
+    )
+    if (outcome.error) {
+      installError.value = outcome.error
+      return
+    }
+    installing.value = false
+    installOpen.value = false
+    installVersion.value = null
+    notify(version, payload.instanceNames.length)
+  } catch (cause) {
+    installError.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    installing.value = false
+  }
+}
+
+function openDownloadSettings(): void {
+  ctx.ui.navigate('settings.download')
+}
 </script>
 
 <template>
-  <div class="mics-page">
-    <header class="mics-page__header">
-      <h1 class="mics-page__title">资源包</h1>
-    </header>
+  <CatalogBrowser
+    title="资源包"
+    entity-label="资源包"
+    search-placeholder="搜索资源包"
+    empty-text="没有匹配的资源包"
+    :loaders="[]"
+    :show-loader-filter="false"
+    :fetch-sources="fetchSources"
+    :fetch-categories="fetchCategories"
+    :fetch-game-versions="fetchGameVersions"
+    :search="search"
+    :fetch-versions="fetchVersions"
+    :fetch-project="fetchProject"
+    @install="openInstall"
+    @settings="openDownloadSettings"
+  />
 
-    <p v-if="notice" class="mics-notice">{{ notice }}</p>
-
-    <div class="mics-toolbar">
-      <input v-model="query" class="mics-input mics-toolbar__grow" placeholder="搜索资源包" />
-      <select v-model="gameVersion" class="mics-select">
-        <option value="all">全部版本</option>
-        <option v-for="version in VERSIONS" :key="version" :value="version">{{ version }}</option>
-      </select>
-      <select v-model="resolution" class="mics-select">
-        <option value="all">全部分辨率</option>
-        <option v-for="item in RESOLUTIONS" :key="item" :value="item">{{ item }}</option>
-      </select>
-    </div>
-
-    <section class="mics-section">
-      <h2 class="mics-section__title">结果 · {{ visible.length }}</h2>
-
-      <div v-if="visible.length" class="mics-grid">
-        <article v-for="pack in visible" :key="pack.id" class="mics-card">
-          <div class="mics-card__head">
-            <span class="mics-card__title">{{ pack.name }}</span>
-            <span class="mics-badge">{{ pack.resolution }}</span>
-          </div>
-          <p class="mics-card__text">{{ pack.summary }}</p>
-          <div class="mics-card__foot">
-            <span class="mics-card__meta">
-              {{ pack.author }} · {{ pack.versions[0] }} · 下载 {{ pack.downloads }}
-            </span>
-            <button
-              class="mics-button mics-button--ghost mics-button--small"
-              @click="notice = `「${pack.name}」的安装流程尚未接入。`"
-            >
-              安装
-            </button>
-          </div>
-        </article>
-      </div>
-      <div v-else class="mics-empty">没有匹配的资源包</div>
-    </section>
-  </div>
+  <PackInstallDialog
+    :open="installOpen"
+    :kind="KIND"
+    :pack-name="installVersion?.name ?? ''"
+    :file-name="installVersion?.fileName ?? ''"
+    :game-versions="installVersion?.gameVersions ?? []"
+    :instances="instances"
+    :loading="instancesLoading"
+    :installing="installing"
+    :error="installError || instancesError"
+    @close="closeInstall"
+    @install="install"
+  />
 </template>

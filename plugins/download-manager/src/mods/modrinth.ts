@@ -1,6 +1,5 @@
 import type {
   ModDependency,
-  ModLoader,
   ModProjectKind,
   ModSearchRequest,
   ModSource,
@@ -8,7 +7,6 @@ import type {
   ModVersion,
   ModVersionRequest
 } from '@mics/sdk'
-import { isModLoader } from '@mics/sdk'
 import { categoryLabelOf, MOD_LOADER_CATEGORY_KEYS, modrinthCategoryOf } from './categories'
 import { modpackCategoryLabelOf, modpackModrinthCategoryOf } from '../modpacks/categories'
 import { endpoint, requestJson, withParams } from './http'
@@ -77,6 +75,7 @@ interface ModrinthProject {
   slug?: string
   title?: string
   description?: string
+  project_type?: string
   categories?: string[]
   downloads?: number
   follows?: number
@@ -100,6 +99,23 @@ export interface ModrinthIdentified {
 /** 一次最多取多少条；Modrinth 的 limit 上限是 100 */
 const MAX_LIMIT = 100
 
+function isPackProject(kind: ModProjectKind): boolean {
+  return kind === 'resourcepack' || kind === 'shader' || kind === 'datapack'
+}
+
+/**
+ * 项目主页的类型段。
+ *
+ * 数据包不是 Modrinth 的一等类型，搜索结果里的 `project_type` 通常是 `mod`；
+ * 直接拼 `datapack` 会得到 404。其它类型按实际项目类型拼。
+ */
+function urlTypeOf(kind: ModProjectKind, actual?: string): string {
+  if (kind === 'datapack') {
+    return actual === 'resourcepack' || actual === 'shader' || actual === 'modpack' ? actual : 'mod'
+  }
+  return kind
+}
+
 function hitSummary(
   source: ModSource,
   hit: ModrinthSearchHit,
@@ -109,13 +125,17 @@ function hitSummary(
   if (!projectId) return null
   const slug = hit.slug || projectId
   const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : categoryLabelOf
-  const categories = [
-    ...new Set(
-      (hit.display_categories ?? hit.categories ?? [])
-        .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
-        .map(labelOf)
-    )
-  ]
+  // 资源包的分类是 minecraft / 16x 之类的英文标签，放进「类型」徽标只会变成噪音；
+  // 页面暂时只展示来源与下载量。
+  const categories = isPackProject(kind)
+    ? []
+    : [
+        ...new Set(
+          (hit.display_categories ?? hit.categories ?? [])
+            .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
+            .map(labelOf)
+        )
+      ]
 
   return {
     id: `modrinth:${projectId}`,
@@ -132,7 +152,7 @@ function hitSummary(
     follows: hit.follows ?? 0,
     categories,
     updated: hit.date_modified ?? '',
-    url: `https://modrinth.com/${kind}/${encodeURIComponent(slug)}`
+    url: `https://modrinth.com/${urlTypeOf(kind, hit.project_type)}/${encodeURIComponent(slug)}`
   }
 }
 
@@ -145,14 +165,18 @@ export async function searchModrinth(
 ): Promise<{ items: ModSummary[]; total: number }> {
   const facets: string[][] = [[`project_type:${kind}`]]
   if (request.gameVersion) facets.push([`versions:${request.gameVersion}`])
-  if (request.loader !== 'all') facets.push([`categories:${request.loader}`])
-  if (request.category) {
-    const category =
-      kind === 'modpack'
-        ? modpackModrinthCategoryOf(request.category)
-        : modrinthCategoryOf(request.category)
-    if (!category) return { items: [], total: 0 }
-    facets.push([`categories:${category}`])
+  // 加载器与「类型」筛选只对 Mod / 整合包有意义：资源包、光影包、数据包的
+  // 版本标签不是 Mod 加载器，套用会把结果筛空。
+  if (kind === 'mod' || kind === 'modpack') {
+    if (request.loader !== 'all') facets.push([`categories:${request.loader}`])
+    if (request.category) {
+      const category =
+        kind === 'modpack'
+          ? modpackModrinthCategoryOf(request.category)
+          : modrinthCategoryOf(request.category)
+      if (!category) return { items: [], total: 0 }
+      facets.push([`categories:${category}`])
+    }
   }
 
   const items: ModSummary[] = []
@@ -269,18 +293,30 @@ function versionOf(
   source: ModSource,
   projectId: string,
   version: ModrinthVersion,
-  projects: Map<string, ModSummary>
+  projects: Map<string, ModSummary>,
+  kind: ModProjectKind
 ): ModVersion | null {
   const files = version.files ?? []
+  // 包类版本是 zip；数据包挂在 mod 项目里时，同一项目还可能有 jar 版本，
+  // 因此按类型选择扩展名，不能无条件优先 jar。
+  const extension = isPackProject(kind) ? '.zip' : '.jar'
   const file =
     files.find((candidate) => candidate.primary && candidate.url) ??
     files.find(
-      (candidate) => candidate.url && candidate.filename?.toLowerCase().endsWith('.jar')
+      (candidate) => candidate.url && candidate.filename?.toLowerCase().endsWith(extension)
     ) ??
     files.find((candidate) => candidate.url)
   if (!file?.url || !file.filename) return null
 
-  const loaders = (version.loaders ?? []).filter(isModLoader) as ModLoader[]
+  // 保留来源声明的全部标签：资源包是 minecraft，光影是 iris / optifine，
+  // 数据包是 datapack。页面只把它们当展示与筛选标签。
+  const loaders = [
+    ...new Set(
+      (version.loaders ?? [])
+        .map((loader) => loader.trim().toLowerCase())
+        .filter((loader) => loader.length > 0)
+    )
+  ]
   return {
     id: `modrinth:${version.id ?? file.filename}`,
     source: 'modrinth',
@@ -289,7 +325,7 @@ function versionOf(
     versionNumber: version.version_number?.trim() || version.name?.trim() || '',
     channel: releaseChannel(version.version_type),
     gameVersions: [...new Set(version.game_versions ?? [])],
-    loaders: [...new Set(loaders)],
+    loaders,
     published: version.date_published ?? '',
     fileName: file.filename,
     fileUrl: file.url,
@@ -309,13 +345,15 @@ function projectSummary(
   if (!projectId) return null
   const slug = project.slug || projectId
   const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : categoryLabelOf
-  const categories = [
-    ...new Set(
-      (project.categories ?? [])
-        .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
-        .map(labelOf)
-    )
-  ]
+  const categories = isPackProject(kind)
+    ? []
+    : [
+        ...new Set(
+          (project.categories ?? [])
+            .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
+            .map(labelOf)
+        )
+      ]
 
   return {
     id: `modrinth:${projectId}`,
@@ -332,7 +370,7 @@ function projectSummary(
     follows: project.follows ?? 0,
     categories,
     updated: project.date_modified ?? '',
-    url: `https://modrinth.com/${kind}/${encodeURIComponent(slug)}`
+    url: `https://modrinth.com/${urlTypeOf(kind, project.project_type)}/${encodeURIComponent(slug)}`
   }
 }
 
@@ -444,21 +482,33 @@ export async function identifyModrinth(
 export async function versionsModrinth(
   source: ModSource,
   request: ModVersionRequest,
-  signal: AbortSignal
+  signal: AbortSignal,
+  kind: ModProjectKind = 'mod'
 ): Promise<ModVersion[]> {
   const params: Record<string, string> = {}
   if (request.gameVersion) params.game_versions = JSON.stringify([request.gameVersion])
-  if (request.loader !== 'all') params.loaders = JSON.stringify([request.loader])
+  // 只有 Mod / 整合包版本才用 Mod 加载器过滤；包类版本没有这类加载器。
+  if ((kind === 'mod' || kind === 'modpack') && request.loader !== 'all') {
+    params.loaders = JSON.stringify([request.loader])
+  }
 
   const url = withParams(
     endpoint(source.api, `project/${encodeURIComponent(request.projectId)}/version`),
     params
   )
   const response = await requestJson<ModrinthVersion[]>(url, { signal })
-  const data = Array.isArray(response) ? response : []
+  const all = Array.isArray(response) ? response : []
+  // 数据包在 Modrinth 挂在 mod 项目下：同一项目会同时返回 jar 与 zip 版本，
+  // 必须按 loaders 里的 datapack 标签留下真正的数据包版本。
+  const data =
+    kind === 'datapack'
+      ? all.filter((version) =>
+          (version.loaders ?? []).some((loader) => loader.toLowerCase() === 'datapack')
+        )
+      : all
   const projects = await dependencyProjects(source, data, signal)
   const versions = data
-    .map((version) => versionOf(source, request.projectId, version, projects))
+    .map((version) => versionOf(source, request.projectId, version, projects, kind))
     .filter((version): version is ModVersion => version !== null)
 
   versions.sort((a, b) => b.published.localeCompare(a.published))

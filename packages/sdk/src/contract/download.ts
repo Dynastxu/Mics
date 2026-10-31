@@ -5,7 +5,7 @@
  * 之间通过 IPC 交换数据的通用契约。
  */
 
-import type { ModSource } from './mod'
+import type { ModSource, PackKind } from './mod'
 import type { ModpackInstallMeta } from './modpack'
 
 /** 下载源提供的游戏版本摘要 */
@@ -89,6 +89,13 @@ export interface DownloadTask {
    * Mod 文件来自 Modrinth / CurseForge 的 CDN，必须走这条路径。
    */
   direct?: boolean
+  /**
+   * 下载目标所在的「实例 / 存档」目录。
+   *
+   * 资源包、光影包、数据包的目标都在实例目录里；用户可能在排队期间删掉实例
+   * 或存档，开始下载前要检查这个目录仍然存在，不能靠建目录把已删除的实例复活。
+   */
+  guardDir?: string
   state: DownloadTaskState
   progress: DownloadProgress
   /**
@@ -129,9 +136,11 @@ export type InstallMode = 'install' | 'repair'
  * - `game`：安装 / 补全游戏实例（旧记录没有该字段，按 game 处理）；
  * - `mod`：把 Mod 文件写进一个或多个实例，额外的任务字段见 title/detail；
  * - `modpack`：先解析整合包归档，再创建实例并下载包内文件；实例语义与 game 相同，
- *   完成前需要额外合并覆盖文件。
+ *   完成前需要额外合并覆盖文件；
+ * - `pack`：把资源包 / 光影包 / 数据包写进实例目录，具体类型见 `packKind`；
+ *   不写实例状态标记，也不参与「同名安装互相取代」的判断。
  */
-export type InstallJobKind = 'game' | 'mod' | 'modpack'
+export type InstallJobKind = 'game' | 'mod' | 'modpack' | 'pack'
 
 /** 一次安装的聚合进度；下载页只依赖这份汇总，不拉取逐文件任务 */
 export interface InstallJobStats {
@@ -165,6 +174,8 @@ export interface InstallJob {
   id: string
   /** 安装种类；旧记录没有该字段，按 game 处理 */
   kind?: InstallJobKind
+  /** 资源包 / 光影包 / 数据包的具体类型；只有 kind=pack 时存在 */
+  packKind?: PackKind
   /** 下载页展示标题；Mod 安装用它显示 Mod / 版本名 */
   title?: string
   /** 下载页副标题，例如「2 个实例」 */
@@ -232,6 +243,8 @@ export interface InstallJob {
 export interface InstallJobSummary {
   id: string
   kind?: InstallJobKind
+  /** 资源包 / 光影包 / 数据包的具体类型；只有 kind=pack 时存在 */
+  packKind?: PackKind
   title?: string
   detail?: string
   instanceName: string

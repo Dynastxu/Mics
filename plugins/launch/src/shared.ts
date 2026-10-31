@@ -68,7 +68,9 @@ export interface TerminateResult {
 }
 
 /** 实例内的可打开位置 */
-export type InstanceArea = 'root' | 'logs' | 'mods'
+export type InstanceArea = 'root' | 'logs' | 'mods' | 'saves'
+
+export type { InstanceSaveEntry, InstanceSaves } from '@mics/sdk'
 
 /** 实例详情页的静态信息；占用大小由单独的 RPC 统计 */
 export interface InstanceDetail {

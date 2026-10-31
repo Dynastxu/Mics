@@ -77,7 +77,7 @@ export async function searchMods(
   if (selected.length === 0) {
     throw new Error(
       request.source === 'all'
-        ? '未启用任何 Mod 下载源'
+        ? '未启用任何下载源'
         : `未启用 ${MOD_SOURCE_LABELS[request.source]} 下载源`
     )
   }
@@ -162,7 +162,7 @@ export async function listModVersions(
   const source = resolveModSource(sources, request.source, request.sourceApi)
   return request.source === 'curseforge'
     ? versionsCurseforge(source, request, signal)
-    : versionsModrinth(source, request, signal)
+    : versionsModrinth(source, request, signal, kind)
 }
 
 /**

@@ -21,17 +21,34 @@ import { endpoint, requestJson, withParams } from './http'
  */
 
 const GAME_ID = 432
-/** 分类 id：6 = Mod，4471 = 整合包 */
-const MOD_CLASS_ID = 6
-const MODPACK_CLASS_ID = 4471
+/** 分类 id：6 = Mod，4471 = 整合包，12 = 资源包，6552 = 光影包，6945 = 数据包 */
+const CLASS_IDS: Record<ModProjectKind, number> = {
+  mod: 6,
+  modpack: 4471,
+  resourcepack: 12,
+  shader: 6552,
+  datapack: 6945
+}
 const API_KEY_HEADER = 'x-api-key'
 
+const PROJECT_PATHS: Record<ModProjectKind, string> = {
+  mod: 'mc-mods',
+  modpack: 'modpacks',
+  resourcepack: 'texture-packs',
+  shader: 'shaders',
+  datapack: 'data-packs'
+}
+
 function classIdOf(kind: ModProjectKind): number {
-  return kind === 'modpack' ? MODPACK_CLASS_ID : MOD_CLASS_ID
+  return CLASS_IDS[kind]
 }
 
 function projectPathOf(kind: ModProjectKind): string {
-  return kind === 'modpack' ? 'modpacks' : 'mc-mods'
+  return PROJECT_PATHS[kind]
+}
+
+function isPackProject(kind: ModProjectKind): boolean {
+  return kind === 'resourcepack' || kind === 'shader' || kind === 'datapack'
 }
 
 /** CurseForge 的 modLoaderType 枚举 */
@@ -45,6 +62,15 @@ const LOADER_IDS: Record<ModLoader, number> = {
 const LOADER_NAMES = new Map<string, ModLoader>(
   Object.entries(MOD_LOADER_LABELS).map(([id, label]) => [label.toLowerCase(), id as ModLoader])
 )
+
+/**
+ * 非 Mod 的运行环境标签。
+ *
+ * CurseForge 把加载器、运行环境与游戏版本混在 `gameVersions` 里：光影包会
+ * 出现 Iris / OptiFine，数据包可能出现 Datapack。它们不是 `ModLoader`，
+ * 但版本列表要保留下来作为展示标签。
+ */
+const CONTENT_LOADER_NAMES = new Set(['iris', 'optifine', 'datapack', 'minecraft'])
 
 const MAX_PAGE_SIZE = 50
 
@@ -161,14 +187,16 @@ function modSummary(
   if (!projectId) return null
   const slug = mod.slug?.trim() || projectId
   const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : curseforgeCategoryLabel
-  const categories = [
-    ...new Set(
-      (mod.categories ?? [])
-        .map((category) => category.name?.trim() ?? '')
-        .filter(Boolean)
-        .map(labelOf)
-    )
-  ]
+  const categories = isPackProject(kind)
+    ? []
+    : [
+        ...new Set(
+          (mod.categories ?? [])
+            .map((category) => category.name?.trim() ?? '')
+            .filter(Boolean)
+            .map(labelOf)
+        )
+      ]
 
   return {
     id: `curseforge:${projectId}`,
@@ -200,10 +228,12 @@ export async function searchCurseforge(
 ): Promise<{ items: ModSummary[]; total: number }> {
   const headers = curseforgeHeaders(source)
   const categoryIds =
-    kind === 'modpack' || !request.category ? [] : curseforgeCategoriesOf(request.category)
-  // CurseForge 的整合包分类 id 与 Mod 分类不同，暂未维护映射：选择类型时
-  // 该来源不参与，避免返回与筛选条件不符的包。
-  if (request.category && categoryIds.length === 0) return { items: [], total: 0 }
+    kind === 'mod' && request.category ? curseforgeCategoriesOf(request.category) : []
+  // CurseForge 的整合包 / 包类分类 id 与 Mod 分类不同，暂未维护映射：选择类型时
+  // 该来源不参与，避免返回与筛选条件不符的结果。包类页面本身不发类型筛选。
+  if (request.category && (kind === 'mod' || kind === 'modpack') && categoryIds.length === 0) {
+    return { items: [], total: 0 }
+  }
 
   const baseParams: Record<string, string> = {
     gameId: String(GAME_ID),
@@ -213,7 +243,8 @@ export async function searchCurseforge(
     sortField: '6',
     sortOrder: 'desc'
   }
-  if (request.loader !== 'all') {
+  // modLoaderType 只描述 Mod 加载器；资源包 / 光影包 / 数据包套用会筛空。
+  if ((kind === 'mod' || kind === 'modpack') && request.loader !== 'all') {
     baseParams.modLoaderType = String(LOADER_IDS[request.loader])
   }
   if (categoryIds[0] !== undefined) {
@@ -361,11 +392,13 @@ function versionOf(
   const downloadUrl = file.downloadUrl
   const fileName = file.fileName
 
-  const loaders: ModLoader[] = []
+  const loaders: string[] = []
   const gameVersions: string[] = []
   for (const value of file.gameVersions ?? []) {
     const loader = loaderOf(value)
+    const label = value.trim().toLowerCase()
     if (loader) loaders.push(loader)
+    else if (CONTENT_LOADER_NAMES.has(label)) loaders.push(label)
     // CurseForge 把加载器、Client/Server 与游戏版本混在同一个数组里
     else if (/^\d/.test(value)) gameVersions.push(value)
   }

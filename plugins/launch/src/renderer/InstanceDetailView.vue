@@ -11,6 +11,7 @@ import type {
   InstanceLogFile,
   InstanceModEntry,
   InstanceMods,
+  InstanceSaves,
   InstanceSummary,
   InstanceUsage,
   InstanceUsageEntry,
@@ -41,12 +42,13 @@ const emit = defineEmits<{
   changed: [mods: number]
 }>()
 
-type DetailTab = 'overview' | 'logs' | 'mods'
+type DetailTab = 'overview' | 'logs' | 'mods' | 'saves'
 
 const TABS: Array<{ id: DetailTab; label: string }> = [
   { id: 'overview', label: '概览' },
   { id: 'logs', label: '日志' },
-  { id: 'mods', label: 'Mod' }
+  { id: 'mods', label: 'Mod' },
+  { id: 'saves', label: '存档' }
 ]
 
 const USAGE_LABELS: Record<string, string> = {
@@ -96,11 +98,16 @@ const modDeleteTarget = ref<InstanceModEntry | null>(null)
 const modDeleting = ref(false)
 const brokenModIcons = ref<Record<string, boolean>>({})
 
+const saves = ref<InstanceSaves | null>(null)
+const savesLoading = ref(false)
+const savesError = ref('')
+
 const deleteOpen = ref(false)
 const deleting = ref(false)
 
 let logsLoaded = false
 let modsLoaded = false
+let savesLoaded = false
 let logSequence = 0
 let identifySequence = 0
 
@@ -400,6 +407,22 @@ async function loadMods(): Promise<void> {
   }
 }
 
+async function loadSaves(): Promise<void> {
+  savesLoading.value = true
+  savesError.value = ''
+  try {
+    saves.value = await ctx.ipc.invoke<InstanceSaves>('mics.launch', 'instances/saves', {
+      id: props.instance.id
+    })
+    savesLoaded = true
+  } catch (cause) {
+    savesError.value = `读取存档失败：${messageOf(cause)}`
+    savesLoaded = true
+  } finally {
+    savesLoading.value = false
+  }
+}
+
 async function toggleMod(entry: InstanceModEntry, enabled = !entry.enabled): Promise<void> {
   if (modBusy.value === entry.fileName) return
   modBusy.value = entry.fileName
@@ -517,6 +540,7 @@ async function confirmDelete(): Promise<void> {
 watch(tab, (value) => {
   if (value === 'logs' && !logsLoaded) void loadLogs()
   if (value === 'mods' && !modsLoaded) void loadMods()
+  if (value === 'saves' && !savesLoaded) void loadSaves()
 })
 
 onMounted(() => {
@@ -750,7 +774,7 @@ onMounted(() => {
         }}</pre>
       </section>
 
-      <section v-else class="detail__panel">
+      <section v-else-if="tab === 'mods'" class="detail__panel">
         <div class="mics-toolbar">
           <input
             v-model="modQuery"
@@ -843,6 +867,45 @@ onMounted(() => {
               @update:model-value="toggleMod(entry, $event)"
               @keydown.stop
             />
+          </div>
+        </div>
+      </section>
+
+      <section v-else class="detail__panel">
+        <div class="mics-toolbar">
+          <span class="mics-muted">{{ saves?.entries.length ?? 0 }} 个存档</span>
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            type="button"
+            :disabled="savesLoading"
+            @click="loadSaves"
+          >
+            {{ savesLoading ? '读取中…' : '刷新' }}
+          </button>
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            type="button"
+            @click="reveal('saves')"
+          >
+            打开存档文件夹
+          </button>
+        </div>
+
+        <p v-if="savesError" class="mics-empty mics-empty--error">{{ savesError }}</p>
+        <div v-else-if="savesLoading && !saves" class="mics-empty">正在读取存档…</div>
+        <div v-else-if="!saves?.entries.length" class="mics-empty">
+          还没有存档。启动游戏创建一个世界后，存档会出现在这里。
+        </div>
+        <div v-else class="mics-list">
+          <div v-for="entry in saves?.entries ?? []" :key="entry.id" class="mics-list__row">
+            <div class="mics-list__main">
+              <div class="mics-list__title">
+                <span>{{ entry.name }}</span>
+              </div>
+              <div class="mics-list__meta">
+                {{ formatDate(entry.modified) }} · 数据包 {{ entry.datapacks }} 个
+              </div>
+            </div>
           </div>
         </div>
       </section>

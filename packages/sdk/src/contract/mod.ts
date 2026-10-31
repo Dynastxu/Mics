@@ -145,13 +145,36 @@ export type ModLoader = (typeof MOD_LOADERS)[number]
 /**
  * 目录项目类型。
  *
- * Mod 与整合包使用同一套 Modrinth / CurseForge 项目接口，只是搜索时的
- * `project_type` / `classId` 不同；复用同一份摘要与版本契约，页面无需
- * 为整合包再造一套「项目 / 文件」类型。
+ * Mod、整合包与三类资源包使用同一套 Modrinth / CurseForge 项目接口，只是
+ * 搜索时的 `project_type` / `classId` 不同；复用同一份摘要与版本契约，页面
+ * 无需为每个分类再造一套「项目 / 文件」类型。
+ *
+ * 数据包在 Modrinth 不是一等项目类型：它挂在 `mod` 项目下，用
+ * `loaders: ["datapack"]` 区分版本；接口层负责把非数据包版本滤掉。
  */
-export const MOD_PROJECT_KINDS = ['mod', 'modpack'] as const
+export const MOD_PROJECT_KINDS = ['mod', 'modpack', 'resourcepack', 'shader', 'datapack'] as const
 
 export type ModProjectKind = (typeof MOD_PROJECT_KINDS)[number]
+
+/**
+ * 资源包 / 光影包 / 数据包：都只做「选实例 -> 放进对应目录」，不涉及游戏安装。
+ *
+ * 与 `ModProjectKind` 分开命名，避免调用方把「可下载的内容类型」误当成
+ * 完整的项目类型（`mod` / `modpack` 不属于这一类）。
+ */
+export const PACK_KINDS = ['resourcepack', 'shader', 'datapack'] as const
+
+export type PackKind = (typeof PACK_KINDS)[number]
+
+export const PACK_KIND_LABELS: Record<PackKind, string> = {
+  resourcepack: '资源包',
+  shader: '光影包',
+  datapack: '数据包'
+}
+
+export function isPackKind(value: unknown): value is PackKind {
+  return typeof value === 'string' && (PACK_KINDS as readonly string[]).includes(value)
+}
 
 export const MOD_LOADER_LABELS: Record<ModLoader, string> = {
   fabric: 'Fabric',
@@ -314,7 +337,14 @@ export interface ModVersion {
   versionNumber: string
   channel: ModReleaseChannel
   gameVersions: string[]
-  loaders: ModLoader[]
+  /**
+   * 版本声明的加载器 / 运行环境。
+   *
+   * 不限定为 `ModLoader`：资源包可能声明 `minecraft`，光影包声明
+   * `iris` / `optifine`，数据包声明 `datapack`。页面只把这些值当展示与
+   * 筛选标签，不在本地推断兼容性。
+   */
+  loaders: string[]
   /** 发布日期，ISO 8601 */
   published: string
   fileName: string
@@ -347,4 +377,24 @@ export interface ModInstallRequest {
   title?: string
   /** 下载页副标题，例如 `2 个实例` */
   detail?: string
+}
+
+/**
+ * 资源包 / 光影包 / 数据包安装请求。
+ *
+ * 三类都只把同一个文件写进实例目录，不修改游戏配置、不自动启用：
+ * - 资源包 -> `<实例>/resourcepacks/`
+ * - 光影包 -> `<实例>/shaderpacks/`
+ * - 数据包 -> `<实例>/saves/<存档>/datapacks/`（必须指定 `worldName`）
+ *
+ * 数据包是存档级内容，一次只能写进一个存档；另外两类可以多选实例。
+ */
+export interface PackInstallRequest {
+  kind: PackKind
+  file: ModFileRef
+  instanceNames: string[]
+  /** 数据包必填：`saves/` 下的存档文件夹名 */
+  worldName?: string
+  /** 下载页标题，例如 `Terralith 2.5.8` */
+  title?: string
 }

@@ -10,6 +10,7 @@ import {
   describeInstance,
   listInstanceLogs,
   listInstanceMods,
+  listInstanceSaves,
   measureInstanceUsage,
   readInstanceLog,
   resolveInstanceArea,
@@ -62,7 +63,7 @@ function instanceIdOf(params?: InstanceRef): string {
 }
 
 function areaOf(value: unknown): InstanceArea {
-  return value === 'logs' || value === 'mods' ? value : 'root'
+  return value === 'logs' || value === 'mods' || value === 'saves' ? value : 'root'
 }
 
 /** 结束进程后等待文件锁释放，避免紧接着删除目录时反复重试 */
@@ -148,6 +149,10 @@ export function apply(ctx: Context): void {
 
   ctx.ipc.handle<InstanceRef>('instances/mods', (params) => {
     return listInstanceMods(dataDir, instanceIdOf(params))
+  })
+
+  ctx.ipc.handle<InstanceRef>('instances/saves', (params) => {
+    return listInstanceSaves(dataDir, instanceIdOf(params))
   })
 
   ctx.ipc.handle<InstanceModToggleRequest>('instances/mods/toggle', (params) => {

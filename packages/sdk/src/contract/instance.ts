@@ -75,6 +75,29 @@ export interface InstanceInstallRecord {
   completedAt?: number
 }
 
+/**
+ * 实例里的一个存档。
+ *
+ * 数据包只能装进具体存档，因此它同时是安装目标：`id` 就是 `saves/` 下的
+ * 文件夹名，主进程写盘前只接受这一层名字。
+ */
+export interface InstanceSaveEntry {
+  /** `saves/` 下的文件夹名；数据包安装时作为目标目录 */
+  id: string
+  /** 展示名；当前与文件夹名一致 */
+  name: string
+  /** `level.dat` 的最后修改时间；没有该文件时退回存档目录时间 */
+  modified: number
+  /** 该存档 `datapacks/` 下的条目数 */
+  datapacks: number
+}
+
+export interface InstanceSaves {
+  /** 存档根目录绝对路径 */
+  dir: string
+  entries: InstanceSaveEntry[]
+}
+
 /** Windows 文件名/文件夹名中不允许出现的字符 */
 // eslint-disable-next-line no-control-regex
 export const INVALID_INSTANCE_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/g

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
-import { LOADER_LABELS } from '@mics/sdk'
+import { LOADER_LABELS, PACK_KIND_LABELS } from '@mics/sdk'
 import type { InstallJobStats, InstallJobSummary } from '@mics/sdk'
 
 interface JobRow {
@@ -101,11 +101,15 @@ function historyLabel(job: InstallJobSummary, stats: InstallJobStats): string {
   return stats.cancelled === stats.failed ? '已取消' : '部分失败'
 }
 
-/** 同一实例名只认最新的一条游戏安装记录；Mod 安装不参与实例替代关系 */
+/** Mod 与资源包安装不参与实例替代关系，同一实例名只认最新的一条游戏安装记录 */
+function isInstanceJob(job: InstallJobSummary): boolean {
+  return job.kind !== 'mod' && job.kind !== 'pack'
+}
+
 const latestJobByInstance = computed(() => {
   const latest = new Map<string, InstallJobSummary>()
   for (const job of jobs.value) {
-    if (job.kind === 'mod') continue
+    if (!isInstanceJob(job)) continue
     const current = latest.get(job.instanceName)
     if (!current || jobSequence(job) >= jobSequence(current)) latest.set(job.instanceName, job)
   }
@@ -118,7 +122,7 @@ function jobSequence(job: InstallJobSummary): number {
 }
 
 function isSuperseded(job: InstallJobSummary): boolean {
-  if (job.kind === 'mod') return false
+  if (!isInstanceJob(job)) return false
   return latestJobByInstance.value.get(job.instanceName)?.id !== job.id
 }
 
@@ -247,6 +251,12 @@ onUnmounted(() => {
                 <span class="mics-badge">Mod</span>
                 <span v-if="row.job.detail" class="mics-badge">{{ row.job.detail }}</span>
               </template>
+              <template v-else-if="row.job.kind === 'pack'">
+                <span class="mics-badge">
+                  {{ row.job.packKind ? PACK_KIND_LABELS[row.job.packKind] : '资源' }}
+                </span>
+                <span v-if="row.job.detail" class="mics-badge">{{ row.job.detail }}</span>
+              </template>
               <template v-else>
                 <span v-if="row.job.kind === 'modpack'" class="mics-badge">整合包</span>
                 <span v-if="row.job.kind === 'modpack' && row.job.detail" class="mics-badge">
@@ -370,6 +380,12 @@ onUnmounted(() => {
               <span>{{ jobTitle(row.job) }}</span>
               <template v-if="row.job.kind === 'mod'">
                 <span class="mics-badge">Mod</span>
+                <span v-if="row.job.detail" class="mics-badge">{{ row.job.detail }}</span>
+              </template>
+              <template v-else-if="row.job.kind === 'pack'">
+                <span class="mics-badge">
+                  {{ row.job.packKind ? PACK_KIND_LABELS[row.job.packKind] : '资源' }}
+                </span>
                 <span v-if="row.job.detail" class="mics-badge">{{ row.job.detail }}</span>
               </template>
               <template v-else>

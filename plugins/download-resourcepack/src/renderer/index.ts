@@ -3,7 +3,7 @@ import { defineRendererPlugin } from '@mics/sdk/renderer'
 import ResourcepackView from './ResourcepackView.vue'
 
 export const name = 'mics.download.resourcepack'
-export const inject = ['ui']
+export const inject = ['ui', 'plugins', 'notifications']
 
 export function apply(ctx: Context): void {
   ctx.ui.registerView('download.resourcepack', ResourcepackView)

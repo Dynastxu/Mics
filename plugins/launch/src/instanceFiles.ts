@@ -11,6 +11,8 @@ import type {
   InstanceLogFile,
   InstanceModEntry,
   InstanceMods,
+  InstanceSaveEntry,
+  InstanceSaves,
   InstanceUsage,
   InstanceUsageEntry
 } from './shared'
@@ -291,7 +293,9 @@ export async function readInstanceLog(
     try {
       text = gunzipSync(await readFile(file), { maxOutputLength: MAX_DECOMPRESSED_LOG_BYTES })
     } catch (cause) {
-      throw new Error(`日志解压失败：${cause instanceof Error ? cause.message : String(cause)}`, { cause })
+      throw new Error(`日志解压失败：${cause instanceof Error ? cause.message : String(cause)}`, {
+        cause
+      })
     }
     const tail = tailBuffer(text, MAX_LOG_BYTES)
     return {
@@ -413,14 +417,62 @@ export async function deleteInstanceMod(
   return listInstanceMods(userDataDir, id)
 }
 
-/** 打开实例目录前先确保目标存在；日志 / Mod 目录可以顺手创建 */
+/**
+ * 实例里的存档列表。
+ *
+ * 展示名暂时直接用 `saves/` 下的文件夹名：读取 `level.dat` 需要 NBT 解析，
+ * 而这里只用于选择数据包目标与查看目录，文件夹名已经足够辨识。`modified`
+ * 优先取 `level.dat` 的时间（玩家真正在玩的存档会更靠前），没有时退回目录时间。
+ */
+export async function listInstanceSaves(userDataDir: string, id: string): Promise<InstanceSaves> {
+  const root = await requireInstanceDir(userDataDir, id)
+  const dir = path.join(root, 'saves')
+
+  let entries: Dirent[]
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return { dir, entries: [] }
+  }
+
+  const saves: InstanceSaveEntry[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !isPlainFileName(entry.name)) continue
+    const worldDir = path.join(dir, entry.name)
+
+    let modified = 0
+    try {
+      modified = (await stat(path.join(worldDir, 'level.dat'))).mtimeMs
+    } catch {
+      try {
+        modified = (await stat(worldDir)).mtimeMs
+      } catch {
+        modified = 0
+      }
+    }
+
+    let datapacks = 0
+    try {
+      datapacks = (await readdir(path.join(worldDir, 'datapacks'))).length
+    } catch {
+      /* 还没有 datapacks 目录 */
+    }
+
+    saves.push({ id: entry.name, name: entry.name, modified, datapacks })
+  }
+
+  saves.sort((a, b) => b.modified - a.modified || a.name.localeCompare(b.name, 'zh-CN'))
+  return { dir, entries: saves }
+}
+
+/** 打开实例目录前先确保目标存在；日志 / Mod / 存档目录可以顺手创建 */
 export async function resolveInstanceArea(
   userDataDir: string,
   id: string,
   area: InstanceArea = 'root'
 ): Promise<string> {
   const root = await requireInstanceDir(userDataDir, id)
-  if (area === 'logs' || area === 'mods') {
+  if (area === 'logs' || area === 'mods' || area === 'saves') {
     const target = path.join(root, area)
     await mkdir(target, { recursive: true })
     return target

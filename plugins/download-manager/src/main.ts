@@ -31,9 +31,11 @@ import {
   INSTANCE_STATE_FILE,
   LOADER_LABELS,
   MOD_SOURCE_LABELS,
+  PACK_KIND_LABELS,
   SHELL_EXECUTE,
   downloadCacheLimitBytes,
   isModLoader,
+  isPackKind,
   normalizeDownloadCacheLimit,
   normalizeDownloadSegmentThreshold,
   normalizeDownloadSegments,
@@ -72,6 +74,7 @@ import type {
   ModIdentity,
   ModInstallRequest,
   ModpackInstallRequest,
+  ModProjectKind,
   ModProjectRequest,
   ModSearchRequest,
   ModSearchResult,
@@ -80,6 +83,8 @@ import type {
   ModSummary,
   ModVersion,
   ModVersionRequest,
+  PackInstallRequest,
+  PackKind,
   ShellExecuteCapability,
   ShellProcess,
   TransferOutcome,
@@ -201,6 +206,8 @@ interface TaskSpec {
   size: number
   /** Mod 等外链文件：不经过原版下载源改写 */
   direct?: boolean
+  /** 目标所在的实例 / 存档目录；下载开始前必须仍然存在 */
+  guardDir?: string
 }
 
 interface MojangManifestSummary {
@@ -395,6 +402,11 @@ export function apply(ctx: Context): void {
 
   /** 整合包覆盖文件在实例内的暂存目录；完成安装后合并并删除 */
   const MODPACK_OVERRIDES_DIR = '.mics-modpack-overrides'
+  /** 资源包 / 光影包在实例里的落盘目录；数据包按存档写 */
+  const PACK_DIRS = {
+    resourcepack: 'resourcepacks',
+    shader: 'shaderpacks'
+  } as const
   /** 覆盖文件不得改写的实例根文件（实例元数据与版本档案） */
   const RESERVED_INSTANCE_ROOT_FILES = new Set(['instance.json', INSTANCE_STATE_FILE])
 
@@ -490,6 +502,20 @@ export function apply(ctx: Context): void {
     if (typeof value !== 'string' || !value || value === '.' || value === '..') return null
     if (path.basename(value) !== value) return null
     return INVALID_INSTANCE_NAME_TEST.test(value) ? null : value
+  }
+
+  /** 数据包目标存档：只接受 saves 下的单层文件夹名 */
+  function safeWorldName(value: unknown): string | null {
+    if (typeof value !== 'string') return null
+    const name = value.trim()
+    if (!name || name === '.' || name === '..') return null
+    if (path.basename(name) !== name) return null
+    return INVALID_INSTANCE_NAME_TEST.test(name) ? null : name
+  }
+
+  function packKindOf(value: unknown): PackKind {
+    if (!isPackKind(value)) throw new Error('不支持的资源类型')
+    return value
   }
 
   let cachedManifest: MojangManifestSummary | null = null
@@ -1160,9 +1186,22 @@ export function apply(ctx: Context): void {
     job.taskIds = []
   }
 
-  /** 旧记录没有 kind，按游戏安装处理；Mod 安装不参与实例状态机 */
+  /**
+   * 是否是一次游戏安装。
+   *
+   * 只有 Mod 与资源包安装不接管实例目录；`pack` 写进实例里的子目录，同样不能
+   * 参与实例状态机，否则会被当成游戏安装去写 ready 标记。
+   */
   function isGameJob(job: InstallJob): boolean {
-    return job.kind !== 'mod'
+    return job.kind !== 'mod' && job.kind !== 'pack'
+  }
+
+  /** 日志 / 下载页共用的内容类型名 */
+  function jobContentLabel(job: InstallJob): string {
+    if (job.kind === 'pack') return PACK_KIND_LABELS[job.packKind ?? 'resourcepack']
+    if (job.kind === 'mod') return 'Mod'
+    if (job.kind === 'modpack') return '整合包'
+    return '游戏'
   }
 
   /** 新安装接手实例名后，旧终态记录既不能重试也不能删除，明细可以立刻归档 */
@@ -1181,6 +1220,7 @@ export function apply(ctx: Context): void {
     return {
       id: job.id,
       kind: job.kind,
+      packKind: job.packKind,
       title: job.title,
       detail: job.detail,
       instanceName: job.instanceName,
@@ -1285,7 +1325,8 @@ export function apply(ctx: Context): void {
         archiveJob(job)
         persistRecords(true)
         log.info(
-          'Mod 安装「%s」已完成：%d 个文件，job %s',
+          '%s安装「%s」已完成：%d 个文件，job %s',
+          jobContentLabel(job),
           job.title || job.instanceName,
           fileCount,
           job.id
@@ -2032,27 +2073,39 @@ export function apply(ctx: Context): void {
     // Mod 任务的目标在实例目录内；实例可能在排队期间被用户删除，
     // 不能靠 ensureDir 把空目录重新建出来。整合包任务同理：它的目标全在实例内。
     if (task.direct) {
+      if (task.guardDir && !existsSync(task.guardDir)) {
+        task.state = 'failed'
+        task.error = '目标实例或存档已被删除'
+        task.progress.speed = 0
+        persistRecords()
+        scheduleLoop()
+        void settleJob(task.installId)
+        return
+      }
+
       const job = jobs.get(task.installId)
-      if (job?.kind === 'modpack') {
-        if (!existsSync(instanceDirOf(job.instanceName))) {
-          task.state = 'failed'
-          task.error = '目标实例已被删除'
-          task.progress.speed = 0
-          persistRecords()
-          scheduleLoop()
-          void settleJob(task.installId)
-          return
-        }
-      } else if (job && !isGameJob(job)) {
-        const instanceDir = path.dirname(path.dirname(task.savePath))
-        if (!existsSync(instanceDir)) {
-          task.state = 'failed'
-          task.error = '目标实例已被删除'
-          task.progress.speed = 0
-          persistRecords()
-          scheduleLoop()
-          void settleJob(task.installId)
-          return
+      if (!task.guardDir) {
+        if (job?.kind === 'modpack') {
+          if (!existsSync(instanceDirOf(job.instanceName))) {
+            task.state = 'failed'
+            task.error = '目标实例已被删除'
+            task.progress.speed = 0
+            persistRecords()
+            scheduleLoop()
+            void settleJob(task.installId)
+            return
+          }
+        } else if (job && !isGameJob(job)) {
+          const instanceDir = path.dirname(path.dirname(task.savePath))
+          if (!existsSync(instanceDir)) {
+            task.state = 'failed'
+            task.error = '目标实例已被删除'
+            task.progress.speed = 0
+            persistRecords()
+            scheduleLoop()
+            void settleJob(task.installId)
+            return
+          }
         }
       }
     }
@@ -2605,6 +2658,7 @@ export function apply(ctx: Context): void {
         size: spec.size,
         label: spec.label,
         direct: spec.direct,
+        ...(spec.guardDir ? { guardDir: spec.guardDir } : {}),
         state: paused ? 'paused' : 'pending',
         progress: {
           loaded: 0,
@@ -3668,6 +3722,249 @@ export function apply(ctx: Context): void {
     return { jobId: job.id }
   })
 
+  // ── 资源包 / 光影包 / 数据包目录（与 Mod 共用来源与队列，仅项目类型不同）──
+
+  ctx.ipc.handle('packs/sources', (): ModSourceInfo[] => modSourceInfos())
+
+  // 包类暂不做「类型」分类筛选：CurseForge / Modrinth 的分类体系各自一套，
+  // 第一版先把来源与 MC 版本做好，避免维护三套无意义的映射。
+  ctx.ipc.handle('packs/categories', (): ModCategory[] => [])
+
+  ctx.ipc.handle<ModSearchRequest & { kind: PackKind }>(
+    'packs/search',
+    async (request): Promise<ModSearchResult> => {
+      const kind = packKindOf(request?.kind)
+      const normalized = normalizeModSearch(request)
+      const cacheKey = `pack:${kind}:${JSON.stringify(normalized)}`
+      const cached = readModCache(modSearchCache, cacheKey, MOD_SEARCH_TTL)
+      if (cached) return cached
+
+      const abort = new AbortController()
+      const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+      try {
+        const result = await searchMods(loadModSources(), normalized, abort.signal, kind)
+        if (result.errors.length === 0) writeModCache(modSearchCache, cacheKey, result)
+        return result
+      } finally {
+        clearTimeout(timeout)
+        abort.abort()
+      }
+    }
+  )
+
+  ctx.ipc.handle<ModVersionRequest & { kind: PackKind }>(
+    'packs/versions',
+    async (request): Promise<ModVersion[]> => {
+      const kind = packKindOf(request?.kind)
+      const source =
+        request?.source === 'curseforge'
+          ? 'curseforge'
+          : request?.source === 'modrinth'
+            ? 'modrinth'
+            : null
+      if (!source) throw new Error('不支持的下载源')
+      const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的项目 id')
+
+      const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
+      const normalized: ModVersionRequest = {
+        source,
+        ...(sourceApi ? { sourceApi } : {}),
+        projectId,
+        gameVersion: safeVersionId(request?.gameVersion) ?? '',
+        loader: isModLoader(request?.loader) ? request.loader : 'all'
+      }
+      const cacheKey = `pack:${kind}:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}:${normalized.gameVersion}:${normalized.loader}`
+      const cached = readModCache(modVersionCache, cacheKey, MOD_VERSION_TTL)
+      if (cached) return cached
+
+      const abort = new AbortController()
+      const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+      try {
+        const versions = await listModVersions(loadModSources(), normalized, abort.signal, kind)
+        writeModCache(modVersionCache, cacheKey, versions)
+        return versions
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause)
+        throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
+      } finally {
+        clearTimeout(timeout)
+        abort.abort()
+      }
+    }
+  )
+
+  ctx.ipc.handle<ModProjectRequest & { kind: PackKind }>(
+    'packs/project',
+    async (request): Promise<ModSummary> => {
+      const kind = packKindOf(request?.kind)
+      const source =
+        request?.source === 'curseforge'
+          ? 'curseforge'
+          : request?.source === 'modrinth'
+            ? 'modrinth'
+            : null
+      if (!source) throw new Error('不支持的下载源')
+      const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的项目 id')
+
+      const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
+      const normalized: ModProjectRequest = {
+        source,
+        ...(sourceApi ? { sourceApi } : {}),
+        projectId
+      }
+      const cacheKey = `pack:${kind}:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}`
+      const cached = readModCache(modProjectCache, cacheKey, MOD_VERSION_TTL)
+      if (cached) return cached
+
+      const abort = new AbortController()
+      const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+      try {
+        const project = await loadModProject(loadModSources(), normalized, abort.signal, kind)
+        writeModCache(modProjectCache, cacheKey, project)
+        return project
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause)
+        throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
+      } finally {
+        clearTimeout(timeout)
+        abort.abort()
+      }
+    }
+  )
+
+  /**
+   * 把资源包 / 光影包 / 数据包写入实例目录。
+   *
+   * 只落盘，不改 `options.txt` / `iris.properties`，也不动存档的 `level.dat`：
+   * 玩家在游戏内自行启用。数据包必须指定存档，且一次只写一个存档。
+   */
+  ctx.ipc.handle<PackInstallRequest>('packs/install', (request): InstallStartResult => {
+    const kind = packKindOf(request?.kind)
+    const file = request?.file
+    if (!file) throw new Error('缺少文件信息')
+
+    const rawUrl = typeof file.url === 'string' ? file.url.trim() : ''
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(rawUrl)
+    } catch {
+      throw new Error('无效的下载地址')
+    }
+    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+      throw new Error('下载地址必须使用 HTTP(S)')
+    }
+
+    const rawName = typeof file.fileName === 'string' ? file.fileName : ''
+    const fileName = path.basename(rawName)
+    if (
+      !fileName ||
+      fileName !== rawName ||
+      !/\.zip$/i.test(fileName) ||
+      INVALID_INSTANCE_NAME_TEST.test(fileName)
+    ) {
+      throw new Error('无效的文件名')
+    }
+
+    const rawSha1 = typeof file.sha1 === 'string' ? file.sha1.trim().toLowerCase() : ''
+    const sha1 = /^[0-9a-f]{40}$/.test(rawSha1) ? rawSha1 : ''
+    const size =
+      typeof file.size === 'number' && Number.isFinite(file.size) ? Math.max(0, file.size) : 0
+
+    const requested = Array.isArray(request?.instanceNames) ? request.instanceNames : []
+    const names = [...new Set(requested.filter((name): name is string => typeof name === 'string'))]
+    if (names.length === 0) throw new Error('请选择至少一个实例')
+    if (kind === 'datapack' && names.length !== 1) {
+      throw new Error('数据包一次只能安装到一个存档')
+    }
+    if (names.length > 64) throw new Error('一次最多安装到 64 个实例')
+
+    const worldName = kind === 'datapack' ? safeWorldName(request?.worldName) : null
+    if (kind === 'datapack' && !worldName) throw new Error('请选择一个存档')
+
+    const targets = new Map<
+      string,
+      { instanceName: string; target: string; guardDir: string; detail: string }
+    >()
+    for (const rawInstance of names) {
+      const instanceName = safeInstanceName(rawInstance)
+      if (!instanceName) throw new Error(`无效的实例名称：${rawInstance}`)
+      const instanceDir = instanceDirOf(instanceName)
+      if (!existsSync(instanceDir) || !statSync(instanceDir).isDirectory()) {
+        throw new Error(`实例「${instanceName}」不存在`)
+      }
+
+      if (kind === 'datapack') {
+        const worldDir = path.join(instanceDir, 'saves', worldName!)
+        if (!existsSync(worldDir) || !statSync(worldDir).isDirectory()) {
+          throw new Error(`实例「${instanceName}」里没有存档「${worldName}」`)
+        }
+        targets.set(instanceKey(instanceName), {
+          instanceName,
+          target: path.join(worldDir, 'datapacks', fileName),
+          guardDir: worldDir,
+          detail: `${instanceName} · ${worldName}`
+        })
+        continue
+      }
+
+      targets.set(instanceKey(instanceName), {
+        instanceName,
+        target: path.join(instanceDir, PACK_DIRS[kind], fileName),
+        guardDir: instanceDir,
+        detail: instanceName
+      })
+    }
+
+    const title =
+      typeof request?.title === 'string' && request.title.trim()
+        ? request.title.trim().slice(0, 120)
+        : fileName
+    const detail = kind === 'datapack' ? [...targets.values()][0]!.detail : `${targets.size} 个实例`
+
+    const job: InstallJob = {
+      id: nextJobId(),
+      kind: 'pack',
+      packKind: kind,
+      title,
+      detail,
+      instanceName: title,
+      gameVersion: '',
+      taskIds: [],
+      createdAt: Date.now(),
+      state: 'ready'
+    }
+    jobs.set(job.id, job)
+
+    enqueueTasks(
+      job,
+      [...targets.values()].map(({ instanceName, target, guardDir }): TaskSpec => ({
+        label: `${fileName} → ${instanceName}`,
+        url: parsedUrl.toString(),
+        savePath: target,
+        sha1,
+        size,
+        direct: true,
+        guardDir
+      })),
+      false
+    )
+
+    persistRecords(true)
+    log.info(
+      '已受理%s安装「%s」：%s → %d 个%s，job %s',
+      PACK_KIND_LABELS[kind],
+      title,
+      fileName,
+      targets.size,
+      kind === 'datapack' ? '存档' : '实例',
+      job.id
+    )
+    scheduleLoop()
+    return { jobId: job.id }
+  })
+
   /**
    * 受理整合包安装。
    *
@@ -3914,14 +4211,22 @@ export function apply(ctx: Context): void {
       task.progress.speed = 0
     }
 
-    log.info(
-      isGameJob(job)
-        ? '重试安装「%s」：%d 个失败任务重新排队，job %s'
-        : '重试 Mod 安装「%s」：%d 个失败任务重新排队，job %s',
-      job.title || job.instanceName,
-      failed.length,
-      job.id
-    )
+    if (isGameJob(job)) {
+      log.info(
+        '重试安装「%s」：%d 个失败任务重新排队，job %s',
+        job.title || job.instanceName,
+        failed.length,
+        job.id
+      )
+    } else {
+      log.info(
+        '重试 %s 安装「%s」：%d 个失败任务重新排队，job %s',
+        jobContentLabel(job),
+        job.title || job.instanceName,
+        failed.length,
+        job.id
+      )
+    }
     persistRecords(true)
     scheduleLoop()
   })
@@ -3936,7 +4241,9 @@ export function apply(ctx: Context): void {
     if (!job) return
     if (job.state === 'done') {
       throw new Error(
-        isGameJob(job) ? '安装已完成，请到启动页删除实例' : 'Mod 安装已完成，记录会保留在历史中'
+        isGameJob(job)
+          ? '安装已完成，请到启动页删除实例'
+          : `${jobContentLabel(job)}安装已完成，记录会保留在历史中`
       )
     }
     if (!isCurrentJob(job)) throw new Error('该安装记录已被更新的安装取代，不能删除')
