@@ -56,6 +56,7 @@ export function sanitizePlayerName(value: unknown): string {
   const name = typeof value === 'string' ? value.trim() : ''
   if (!name) throw new Error('玩家名不能为空')
   if ([...name].length > 16) throw new Error('玩家名不能超过 16 个字符')
+  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(name)) throw new Error('玩家名不能包含控制字符')
   return name
 }

@@ -1,3 +1,4 @@
+import { INVALID_INSTANCE_NAME_TEST } from '@mics/sdk'
 import type { ModFileRef, ModSource } from '@mics/sdk'
 import { curseforgeHeaders } from '../mods/curseforge'
 import { endpoint, requestJson } from '../mods/http'
@@ -44,7 +45,7 @@ function fileRefOf(file: CurseforgeFile): ModFileRef | null {
   if (!fileName) return null
   // 文件名会直接拼进实例目录，来源数据也必须按单层文件名处理
   if (fileName !== fileName.split(/[\\/]/).pop()) return null
-  if (/[\\/:*?"<>|\u0000-\u001f]/.test(fileName)) return null
+  if (INVALID_INSTANCE_NAME_TEST.test(fileName)) return null
 
   const downloadUrl = typeof file.downloadUrl === 'string' ? file.downloadUrl.trim() : ''
   if (!/^https?:\/\//i.test(downloadUrl)) {

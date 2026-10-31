@@ -777,6 +777,8 @@ defineExpose({
       </div>
       <DataBrowser
         v-else
+        v-model:query="versionQuery"
+        v-model:filter="versionFilter"
         :items="versionRows"
         :groups="versionFilterGroups"
         role="radio"
@@ -786,8 +788,6 @@ defineExpose({
         empty-text="没有匹配的版本"
         :mono="false"
         :sort="versionSort"
-        v-model:query="versionQuery"
-        v-model:filter="versionFilter"
         @select="selectVersion"
       >
         <template #row="{ item }">

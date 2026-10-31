@@ -541,7 +541,7 @@ async function installWithInstaller(
   } catch (cause) {
     const detail = await tailText(logFile)
     const message = cause instanceof Error ? cause.message : String(cause)
-    throw new Error(detail ? `${message}\n${detail}` : message)
+    throw new Error(detail ? `${message}\n${detail}` : message, { cause })
   }
 
   const installed = await findInstalledVersion(stagingDir, gameVersion)

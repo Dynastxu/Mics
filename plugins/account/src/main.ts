@@ -40,11 +40,9 @@ interface DeviceFlow {
 export function apply(ctx: Context): void {
   const log = ctx.logger('mics.account')
 
-  let store: AccountStore
-  const broadcast = (): void => {
+  const store = new AccountStore(ctx.storage, () => {
     ctx.ipc.broadcast(ACCOUNT_CHANGED_TOPIC, store.snapshot(), name)
-  }
-  store = new AccountStore(ctx.storage, broadcast)
+  })
 
   const microsoft = new MicrosoftAuth(() => String(ctx.storage.get('microsoftClientId', '') ?? ''))
   const flows = new Map<string, DeviceFlow>()
@@ -247,16 +245,16 @@ export function apply(ctx: Context): void {
         } catch (cause) {
           if (cause instanceof MicrosoftTokenExpiredError) {
             markUnauthorized(account)
-            throw new Error('Microsoft 登录已失效，请在账户页重新登录')
+            throw new Error('Microsoft 登录已失效，请在账户页重新登录', { cause })
           }
-          throw new Error(`无法连接 Microsoft 登录服务：${messageOf(cause)}`)
+          throw new Error(`无法连接 Microsoft 登录服务：${messageOf(cause)}`, { cause })
         }
 
         let identity: MinecraftIdentity
         try {
           identity = await microsoft.credentials(tokens.accessToken)
         } catch (cause) {
-          throw new Error(`无法获取 Minecraft 档案：${messageOf(cause)}`)
+          throw new Error(`无法获取 Minecraft 档案：${messageOf(cause)}`, { cause })
         }
 
         store.update(account.id, {

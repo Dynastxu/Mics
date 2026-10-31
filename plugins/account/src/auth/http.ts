@@ -41,7 +41,7 @@ export async function requestJson<T>(url: string, options: JsonRequestOptions = 
       signal: AbortSignal.timeout(timeoutMs)
     })
   } catch (cause) {
-    throw new Error(`无法连接 ${url}：${cause instanceof Error ? cause.message : String(cause)}`)
+    throw new Error(`无法连接 ${url}：${cause instanceof Error ? cause.message : String(cause)}`, { cause })
   }
 
   const text = await response.text()

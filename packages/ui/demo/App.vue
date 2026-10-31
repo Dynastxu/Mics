@@ -211,6 +211,8 @@ const activeGroups = computed(() => (showFilter.value ? GROUPS : []))
 
     <div class="demo__page">
       <DataBrowser
+        v-model:query="query"
+        v-model:filter="filter"
         :items="activeItems"
         :groups="activeGroups"
         title="服务器"
@@ -220,8 +222,6 @@ const activeGroups = computed(() => (showFilter.value ? GROUPS : []))
         :selected-ids="isCheckbox ? checkedIds : []"
         :action-label="role === 'button' ? '进入' : undefined"
         :sort="sortItems"
-        v-model:query="query"
-        v-model:filter="filter"
         @select="onSelect"
       >
         <template v-if="showActions" #actions="{ item }">

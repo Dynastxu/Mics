@@ -80,7 +80,8 @@ function readJson(text: string, label: string): Record<string, unknown> {
     return record
   } catch (cause) {
     throw new Error(
-      `${label} 不是有效的 JSON：${cause instanceof Error ? cause.message : String(cause)}`
+      `${label} 不是有效的 JSON：${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause }
     )
   }
 }

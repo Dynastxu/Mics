@@ -76,9 +76,11 @@ export interface InstanceInstallRecord {
 }
 
 /** Windows 文件名/文件夹名中不允许出现的字符 */
+// eslint-disable-next-line no-control-regex
 export const INVALID_INSTANCE_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/g
 
-const INVALID_INSTANCE_NAME_TEST = /[\\/:*?"<>|\u0000-\u001f]/
+// eslint-disable-next-line no-control-regex
+export const INVALID_INSTANCE_NAME_TEST = /[\\/:*?"<>|\u0000-\u001f]/
 
 /** Windows 保留设备名，不能作为文件夹名 */
 const RESERVED_INSTANCE_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i

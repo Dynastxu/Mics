@@ -43,7 +43,8 @@ import {
   parseDownloadCacheLimit,
   parseDownloadSegmentThresholdMb,
   parseDownloadSegments,
-  validateInstanceName
+  validateInstanceName,
+  INVALID_INSTANCE_NAME_TEST
 } from '@mics/sdk'
 import type {
   DownloadSource,
@@ -488,7 +489,7 @@ export function apply(ctx: Context): void {
   function safeVersionId(value: unknown): string | null {
     if (typeof value !== 'string' || !value || value === '.' || value === '..') return null
     if (path.basename(value) !== value) return null
-    return /[\\/:*?"<>|\u0000-\u001f]/.test(value) ? null : value
+    return INVALID_INSTANCE_NAME_TEST.test(value) ? null : value
   }
 
   let cachedManifest: MojangManifestSummary | null = null
@@ -1799,8 +1800,8 @@ export function apply(ctx: Context): void {
         )
       )
     } catch (cause) {
-      if (signal?.aborted) throw new Error('已取消')
-      throw failures[0] ?? toError(cause)
+      if (signal?.aborted) throw new Error('已取消', { cause })
+      throw new Error((failures[0] ?? toError(cause)).message, { cause })
     } finally {
       signal?.removeEventListener('abort', abortAll)
       await Promise.all(transfers.map((handle) => handle.stop().catch(() => undefined)))
@@ -2977,7 +2978,8 @@ export function apply(ctx: Context): void {
           )
         } catch (cause) {
           throw new Error(
-            `整合包包含 CurseForge 文件，但无法使用 CurseForge 下载源：${toError(cause).message}`
+            `整合包包含 CurseForge 文件，但无法使用 CurseForge 下载源：${toError(cause).message}`,
+            { cause }
           )
         }
         const resolved = await resolveCurseforgeModpackFiles(
@@ -3248,7 +3250,7 @@ export function apply(ctx: Context): void {
     try {
       await rm(cacheRoot, { recursive: true, force: true })
     } catch (cause) {
-      throw new Error(`清空缓存失败：${toError(cause).message}`)
+      throw new Error(`清空缓存失败：${toError(cause).message}`, { cause })
     }
     log.info('下载缓存已清空：%d 个文件，%d 字节', before.files, before.bytes)
     return cacheUsage()
@@ -3415,7 +3417,7 @@ export function apply(ctx: Context): void {
       return versions
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
-      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)
+      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
     } finally {
       clearTimeout(timeout)
       abort.abort()
@@ -3457,7 +3459,7 @@ export function apply(ctx: Context): void {
       return project
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
-      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)
+      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
     } finally {
       clearTimeout(timeout)
       abort.abort()
@@ -3519,7 +3521,7 @@ export function apply(ctx: Context): void {
       return versions
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
-      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)
+      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
     } finally {
       clearTimeout(timeout)
       abort.abort()
@@ -3555,7 +3557,7 @@ export function apply(ctx: Context): void {
       return project
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
-      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)
+      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
     } finally {
       clearTimeout(timeout)
       abort.abort()
@@ -3589,7 +3591,7 @@ export function apply(ctx: Context): void {
       !fileName ||
       fileName !== rawName ||
       !/\.jar$/i.test(fileName) ||
-      /[\\/:*?"<>|\u0000-\u001f]/.test(fileName)
+      INVALID_INSTANCE_NAME_TEST.test(fileName)
     ) {
       throw new Error('无效的 Mod 文件名')
     }
@@ -3693,7 +3695,7 @@ export function apply(ctx: Context): void {
       !fileName ||
       fileName !== rawName ||
       !/\.(mrpack|zip)$/i.test(fileName) ||
-      /[\\/:*?"<>|\u0000-\u001f]/.test(fileName)
+      INVALID_INSTANCE_NAME_TEST.test(fileName)
     ) {
       return { jobId: '', error: '无效的整合包文件名' }
     }

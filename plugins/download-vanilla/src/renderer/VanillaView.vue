@@ -512,6 +512,8 @@ onUnmounted(() => {
 
       <DataBrowser
         v-else
+        v-model:query="listQuery"
+        v-model:filter="listFilter"
         :items="VERSION_ROWS"
         :groups="LIST_FILTER_GROUPS"
         title="版本"
@@ -519,8 +521,6 @@ onUnmounted(() => {
         action-label="安装"
         :search-text="versionSearchText"
         :sort="versionSort"
-        v-model:query="listQuery"
-        v-model:filter="listFilter"
         @select="openInstall"
       />
     </template>

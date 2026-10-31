@@ -163,7 +163,7 @@ export function readJarModInfo(file: string): JarModInfo {
   const cached = modInfoCache.get(file)
   if (cached?.key === cacheKey) return cached.info
 
-  let result: JarModInfo = {}
+  let result: JarModInfo
   try {
     const buffer = readFileSync(file)
     const entries = readZipEntries(buffer)
@@ -256,7 +256,7 @@ export function syncNativeLibraries(jarPath: string, destDir: string): NativeSyn
     try {
       existing = statSync(target)
     } catch {
-      existing = null
+      // existing 保持初始值 null
     }
 
     if (existing?.isFile() && existing.size === entry.uncompressedSize) continue

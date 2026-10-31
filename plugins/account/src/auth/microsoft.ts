@@ -237,7 +237,7 @@ export class MicrosoftAuth {
     } catch (cause) {
       const xerr = cause instanceof HttpRequestError ? numberField(cause.data, 'XErr') : undefined
       if (xerr !== undefined) {
-        throw new Error(XSTS_ERRORS[xerr] ?? `Xbox Live 拒绝了登录（XErr ${xerr}）`)
+        throw new Error(XSTS_ERRORS[xerr] ?? `Xbox Live 拒绝了登录（XErr ${xerr}）`, { cause })
       }
       throw cause
     }
@@ -263,7 +263,7 @@ export class MicrosoftAuth {
       })
     } catch (cause) {
       if (cause instanceof HttpRequestError && cause.status === 404) {
-        throw new Error('该 Microsoft 账户没有 Minecraft: Java Edition 的购买记录')
+        throw new Error('该 Microsoft 账户没有 Minecraft: Java Edition 的购买记录', { cause })
       }
       throw cause
     }

@@ -2,6 +2,7 @@ import { existsSync, type Dirent, type Stats } from 'node:fs'
 import { mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { gunzipSync } from 'node:zlib'
+import { INVALID_INSTANCE_NAME_TEST } from '@mics/sdk'
 import { instancesRoot } from '@mics/sdk/main'
 import type {
   InstanceArea,
@@ -35,8 +36,6 @@ interface Tail {
 
 const LOG_EXTENSIONS = ['.log', '.log.gz', '.txt']
 const MOD_FILE = /\.jar(?:\.disabled)?$/i
-const UNSAFE_FILE_CHARS = /[\\/:*?"<>|\u0000-\u001f]/
-
 /** 实例根目录；非法 id 返回 null，绝不拼接出 instances 之外的位置 */
 export function instanceDirOf(userDataDir: string, id: string): string | null {
   if (typeof id !== 'string' || !isSafeInstanceId(id)) return null
@@ -61,7 +60,7 @@ function isPlainFileName(value: unknown): value is string {
     value !== '.' &&
     value !== '..' &&
     path.basename(value) === value &&
-    !UNSAFE_FILE_CHARS.test(value)
+    !INVALID_INSTANCE_NAME_TEST.test(value)
   )
 }
 
@@ -131,7 +130,7 @@ async function measureTree(root: string): Promise<Measurement> {
     const current = stack.pop()
     if (!current) continue
 
-    let entries: Dirent[] = []
+    let entries: Dirent[]
     try {
       entries = await readdir(current, { withFileTypes: true })
     } catch {
@@ -169,7 +168,7 @@ export async function measureInstanceUsage(
   try {
     children = await readdir(root, { withFileTypes: true })
   } catch {
-    children = []
+    // children 保持初始值 []
   }
 
   const measured = await Promise.all(
@@ -212,7 +211,7 @@ export async function listInstanceLogs(
 ): Promise<InstanceLogFile[]> {
   const dir = path.join(await requireInstanceDir(userDataDir, id), 'logs')
 
-  let entries: Dirent[] = []
+  let entries: Dirent[]
   try {
     entries = await readdir(dir, { withFileTypes: true })
   } catch {
@@ -292,7 +291,7 @@ export async function readInstanceLog(
     try {
       text = gunzipSync(await readFile(file), { maxOutputLength: MAX_DECOMPRESSED_LOG_BYTES })
     } catch (cause) {
-      throw new Error(`日志解压失败：${cause instanceof Error ? cause.message : String(cause)}`)
+      throw new Error(`日志解压失败：${cause instanceof Error ? cause.message : String(cause)}`, { cause })
     }
     const tail = tailBuffer(text, MAX_LOG_BYTES)
     return {
@@ -317,7 +316,7 @@ export async function readInstanceLog(
 export async function listInstanceMods(userDataDir: string, id: string): Promise<InstanceMods> {
   const dir = path.join(await requireInstanceDir(userDataDir, id), 'mods')
 
-  let entries: Dirent[] = []
+  let entries: Dirent[]
   try {
     entries = await readdir(dir, { withFileTypes: true })
   } catch {

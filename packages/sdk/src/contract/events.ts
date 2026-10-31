@@ -145,5 +145,6 @@ export async function parallelEvent<K extends EventInMode<'parallel'>>(
 }
 
 declare module 'cordis' {
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface Events extends MicsEvents {}
 }
