@@ -4,7 +4,7 @@ import path from 'node:path'
 import https from 'node:https'
 import http from 'node:http'
 import os from 'node:os'
-import { copyFile, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { app } from 'electron'
 import type { Context } from 'cordis'
 import {
@@ -25,16 +25,21 @@ import {
   DEFAULT_DOWNLOAD_SOURCES,
   DEFAULT_LOADER_SOURCES,
   DEFAULT_MOD_SOURCES,
+  DOWNLOAD_CACHE_LIMIT_OFF,
+  DOWNLOAD_CACHE_LIMIT_UNLIMITED,
   DOWNLOAD_SEGMENT_THRESHOLD,
   FILE_TRANSFER,
   INSTANCE_STATE_FILE,
   LOADER_LABELS,
   MOD_SOURCE_LABELS,
   SHELL_EXECUTE,
+  downloadCacheLimitBytes,
   isModLoader,
+  normalizeDownloadCacheLimit,
   normalizeDownloadSources,
   normalizeLoaderSources,
   normalizeModSources,
+  parseDownloadCacheLimit,
   validateInstanceName,
 } from '@mics/sdk'
 import type {
@@ -358,6 +363,15 @@ export function apply(ctx: Context): void {
 
   const dataDir = app.getPath('userData')
   const cacheRoot = path.join(dataDir, 'cache', 'downloads')
+  /** 自动清理的节流窗口：整批小文件下载完再统一扫描，避免每个任务都全盘统计 */
+  const CACHE_PRUNE_DELAY_MS = 5000
+  /** `.part` / `.part.segments.json` 属于在途传输，不参与缓存统计与淘汰 */
+  const CACHE_TRANSIENT_RE = /\.part(?:\d+)?(?:\.segments\.json)?(?:\.tmp)?$/
+  /** 正在读取或解析的缓存文件；清理时跳过，避免删掉复制源/整合包归档 */
+  const cachePins = new Map<string, number>()
+  let cachePruneTimer: ReturnType<typeof setTimeout> | null = null
+  let cachePruneChain: Promise<void> = Promise.resolve()
+  let cachePruneRequested = false
   const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 128 })
   const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 128 })
 
@@ -659,6 +673,72 @@ export function apply(ctx: Context): void {
     return path.join(cacheRoot, 'url', key.slice(0, 2), key)
   }
 
+  /**
+   * 旧版本把缓存上限存成 GB（2 / 5 / 10 / 0=不限制）。迁移只做一次：
+   * 写入 MB 值并打上标记，之后 `cacheLimit` 里的数字一律按 MB 解释。
+   */
+  function migrateCacheLimitSetting(): void {
+    if (ctx.storage.get<string>('cacheLimitUnit') === 'mb') return
+    const raw = ctx.storage.get<unknown>('cacheLimit')
+    let migrated = DEFAULT_DOWNLOAD_CACHE_LIMIT
+    if (typeof raw === 'string' || typeof raw === 'number') {
+      const legacy = String(raw).trim()
+      if (legacy === '0') migrated = DOWNLOAD_CACHE_LIMIT_UNLIMITED
+      else if (legacy === '2' || legacy === '5' || legacy === '10') {
+        migrated = String(Number(legacy) * 1024)
+      } else if (legacy) {
+        migrated = normalizeDownloadCacheLimit(legacy)
+      }
+    }
+    ctx.storage.set('cacheLimit', migrated)
+    ctx.storage.set('cacheLimitUnit', 'mb')
+    log.info('下载缓存上限已迁移为 MB 单位：%s', describeCacheLimit(migrated))
+  }
+
+  function loadCacheLimit(): string {
+    return normalizeDownloadCacheLimit(
+      ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT),
+    )
+  }
+
+  /** 缓存是否启用；`off` 既不复用也不再写入缓存 */
+  function cacheEnabled(): boolean {
+    return loadCacheLimit() !== DOWNLOAD_CACHE_LIMIT_OFF
+  }
+
+  function describeCacheLimit(raw: string): string {
+    const { mode, megabytes } = parseDownloadCacheLimit(raw)
+    if (mode === 'off') return '不缓存'
+    if (mode === 'unlimited') return '无限制'
+    return `${megabytes} MB`
+  }
+
+  /** 标记缓存文件正在使用；返回幂等的释放函数 */
+  function pinCacheFile(file: string): () => void {
+    const key = path.resolve(file)
+    cachePins.set(key, (cachePins.get(key) ?? 0) + 1)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      const count = (cachePins.get(key) ?? 1) - 1
+      if (count > 0) cachePins.set(key, count)
+      else cachePins.delete(key)
+    }
+  }
+
+  function cacheFilePinned(file: string): boolean {
+    return cachePins.has(path.resolve(file))
+  }
+
+  /** 命中缓存时刷新 mtime，让淘汰顺序贴近「最久未使用」 */
+  async function touchCacheFile(file: string): Promise<void> {
+    try {
+      const now = new Date()
+      await utimes(file, now, now)
+    } catch { /* 与清理流程竞争时忽略 */ }
+  }
+
   /** 统计下载缓存占用；缓存目录不存在时按 0 处理 */
   async function cacheUsage(): Promise<{ bytes: number; files: number }> {
     let bytes = 0
@@ -677,7 +757,7 @@ export function apply(ctx: Context): void {
         const full = path.join(dir, entry.name)
         if (entry.isDirectory()) {
           stack.push(full)
-        } else if (entry.isFile()) {
+        } else if (entry.isFile() && !CACHE_TRANSIENT_RE.test(entry.name)) {
           try {
             bytes += (await stat(full)).size
             files += 1
@@ -686,6 +766,99 @@ export function apply(ctx: Context): void {
       }
     }
     return { bytes, files }
+  }
+
+  /**
+   * 按上限淘汰最旧的缓存文件。
+   *
+   * 缓存没有额外索引，只能扫描目录；因此由 {@link scheduleCachePrune} 做批处理，
+   * 避免每个下载任务完成都全盘 stat 一次。正在读取或解析的文件会被 pin 住。
+   */
+  async function pruneCacheOnce(): Promise<void> {
+    const limit = downloadCacheLimitBytes(loadCacheLimit())
+    if (limit === null) return
+
+    const entries: Array<{ file: string; size: number; mtimeMs: number }> = []
+    let total = 0
+    const stack = [cacheRoot]
+    while (stack.length > 0) {
+      const dir = stack.pop()
+      if (!dir) continue
+      let items
+      try {
+        items = await readdir(dir, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const entry of items) {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          stack.push(full)
+          continue
+        }
+        if (!entry.isFile() || CACHE_TRANSIENT_RE.test(entry.name)) continue
+        if (cacheFilePinned(full)) continue
+        try {
+          const info = await stat(full)
+          entries.push({ file: full, size: info.size, mtimeMs: info.mtimeMs })
+          total += info.size
+        } catch { /* 扫描期间被删除 */ }
+      }
+    }
+
+    if (total <= limit) return
+    entries.sort((a, b) => a.mtimeMs - b.mtimeMs)
+
+    let removed = 0
+    let freed = 0
+    for (const entry of entries) {
+      if (total <= limit) break
+      // 清理期间设置可能被改回「无限制」或换了数值，交给下一轮按新策略处理
+      if (downloadCacheLimitBytes(loadCacheLimit()) !== limit) return
+      if (cacheFilePinned(entry.file)) continue
+      try {
+        await rm(entry.file, { force: true })
+        total -= entry.size
+        freed += entry.size
+        removed += 1
+      } catch { /* 已被其它流程删除或仍被占用 */ }
+    }
+    if (removed > 0) {
+      log.info('下载缓存已清理 %d 个文件（%d 字节），当前上限 %d 字节', removed, freed, limit)
+    }
+  }
+
+  /** 延迟清理：一次安装会完成大量小文件，逐次扫描目录并不划算 */
+  function scheduleCachePrune(delay = CACHE_PRUNE_DELAY_MS): void {
+    if (cachePruneTimer) return
+    cachePruneTimer = setTimeout(() => {
+      cachePruneTimer = null
+      void enqueueCachePrune()
+    }, delay)
+  }
+
+  /** 串行执行清理，避免多轮扫描并发删除同一批文件 */
+  function enqueueCachePrune(): Promise<void> {
+    cachePruneRequested = true
+    cachePruneChain = cachePruneChain
+      .then(async () => {
+        if (!cachePruneRequested) return
+        cachePruneRequested = false
+        await pruneCacheOnce()
+      })
+      .catch((cause) => {
+        log.warn('下载缓存清理失败：%s', toError(cause).message)
+      })
+    return cachePruneChain
+  }
+
+  /** 设置变更后立即清理，调用方可以等它完成再读取统计 */
+  async function pruneCacheNow(): Promise<void> {
+    if (cachePruneTimer) {
+      clearTimeout(cachePruneTimer)
+      cachePruneTimer = null
+    }
+    await enqueueCachePrune()
   }
 
   /** 缓存里的文件能否直接复用：有摘要按摘要，没有摘要时至少要是完整的 jar */
@@ -1481,20 +1654,28 @@ export function apply(ctx: Context): void {
     if (candidates.length === 0) throw new Error('没有可用的下载源')
     if (signal?.aborted) throw new Error('已取消')
 
-    const useCache = options.useCache !== false
+    const useCache = options.useCache !== false && cacheEnabled()
     // 以前这里只写缓存不读缓存：取消一次重试就得把安装器、依赖库重新下一遍
     const cached = !useCache ? '' : sha1 ? cachePath(sha1) : urlCachePath(url)
     const sameFile = Boolean(cached)
       && path.resolve(cached) === path.resolve(target)
-    if (cached && await cachedFileUsable(cached, sha1, target)) {
-      if (!sameFile) {
-        ensureDir(path.dirname(target))
-        await copyFile(cached, target)
+    if (cached) {
+      const release = pinCacheFile(cached)
+      try {
+        if (await cachedFileUsable(cached, sha1, target)) {
+          if (!sameFile) {
+            ensureDir(path.dirname(target))
+            await copyFile(cached, target)
+          }
+          await touchCacheFile(cached)
+          onProgress?.({ loaded: 1, total: 1 })
+          return
+        }
+        await rm(cached, { force: true }).catch(() => undefined)
+      } finally {
+        release()
       }
-      onProgress?.({ loaded: 1, total: 1 })
-      return
     }
-    if (cached) await rm(cached, { force: true }).catch(() => undefined)
 
     ensureDir(path.dirname(target))
 
@@ -1563,16 +1744,24 @@ export function apply(ctx: Context): void {
         throw toError(cause)
       }
 
-      const cacheTarget = useCache
+      // 单个文件本身就超过上限时不再写缓存：写了也会在下一轮清理里被淘汰
+      const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
+      const tooLargeToCache = cacheLimit !== null && size > 0 && size > cacheLimit
+      const cacheTarget = useCache && cacheEnabled() && !tooLargeToCache
         ? sha1 ? cachePath(sha1) : urlCachePath(url)
         : ''
       const sameCacheTarget = Boolean(cacheTarget)
         && path.resolve(cacheTarget) === path.resolve(target)
       if (cacheTarget && !sameCacheTarget && !existsSync(cacheTarget)) {
+        const release = pinCacheFile(cacheTarget)
         try {
           ensureDir(path.dirname(cacheTarget))
           await copyFile(target, cacheTarget)
-        } catch { /* 缓存只是加速手段 */ }
+          await touchCacheFile(cacheTarget)
+          scheduleCachePrune()
+        } catch { /* 缓存只是加速手段 */ } finally {
+          release()
+        }
       }
     }
 
@@ -2051,13 +2240,19 @@ export function apply(ctx: Context): void {
 
       if (await dropCancelled(task, task.savePath)) return
 
-      if (task.sha1) {
+      const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
+      if (task.sha1 && cacheEnabled() && (cacheLimit === null || task.size <= cacheLimit)) {
         const cached = cachePath(task.sha1)
         if (!existsSync(cached)) {
+          const release = pinCacheFile(cached)
           try {
             ensureDir(path.dirname(cached))
             await copyFile(task.savePath, cached)
-          } catch { /* 缓存只是加速手段，写不进去不影响本次安装 */ }
+            await touchCacheFile(cached)
+            scheduleCachePrune()
+          } catch { /* 缓存只是加速手段，写不进去不影响本次安装 */ } finally {
+            release()
+          }
         }
       }
 
@@ -2122,19 +2317,25 @@ export function apply(ctx: Context): void {
   }
 
   async function tryCopyFromCache(task: Pick<DownloadTask, 'sha1' | 'savePath'>): Promise<boolean> {
-    if (!task.sha1) return false
+    if (!task.sha1 || !cacheEnabled()) return false
     const cached = cachePath(task.sha1)
-    if (!existsSync(cached)) return false
-    // 缓存可能来自旧版下载器，也可能是写坏的条目；复制前必须按文件名重新校验，
-    // 否则坏内容会被当成「已下载」装进每个实例，补全也永远修不好。
-    if (await hashFile(cached) !== task.sha1) {
-      await rm(cached, { force: true }).catch(() => undefined)
-      log.warn('下载缓存内容与摘要不符，已丢弃：%s', task.sha1)
-      return false
+    const release = pinCacheFile(cached)
+    try {
+      if (!existsSync(cached)) return false
+      // 缓存可能来自旧版下载器，也可能是写坏的条目；复制前必须按文件名重新校验，
+      // 否则坏内容会被当成「已下载」装进每个实例，补全也永远修不好。
+      if (await hashFile(cached) !== task.sha1) {
+        await rm(cached, { force: true }).catch(() => undefined)
+        log.warn('下载缓存内容与摘要不符，已丢弃：%s', task.sha1)
+        return false
+      }
+      ensureDir(path.dirname(task.savePath))
+      await copyFile(cached, task.savePath)
+      await touchCacheFile(cached)
+      return true
+    } finally {
+      release()
     }
-    ensureDir(path.dirname(task.savePath))
-    await copyFile(cached, task.savePath)
-    return true
   }
 
   /** 目标文件是否已完整；补全时据此跳过已下载的文件 */
@@ -2608,6 +2809,9 @@ export function apply(ctx: Context): void {
     const isCancelled = (): boolean => cancelledJobs.has(job.id)
     const progress = createPrepareProgress(job)
     let createdInstance = false
+    let archive = ''
+    let releaseArchive: (() => void) | null = null
+    let removeArchiveAfterPrepare = false
     log.info('开始准备整合包安装「%s」（实例 %s，job %s）', request.title || request.file.fileName, job.instanceName, job.id)
 
     try {
@@ -2615,14 +2819,18 @@ export function apply(ctx: Context): void {
       // 先占住实例目录：归档可能很大，下载期间启动页也应该看到「安装中」
       await writeInstallState(instanceDir, { state: 'installing', jobId: job.id })
       progress.report('下载整合包', 0)
-      // 有摘要时直接以缓存为落点，避免同一个大归档在磁盘上存两份
-      const archive = request.file.sha1
+      // 有摘要时直接以缓存为落点，避免同一个大归档在磁盘上存两份；
+      // 关闭缓存或归档本身超过上限时改用 job 专属临时文件，准备完成后删除。
+      const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
+      const caching = cacheEnabled()
+        && (cacheLimit === null || (request.file.size ?? 0) <= cacheLimit)
+      const archiveName = modpackArchiveName('', request.file.url, request.file.fileName)
+      archive = caching && request.file.sha1
         ? cachePath(request.file.sha1)
-        : path.join(
-            cacheRoot,
-            'modpacks',
-            modpackArchiveName('', request.file.url, request.file.fileName),
-          )
+        : path.join(cacheRoot, 'modpacks', caching ? archiveName : `work-${job.id}-${archiveName}`)
+      removeArchiveAfterPrepare = !caching
+      // 解析与解压期间不能被上限清理删掉
+      releaseArchive = pinCacheFile(archive)
       await downloadFileNow(
         request.file.url,
         archive,
@@ -2786,6 +2994,12 @@ export function apply(ctx: Context): void {
       job.error = toError(cause).message
       log.error('准备整合包安装「%s」失败：%s', job.instanceName, job.error)
     } finally {
+      if (removeArchiveAfterPrepare && archive) {
+        await rm(archive, { force: true }).catch(() => undefined)
+        scheduleCachePrune()
+      }
+      releaseArchive?.()
+      scheduleCachePrune()
       prepAborts.delete(job.id)
       if (isCancelled()) {
         job.state = 'cancelled'
@@ -2877,11 +3091,14 @@ export function apply(ctx: Context): void {
     }
   }
 
+  migrateCacheLimitSetting()
   loadRecords()
   if (jobs.size > 0 || tasks.size > 0) {
     log.info('下载记录已恢复：%d 个安装，%d 个下载任务', jobs.size, tasks.size)
   }
   void reconcileInstalls()
+  // 上次退出时可能已经超过上限（或用户刚把上限调小），启动后补一轮清理
+  scheduleCachePrune()
 
   // ── IPC handlers ──
 
@@ -2908,13 +3125,13 @@ export function apply(ctx: Context): void {
       'segmentThreshold',
       DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD,
     ),
-    cacheLimit: ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT),
+    cacheLimit: loadCacheLimit(),
     sources: loadSources(),
     loaderSources: loadLoaderSources(),
     modSources: loadModSources(),
   }))
 
-  ctx.ipc.handle<{ key: string; value: string }>('settings/set', ({ key, value }) => {
+  ctx.ipc.handle<{ key: string; value: string }>('settings/set', async ({ key, value }) => {
     if (key === 'sources' || key === 'loaderSources' || key === 'modSources') {
       let parsed: unknown
       try { parsed = JSON.parse(value) } catch { parsed = null }
@@ -2937,6 +3154,14 @@ export function apply(ctx: Context): void {
           : key === 'loaderSources' ? '模组加载器下载源' : 'Mod 下载源',
       )
       return
+    }
+    if (key === 'cacheLimit') {
+      const normalized = normalizeDownloadCacheLimit(value)
+      ctx.storage.set('cacheLimit', normalized)
+      log.info('下载缓存上限已更新：%s', describeCacheLimit(normalized))
+      // 调小上限（或选择「不缓存」）后立即淘汰，页面能马上看到新的占用
+      await pruneCacheNow()
+      return cacheUsage()
     }
     ctx.storage.set(key, value)
     log.info('下载设置已更新：%s', key)

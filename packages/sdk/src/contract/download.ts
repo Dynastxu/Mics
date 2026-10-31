@@ -494,8 +494,67 @@ export const DOWNLOAD_SEGMENT_OPTIONS: ReadonlyArray<{ value: string; label: str
   { value: '8', label: '8 连接' },
 ]
 
-/** 下载缓存上限（GB）的默认值 */
-export const DEFAULT_DOWNLOAD_CACHE_LIMIT = '5'
+/** 关闭下载缓存：不读取、不写入，并清理已有缓存 */
+export const DOWNLOAD_CACHE_LIMIT_OFF = 'off'
+
+/** 下载缓存不限制大小 */
+export const DOWNLOAD_CACHE_LIMIT_UNLIMITED = 'unlimited'
+
+/** 下载缓存上限默认值（MB） */
+export const DEFAULT_DOWNLOAD_CACHE_LIMIT_MB = 5102
+
+/** 下载缓存上限默认值；设置页与主进程共用同一份字符串表示 */
+export const DEFAULT_DOWNLOAD_CACHE_LIMIT = String(DEFAULT_DOWNLOAD_CACHE_LIMIT_MB)
+
+/** 缓存上限的三种策略：按大小限制、关闭缓存、不限制 */
+export type DownloadCacheLimitMode = 'limit' | 'off' | 'unlimited'
+
+export interface DownloadCacheLimit {
+  mode: DownloadCacheLimitMode
+  /** 仅在 mode === 'limit' 时有意义；单位 MB */
+  megabytes: number
+}
+
+/** 确保 MB 值落在安全整数范围内，避免后续换算成字节时溢出 */
+const MAX_DOWNLOAD_CACHE_MB = Math.floor(Number.MAX_SAFE_INTEGER / 1024 / 1024)
+
+/**
+ * 解析缓存上限设置。
+ *
+ * 存储格式只有三种：`off`、`unlimited` 或正整数 MB 的字符串。无法识别的
+ * 值一律回落到默认值，避免损坏的设置把缓存清空或撑满磁盘。
+ */
+export function parseDownloadCacheLimit(value: unknown): DownloadCacheLimit {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (raw === DOWNLOAD_CACHE_LIMIT_UNLIMITED) return { mode: 'unlimited', megabytes: 0 }
+  if (raw === DOWNLOAD_CACHE_LIMIT_OFF || raw === '0') return { mode: 'off', megabytes: 0 }
+  const parsed = Number(raw)
+  const megabytes = Number.isFinite(parsed) && parsed > 0
+    ? Math.min(MAX_DOWNLOAD_CACHE_MB, Math.max(1, Math.round(parsed)))
+    : DEFAULT_DOWNLOAD_CACHE_LIMIT_MB
+  return { mode: 'limit', megabytes }
+}
+
+/** 把任意输入归一化成可持久化的缓存上限字符串 */
+export function normalizeDownloadCacheLimit(value: unknown): string {
+  const { mode, megabytes } = parseDownloadCacheLimit(value)
+  if (mode === 'off') return DOWNLOAD_CACHE_LIMIT_OFF
+  if (mode === 'unlimited') return DOWNLOAD_CACHE_LIMIT_UNLIMITED
+  return String(megabytes)
+}
+
+/**
+ * 缓存上限的字节数；`null` 表示不限制。
+ *
+ * `off` 返回 0，调用方仍需先判断缓存是否启用，以便区分「关闭缓存」与
+ * 「上限恰好是 0 MB」。
+ */
+export function downloadCacheLimitBytes(value: unknown): number | null {
+  const { mode, megabytes } = parseDownloadCacheLimit(value)
+  if (mode === 'unlimited') return null
+  if (mode === 'off') return 0
+  return megabytes * 1024 * 1024
+}
 
 /** 下载管线持久化设置 */
 export interface DownloadSettings {
@@ -504,6 +563,7 @@ export interface DownloadSettings {
   segments: string
   /** 启用分段的大小阈值（MB）；见 DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD */
   segmentThreshold: string
+  /** 缓存上限：`off` / `unlimited` / 正整数 MB；见 parseDownloadCacheLimit */
   cacheLimit: string
   sources: DownloadSource[]
   loaderSources: LoaderSource[]

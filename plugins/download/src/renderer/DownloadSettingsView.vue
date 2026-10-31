@@ -9,16 +9,25 @@ import {
   DEFAULT_DOWNLOAD_SOURCES,
   DEFAULT_LOADER_SOURCES,
   DEFAULT_MOD_SOURCES,
+  DOWNLOAD_CACHE_LIMIT_OFF,
+  DOWNLOAD_CACHE_LIMIT_UNLIMITED,
   DOWNLOAD_SEGMENT_OPTIONS,
   DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS,
   LOADER_LABELS,
   MOD_SOURCE_LABELS,
   modSourceNeedsKey,
+  normalizeDownloadCacheLimit,
   normalizeDownloadSources,
   normalizeLoaderSources,
   normalizeModSources,
+  parseDownloadCacheLimit,
 } from '@mics/sdk'
-import type { DownloadSource, LoaderSource, ModSource } from '@mics/sdk'
+import type {
+  DownloadCacheLimitMode,
+  DownloadSource,
+  LoaderSource,
+  ModSource,
+} from '@mics/sdk'
 import { ToggleSwitch } from '@mics/ui'
 import SourceEditorDialog from './SourceEditorDialog.vue'
 import LoaderSourceDialog from './LoaderSourceDialog.vue'
@@ -29,7 +38,8 @@ const loading = ref(true)
 const concurrency = ref(DEFAULT_DOWNLOAD_CONCURRENCY)
 const segments = ref(DEFAULT_DOWNLOAD_SEGMENTS)
 const segmentThreshold = ref(DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD)
-const cacheLimit = ref(DEFAULT_DOWNLOAD_CACHE_LIMIT)
+const cacheLimitMode = ref<DownloadCacheLimitMode>('limit')
+const cacheLimitMb = ref(DEFAULT_DOWNLOAD_CACHE_LIMIT)
 const cacheBytes = ref(0)
 const cacheFiles = ref(0)
 const cacheLoading = ref(false)
@@ -79,6 +89,7 @@ const modEditorSource = computed<ModSource | null>(() => {
 })
 
 let concurrencyTimer: ReturnType<typeof setTimeout> | null = null
+let cacheLimitTimer: ReturnType<typeof setTimeout> | null = null
 
 const displayName = (index: number): string =>
   sources.value[index]?.label.trim() || `源 ${index + 1}`
@@ -123,7 +134,9 @@ async function loadSettings(): Promise<void> {
     concurrency.value = settings.concurrency
     segments.value = settings.segments || DEFAULT_DOWNLOAD_SEGMENTS
     segmentThreshold.value = settings.segmentThreshold || DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD
-    cacheLimit.value = settings.cacheLimit
+    const limit = parseDownloadCacheLimit(settings.cacheLimit)
+    cacheLimitMode.value = limit.mode
+    if (limit.mode === 'limit') cacheLimitMb.value = String(limit.megabytes)
     sources.value = normalizeDownloadSources(settings.sources)
     loaderSources.value = normalizeLoaderSources(settings.loaderSources)
     modSources.value = normalizeModSources(settings.modSources)
@@ -204,16 +217,56 @@ function resetSegmentThreshold(): void {
   saveSegmentThreshold()
 }
 
-function saveCacheLimit(): void {
-  void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
-    key: 'cacheLimit',
-    value: cacheLimit.value,
-  })
+function cacheLimitValue(): string {
+  if (cacheLimitMode.value === 'off') return DOWNLOAD_CACHE_LIMIT_OFF
+  if (cacheLimitMode.value === 'unlimited') return DOWNLOAD_CACHE_LIMIT_UNLIMITED
+  return normalizeDownloadCacheLimit(cacheLimitMb.value)
+}
+
+const cacheLimitIsDefault = computed(
+  () => cacheLimitValue() === DEFAULT_DOWNLOAD_CACHE_LIMIT,
+)
+
+async function persistCacheLimit(): Promise<void> {
+  try {
+    const usage = await ctx.ipc.invoke<{ bytes: number; files: number } | void>(
+      'mics.download.manager',
+      'settings/set',
+      { key: 'cacheLimit', value: cacheLimitValue() },
+    )
+    if (usage) {
+      cacheBytes.value = usage.bytes
+      cacheFiles.value = usage.files
+    }
+    cacheError.value = ''
+  } catch (cause) {
+    cacheError.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+
+function queueCacheLimitSave(): void {
+  if (cacheLimitTimer) clearTimeout(cacheLimitTimer)
+  cacheLimitTimer = setTimeout(() => {
+    cacheLimitTimer = null
+    void persistCacheLimit()
+  }, 500)
+}
+
+async function saveCacheLimit(): Promise<void> {
+  if (cacheLimitTimer) {
+    clearTimeout(cacheLimitTimer)
+    cacheLimitTimer = null
+  }
+  if (cacheLimitMode.value === 'limit') {
+    cacheLimitMb.value = String(parseDownloadCacheLimit(cacheLimitMb.value).megabytes)
+  }
+  await persistCacheLimit()
 }
 
 function resetCacheLimit(): void {
-  cacheLimit.value = DEFAULT_DOWNLOAD_CACHE_LIMIT
-  saveCacheLimit()
+  cacheLimitMode.value = 'limit'
+  cacheLimitMb.value = DEFAULT_DOWNLOAD_CACHE_LIMIT
+  void saveCacheLimit()
 }
 
 function fmtBytes(bytes: number): string {
@@ -536,6 +589,11 @@ onUnmounted(() => {
     concurrencyTimer = null
     persistConcurrency()
   }
+  if (cacheLimitTimer) {
+    clearTimeout(cacheLimitTimer)
+    cacheLimitTimer = null
+    void persistCacheLimit()
+  }
   if (confirmClearTimer) {
     clearTimeout(confirmClearTimer)
     confirmClearTimer = null
@@ -638,18 +696,32 @@ onUnmounted(() => {
           </div>
 
           <div class="mics-field">
-            <div class="mics-field__label">缓存上限</div>
+            <div>
+              <div class="mics-field__label">缓存上限</div>
+              <div class="mics-field__hint">
+                按 MB 计；超出后清理最旧的文件，不缓存会停用并清空缓存
+              </div>
+            </div>
             <div class="mics-field__control">
-              <select v-model="cacheLimit" class="mics-select" @change="saveCacheLimit">
-                <option value="2">2 GB</option>
-                <option value="5">5 GB</option>
-                <option value="10">10 GB</option>
-                <option value="0">不限制</option>
+              <select v-model="cacheLimitMode" class="mics-select" @change="saveCacheLimit">
+                <option value="limit">限制大小</option>
+                <option value="off">不缓存</option>
+                <option value="unlimited">无限制</option>
               </select>
+              <template v-if="cacheLimitMode === 'limit'">
+                <input
+                  v-model="cacheLimitMb"
+                  class="mics-input settings-cache-limit"
+                  inputmode="numeric"
+                  @input="queueCacheLimitSave"
+                  @change="saveCacheLimit"
+                />
+                <span class="settings-cache-unit">MB</span>
+              </template>
               <button
                 class="mics-button mics-button--ghost mics-button--small"
                 title="恢复默认值"
-                :disabled="cacheLimit === DEFAULT_DOWNLOAD_CACHE_LIMIT"
+                :disabled="cacheLimitIsDefault"
                 @click="resetCacheLimit"
               >
                 重置
@@ -684,7 +756,7 @@ onUnmounted(() => {
       <section class="mics-section">
         <div class="settings-sources__head">
           <div class="settings-sources__heading">
-            <h2 class="mics-section__title">下载源</h2>
+            <h2 class="mics-section__title">原版下载源</h2>
             <span class="settings-sources__note">自上而下优先级递减</span>
           </div>
           <div class="settings-sources__actions">
@@ -1144,6 +1216,19 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.settings-cache-limit {
+  flex: none;
+  width: 96px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-cache-unit {
+  flex: none;
+  color: var(--mics-fg-muted);
+  font-size: 12px;
 }
 
 .settings-cache {
