@@ -461,38 +461,56 @@ export function normalizeLoaderSources(value: unknown): LoaderSource[] {
 /** 最大并发下载文件的默认值 */
 export const DEFAULT_DOWNLOAD_CONCURRENCY = '64'
 
+/** 单文件分段下载的连接数默认值 */
+export const DEFAULT_DOWNLOAD_SEGMENTS = '8'
+
+/** 分段连接数下限：1 表示单连接，即关闭分段 */
+export const MIN_DOWNLOAD_SEGMENTS = 1
+
+/** 分段连接数上限 */
+export const MAX_DOWNLOAD_SEGMENTS = 16
+
+/** 分段阈值默认值（MB），最小 1 MB；只有达到该大小的文件才值得分段 */
+export const DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD = '8'
+
+/** 分段阈值换算成字节时不会溢出的最大 MB 数 */
+const MAX_DOWNLOAD_SEGMENT_THRESHOLD_MB = Math.floor(Number.MAX_SAFE_INTEGER / 1024 / 1024)
+
 /**
- * 单文件分段下载设置。
+ * 解析单文件分段连接数。
  *
- * `auto` 表示对达到阈值的大文件自动使用 4 条 Range 连接；数字表示固定
- * 连接数；`1` 表示关闭分段。服务端不支持 Range 时实现会自动退回单连接。
+ * 旧版本的 `auto`（固定 4 连接）按 4 处理，其余脏值回落到默认值；结果
+ * 收窄到 {@link MIN_DOWNLOAD_SEGMENTS}–{@link MAX_DOWNLOAD_SEGMENTS}。
  */
-export const DEFAULT_DOWNLOAD_SEGMENTS = 'auto'
+export function parseDownloadSegments(value: unknown): number {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (raw === 'auto') return 4
+  if (raw === 'off') return MIN_DOWNLOAD_SEGMENTS
+  const parsed = Number(raw)
+  const amount = raw === '' || !Number.isFinite(parsed)
+    ? Number(DEFAULT_DOWNLOAD_SEGMENTS)
+    : parsed
+  return Math.max(MIN_DOWNLOAD_SEGMENTS, Math.min(MAX_DOWNLOAD_SEGMENTS, Math.round(amount)))
+}
 
-/** 只有达到该大小的文件才值得分段；小文件多连接只会增加握手与排队开销 */
-export const DOWNLOAD_SEGMENT_THRESHOLD = 32 * 1024 * 1024
+/** 把任意输入归一化成可持久化的分段连接数字符串 */
+export function normalizeDownloadSegments(value: unknown): string {
+  return String(parseDownloadSegments(value))
+}
 
-/** 分段阈值默认值（MB）；设置页可在 DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS 中选择 */
-export const DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD = '32'
+/** 解析分段阈值（MB）；结果是至少 1 的整数，脏值回落到默认值 */
+export function parseDownloadSegmentThresholdMb(value: unknown): number {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  const parsed = Number(raw)
+  const fallback = Number(DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD)
+  const megabytes = raw === '' || !Number.isFinite(parsed) ? fallback : parsed
+  return Math.max(1, Math.min(MAX_DOWNLOAD_SEGMENT_THRESHOLD_MB, Math.round(megabytes)))
+}
 
-/** 设置页使用的分段阈值选项（MB） */
-export const DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: '8', label: '8 MB' },
-  { value: '16', label: '16 MB' },
-  { value: '32', label: '32 MB' },
-  { value: '64', label: '64 MB' },
-  { value: '128', label: '128 MB' },
-]
-
-/** 设置页使用的分段选项 */
-export const DOWNLOAD_SEGMENT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'auto', label: '自动（4 连接）' },
-  { value: '1', label: '关闭（单连接）' },
-  { value: '2', label: '2 连接' },
-  { value: '4', label: '4 连接' },
-  { value: '6', label: '6 连接' },
-  { value: '8', label: '8 连接' },
-]
+/** 把任意输入归一化成可持久化的分段阈值（MB）字符串 */
+export function normalizeDownloadSegmentThreshold(value: unknown): string {
+  return String(parseDownloadSegmentThresholdMb(value))
+}
 
 /** 关闭下载缓存：不读取、不写入，并清理已有缓存 */
 export const DOWNLOAD_CACHE_LIMIT_OFF = 'off'
@@ -559,9 +577,9 @@ export function downloadCacheLimitBytes(value: unknown): number | null {
 /** 下载管线持久化设置 */
 export interface DownloadSettings {
   concurrency: string
-  /** 单文件分段下载配置；见 DEFAULT_DOWNLOAD_SEGMENTS */
+  /** 单文件分段连接数（1–16）；见 parseDownloadSegments */
   segments: string
-  /** 启用分段的大小阈值（MB）；见 DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD */
+  /** 启用分段的大小阈值（MB，最小 1）；见 parseDownloadSegmentThresholdMb */
   segmentThreshold: string
   /** 缓存上限：`off` / `unlimited` / 正整数 MB；见 parseDownloadCacheLimit */
   cacheLimit: string

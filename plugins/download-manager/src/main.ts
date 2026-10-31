@@ -27,7 +27,6 @@ import {
   DEFAULT_MOD_SOURCES,
   DOWNLOAD_CACHE_LIMIT_OFF,
   DOWNLOAD_CACHE_LIMIT_UNLIMITED,
-  DOWNLOAD_SEGMENT_THRESHOLD,
   FILE_TRANSFER,
   INSTANCE_STATE_FILE,
   LOADER_LABELS,
@@ -36,10 +35,14 @@ import {
   downloadCacheLimitBytes,
   isModLoader,
   normalizeDownloadCacheLimit,
+  normalizeDownloadSegmentThreshold,
+  normalizeDownloadSegments,
   normalizeDownloadSources,
   normalizeLoaderSources,
   normalizeModSources,
   parseDownloadCacheLimit,
+  parseDownloadSegmentThresholdMb,
+  parseDownloadSegments,
   validateInstanceName,
 } from '@mics/sdk'
 import type {
@@ -894,26 +897,19 @@ export function apply(ctx: Context): void {
    * 单个文件允许的 Range 连接数。
    *
    * 小文件多连接只会增加握手与排队开销，因此只有达到阈值的文件才分段；
-   * `auto` 固定用 4 条连接，数字配置受 8 条上限约束。服务端不支持 Range
-   * 时传输层会自己回退单连接，这里不需要探测。
+   * 1 表示单连接。服务端不支持 Range 时传输层会自己回退单连接，这里不需要探测。
    */
   function segmentsFor(task: DownloadTask): number {
     if (task.size < segmentThresholdBytes()) return 1
-    const raw = ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS)
-    if (raw === '1' || raw === 'off') return 1
-    if (!raw || raw === 'auto') return 4
-    const requested = Math.round(Number(raw))
-    return Number.isFinite(requested) ? Math.max(2, Math.min(8, requested)) : 4
+    return parseDownloadSegments(ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS))
   }
 
   /** 分段阈值（字节）；设置页按 MB 存字符串，读取时兜底并收窄范围 */
   function segmentThresholdBytes(): number {
-    const fallbackMb = Math.round(DOWNLOAD_SEGMENT_THRESHOLD / 1024 / 1024)
-    const raw = Number(
+    const megabytes = parseDownloadSegmentThresholdMb(
       ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD),
     )
-    const mb = Number.isFinite(raw) && raw > 0 ? raw : fallbackMb
-    return Math.max(1, Math.min(1024, Math.round(mb))) * 1024 * 1024
+    return megabytes * 1024 * 1024
   }
 
   function ensureDir(dir: string): void {
@@ -3120,10 +3116,11 @@ export function apply(ctx: Context): void {
 
   ctx.ipc.handle('settings/get', () => ({
     concurrency: String(maxConcurrency()),
-    segments: ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS),
-    segmentThreshold: ctx.storage.get<string>(
-      'segmentThreshold',
-      DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD,
+    segments: normalizeDownloadSegments(
+      ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS),
+    ),
+    segmentThreshold: normalizeDownloadSegmentThreshold(
+      ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD),
     ),
     cacheLimit: loadCacheLimit(),
     sources: loadSources(),
@@ -3153,6 +3150,18 @@ export function apply(ctx: Context): void {
           ? '下载源'
           : key === 'loaderSources' ? '模组加载器下载源' : 'Mod 下载源',
       )
+      return
+    }
+    if (key === 'segments') {
+      const normalized = normalizeDownloadSegments(value)
+      ctx.storage.set('segments', normalized)
+      log.info('单文件分段连接数已更新：%s', normalized)
+      return
+    }
+    if (key === 'segmentThreshold') {
+      const normalized = normalizeDownloadSegmentThreshold(value)
+      ctx.storage.set('segmentThreshold', normalized)
+      log.info('分段阈值已更新：%s MB', normalized)
       return
     }
     if (key === 'cacheLimit') {

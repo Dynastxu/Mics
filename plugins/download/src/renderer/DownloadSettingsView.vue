@@ -11,12 +11,14 @@ import {
   DEFAULT_MOD_SOURCES,
   DOWNLOAD_CACHE_LIMIT_OFF,
   DOWNLOAD_CACHE_LIMIT_UNLIMITED,
-  DOWNLOAD_SEGMENT_OPTIONS,
-  DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS,
   LOADER_LABELS,
+  MAX_DOWNLOAD_SEGMENTS,
+  MIN_DOWNLOAD_SEGMENTS,
   MOD_SOURCE_LABELS,
   modSourceNeedsKey,
   normalizeDownloadCacheLimit,
+  normalizeDownloadSegmentThreshold,
+  normalizeDownloadSegments,
   normalizeDownloadSources,
   normalizeLoaderSources,
   normalizeModSources,
@@ -28,10 +30,12 @@ import type {
   LoaderSource,
   ModSource,
 } from '@mics/sdk'
-import { ToggleSwitch } from '@mics/ui'
 import SourceEditorDialog from './SourceEditorDialog.vue'
 import LoaderSourceDialog from './LoaderSourceDialog.vue'
 import ModSourceDialog from './ModSourceDialog.vue'
+import SourceList from './SourceList.vue'
+import SettingsField from './SettingsField.vue'
+import { useSourceDrag } from './useSourceDrag'
 
 const ctx = usePluginContext()
 const loading = ref(true)
@@ -54,12 +58,9 @@ const modSources = ref<ModSource[]>(DEFAULT_MOD_SOURCES.map((source) => ({ ...so
 const saved = ref(true)
 const loaderSaved = ref(true)
 const modSaved = ref(true)
-const dragIndex = ref(-1)
-const overIndex = ref(-1)
-const loaderDragIndex = ref(-1)
-const loaderOverIndex = ref(-1)
-const modDragIndex = ref(-1)
-const modOverIndex = ref(-1)
+const sourceDrag = useSourceDrag()
+const loaderDrag = useSourceDrag()
+const modDrag = useSourceDrag()
 const editorOpen = ref(false)
 const editorIndex = ref<number | null>(null)
 const loaderEditorOpen = ref(false)
@@ -75,6 +76,14 @@ const loaderSourcesAreDefault = computed(
 const modSourcesAreDefault = computed(
   () => JSON.stringify(modSources.value) === JSON.stringify(DEFAULT_MOD_SOURCES),
 )
+const segmentsAreDefault = computed(
+  () => normalizeDownloadSegments(segments.value) === DEFAULT_DOWNLOAD_SEGMENTS,
+)
+const segmentThresholdIsDefault = computed(
+  () =>
+    normalizeDownloadSegmentThreshold(segmentThreshold.value)
+    === DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD,
+)
 const editorSource = computed<DownloadSource | null>(() => {
   if (editorIndex.value === null) return null
   return sources.value[editorIndex.value] ?? null
@@ -89,6 +98,8 @@ const modEditorSource = computed<ModSource | null>(() => {
 })
 
 let concurrencyTimer: ReturnType<typeof setTimeout> | null = null
+let segmentsTimer: ReturnType<typeof setTimeout> | null = null
+let segmentThresholdTimer: ReturnType<typeof setTimeout> | null = null
 let cacheLimitTimer: ReturnType<typeof setTimeout> | null = null
 
 const displayName = (index: number): string =>
@@ -132,8 +143,8 @@ async function loadSettings(): Promise<void> {
       modSources: ModSource[]
     }>('mics.download.manager', 'settings/get')
     concurrency.value = settings.concurrency
-    segments.value = settings.segments || DEFAULT_DOWNLOAD_SEGMENTS
-    segmentThreshold.value = settings.segmentThreshold || DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD
+    segments.value = normalizeDownloadSegments(settings.segments)
+    segmentThreshold.value = normalizeDownloadSegmentThreshold(settings.segmentThreshold)
     const limit = parseDownloadCacheLimit(settings.cacheLimit)
     cacheLimitMode.value = limit.mode
     if (limit.mode === 'limit') cacheLimitMb.value = String(limit.megabytes)
@@ -193,11 +204,28 @@ function resetConcurrency(): void {
   saveConcurrency()
 }
 
-function saveSegments(): void {
+function persistSegments(): void {
   void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'segments',
     value: segments.value,
   })
+}
+
+function saveSegments(): void {
+  if (segmentsTimer) {
+    clearTimeout(segmentsTimer)
+    segmentsTimer = null
+  }
+  segments.value = normalizeDownloadSegments(segments.value)
+  persistSegments()
+}
+
+function queueSegmentsSave(): void {
+  if (segmentsTimer) clearTimeout(segmentsTimer)
+  segmentsTimer = setTimeout(() => {
+    segmentsTimer = null
+    persistSegments()
+  }, 500)
 }
 
 function resetSegments(): void {
@@ -205,11 +233,28 @@ function resetSegments(): void {
   saveSegments()
 }
 
-function saveSegmentThreshold(): void {
+function persistSegmentThreshold(): void {
   void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'segmentThreshold',
     value: segmentThreshold.value,
   })
+}
+
+function saveSegmentThreshold(): void {
+  if (segmentThresholdTimer) {
+    clearTimeout(segmentThresholdTimer)
+    segmentThresholdTimer = null
+  }
+  segmentThreshold.value = normalizeDownloadSegmentThreshold(segmentThreshold.value)
+  persistSegmentThreshold()
+}
+
+function queueSegmentThresholdSave(): void {
+  if (segmentThresholdTimer) clearTimeout(segmentThresholdTimer)
+  segmentThresholdTimer = setTimeout(() => {
+    segmentThresholdTimer = null
+    persistSegmentThreshold()
+  }, 500)
 }
 
 function resetSegmentThreshold(): void {
@@ -369,36 +414,6 @@ function markLoaderDirty(): void {
   loaderSaved.value = false
 }
 
-function resetLoaderDrag(): void {
-  loaderDragIndex.value = -1
-  loaderOverIndex.value = -1
-}
-
-function onLoaderDragStart(index: number, event: DragEvent): void {
-  loaderDragIndex.value = index
-  loaderOverIndex.value = index
-  event.dataTransfer?.setData('text/plain', String(index))
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-}
-
-function onLoaderDragOver(index: number, event: DragEvent): void {
-  event.preventDefault()
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
-  loaderOverIndex.value = index
-}
-
-function onLoaderDrop(index: number): void {
-  const from = loaderDragIndex.value
-  resetLoaderDrag()
-  if (from < 0 || from === index) return
-  const list = [...loaderSources.value]
-  const [item] = list.splice(from, 1)
-  if (!item) return
-  list.splice(index, 0, item)
-  loaderSources.value = list
-  markLoaderDirty()
-}
-
 function openLoaderEditor(index: number | null): void {
   loaderEditorIndex.value = index
   loaderEditorOpen.value = true
@@ -458,34 +473,16 @@ function markModDirty(): void {
   modSaved.value = false
 }
 
-function resetModDrag(): void {
-  modDragIndex.value = -1
-  modOverIndex.value = -1
+function onSourceDrop(index: number): void {
+  sourceDrag.onDrop(sources, index, markDirty)
 }
 
-function onModDragStart(index: number, event: DragEvent): void {
-  modDragIndex.value = index
-  modOverIndex.value = index
-  event.dataTransfer?.setData('text/plain', String(index))
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-}
-
-function onModDragOver(index: number, event: DragEvent): void {
-  event.preventDefault()
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
-  modOverIndex.value = index
+function onLoaderDrop(index: number): void {
+  loaderDrag.onDrop(loaderSources, index, markLoaderDirty)
 }
 
 function onModDrop(index: number): void {
-  const from = modDragIndex.value
-  resetModDrag()
-  if (from < 0 || from === index) return
-  const list = [...modSources.value]
-  const [item] = list.splice(from, 1)
-  if (!item) return
-  list.splice(index, 0, item)
-  modSources.value = list
-  markModDirty()
+  modDrag.onDrop(modSources, index, markModDirty)
 }
 
 function openModEditor(index: number | null): void {
@@ -516,36 +513,6 @@ function setModSourceEnabled(index: number, enabled: boolean): void {
 function removeModSource(index: number): void {
   modSources.value.splice(index, 1)
   markModDirty()
-}
-
-function resetDrag(): void {
-  dragIndex.value = -1
-  overIndex.value = -1
-}
-
-function onDragStart(index: number, event: DragEvent): void {
-  dragIndex.value = index
-  overIndex.value = index
-  event.dataTransfer?.setData('text/plain', String(index))
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-}
-
-function onDragOver(index: number, event: DragEvent): void {
-  event.preventDefault()
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
-  overIndex.value = index
-}
-
-function onDrop(index: number): void {
-  const from = dragIndex.value
-  resetDrag()
-  if (from < 0 || from === index) return
-  const list = [...sources.value]
-  const [item] = list.splice(from, 1)
-  if (!item) return
-  list.splice(index, 0, item)
-  sources.value = list
-  markDirty()
 }
 
 function openEditor(index: number | null): void {
@@ -589,6 +556,16 @@ onUnmounted(() => {
     concurrencyTimer = null
     persistConcurrency()
   }
+  if (segmentsTimer) {
+    clearTimeout(segmentsTimer)
+    segmentsTimer = null
+    persistSegments()
+  }
+  if (segmentThresholdTimer) {
+    clearTimeout(segmentThresholdTimer)
+    segmentThresholdTimer = null
+    persistSegmentThreshold()
+  }
   if (cacheLimitTimer) {
     clearTimeout(cacheLimitTimer)
     cacheLimitTimer = null
@@ -613,96 +590,67 @@ onUnmounted(() => {
       <section class="mics-section">
         <h2 class="mics-section__title">下载行为</h2>
         <div class="mics-form">
-          <div class="mics-field">
-            <div>
-              <div class="mics-field__label">最大并发</div>
-              <div class="mics-field__hint">同时下载的文件数（1–128）</div>
-            </div>
-            <div class="mics-field__control">
+          <SettingsField label="最大并发" hint="同时下载的文件数（1–128）">
               <input
                 v-model="concurrency"
-                class="mics-input"
+                class="mics-input settings-number"
                 inputmode="numeric"
                 @input="queueConcurrencySave"
                 @change="saveConcurrency"
               />
               <button
-                class="mics-button mics-button--ghost mics-button--small"
+                class="mics-button mics-button--ghost mics-button--small settings-row-action"
                 title="恢复默认值"
                 :disabled="concurrency === DEFAULT_DOWNLOAD_CONCURRENCY"
                 @click="resetConcurrency"
               >
                 重置
               </button>
-            </div>
-          </div>
+            </SettingsField>
 
-          <div class="mics-field">
-            <div>
-              <div class="mics-field__label">大文件分段</div>
-              <div class="mics-field__hint">
-                达到分段阈值且服务端支持 Range 时，单文件使用多连接；自动 = 4 连接
-              </div>
-            </div>
-            <div class="mics-field__control">
-              <select v-model="segments" class="mics-select" @change="saveSegments">
-                <option
-                  v-for="option in DOWNLOAD_SEGMENT_OPTIONS"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
+          <SettingsField label="大文件分段">
+              <template #hint>
+                达到分段阈值且服务端支持 Range 时，单文件使用的连接数（{{
+                  MIN_DOWNLOAD_SEGMENTS
+                }}–{{ MAX_DOWNLOAD_SEGMENTS }}）
+              </template>
+              <input
+                v-model="segments"
+                class="mics-input settings-number"
+                inputmode="numeric"
+                @input="queueSegmentsSave"
+                @change="saveSegments"
+              />
               <button
-                class="mics-button mics-button--ghost mics-button--small"
+                class="mics-button mics-button--ghost mics-button--small settings-row-action"
                 title="恢复默认值"
-                :disabled="segments === DEFAULT_DOWNLOAD_SEGMENTS"
+                :disabled="segmentsAreDefault"
                 @click="resetSegments"
               >
                 重置
               </button>
-            </div>
-          </div>
+            </SettingsField>
 
-          <div class="mics-field">
-            <div>
-              <div class="mics-field__label">分段阈值</div>
-              <div class="mics-field__hint">只有达到该大小的文件才启用多连接</div>
-            </div>
-            <div class="mics-field__control">
-              <select
+          <SettingsField label="分段阈值" hint="只有达到该大小的文件才启用多连接">
+              <input
                 v-model="segmentThreshold"
-                class="mics-select"
+                class="mics-input settings-number"
+                inputmode="numeric"
+                @input="queueSegmentThresholdSave"
                 @change="saveSegmentThreshold"
-              >
-                <option
-                  v-for="option in DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
+              />
+              <span class="settings-unit">MB (> 1)</span>
               <button
-                class="mics-button mics-button--ghost mics-button--small"
+                class="mics-button mics-button--ghost mics-button--small settings-row-action"
                 title="恢复默认值"
-                :disabled="segmentThreshold === DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD"
+                :disabled="segmentThresholdIsDefault"
                 @click="resetSegmentThreshold"
               >
                 重置
               </button>
-            </div>
-          </div>
+            </SettingsField>
 
-          <div class="mics-field">
-            <div>
-              <div class="mics-field__label">缓存上限</div>
-              <div class="mics-field__hint">
-                按 MB 计；超出后清理最旧的文件，不缓存会停用并清空缓存
-              </div>
-            </div>
-            <div class="mics-field__control">
+          <SettingsField label="缓存上限" hint="超出后清理最旧的文件，不缓存会停用并清空缓存">
               <select v-model="cacheLimitMode" class="mics-select" @change="saveCacheLimit">
                 <option value="limit">限制大小</option>
                 <option value="off">不缓存</option>
@@ -711,367 +659,125 @@ onUnmounted(() => {
               <template v-if="cacheLimitMode === 'limit'">
                 <input
                   v-model="cacheLimitMb"
-                  class="mics-input settings-cache-limit"
+                  class="mics-input settings-number"
                   inputmode="numeric"
                   @input="queueCacheLimitSave"
                   @change="saveCacheLimit"
                 />
-                <span class="settings-cache-unit">MB</span>
+                <span class="settings-unit">MB</span>
               </template>
               <button
-                class="mics-button mics-button--ghost mics-button--small"
+                class="mics-button mics-button--ghost mics-button--small settings-row-action"
                 title="恢复默认值"
                 :disabled="cacheLimitIsDefault"
                 @click="resetCacheLimit"
               >
                 重置
               </button>
-            </div>
-          </div>
+            </SettingsField>
 
-          <div class="mics-field">
-            <div>
-              <div class="mics-field__label">已用缓存</div>
-              <div class="mics-field__hint">重装或安装到其它实例时，缓存里的文件会直接复用</div>
-            </div>
-            <div class="mics-field__control">
+          <SettingsField label="已用缓存" hint="重装或安装到其它实例时，缓存里的文件会直接复用">
               <span class="settings-cache">
                 {{ cacheLoading ? '统计中…' : `${fmtBytes(cacheBytes)} · ${cacheFiles} 个文件` }}
               </span>
               <button
-                class="mics-button mics-button--small"
+                class="mics-button mics-button--small settings-row-action"
                 :class="confirmClear ? 'mics-button--danger' : 'mics-button--ghost'"
                 :disabled="cacheClearing || cacheLoading || (cacheBytes === 0 && !confirmClear)"
                 @click="requestClearCache"
               >
                 {{ confirmClear ? '确认清空' : '清空' }}
               </button>
-            </div>
-          </div>
+            </SettingsField>
         </div>
 
         <p v-if="cacheError" class="mics-notice">{{ cacheError }}</p>
       </section>
 
-      <section class="mics-section">
-        <div class="settings-sources__head">
-          <div class="settings-sources__heading">
-            <h2 class="mics-section__title">原版下载源</h2>
-            <span class="settings-sources__note">自上而下优先级递减</span>
-          </div>
-          <div class="settings-sources__actions">
-            <button class="mics-button mics-button--ghost mics-button--small" @click="openEditor(null)">
-              添加源
-            </button>
-            <button
-              class="mics-button mics-button--ghost mics-button--small"
-              title="恢复默认值"
-              :disabled="sourcesAreDefault"
-              @click="resetSources"
-            >
-              重置
-            </button>
-            <button
-              class="mics-button mics-button--small"
-              :class="saved ? 'mics-button--ghost' : 'mics-button--primary'"
-              :disabled="saved"
-              @click="saveSources"
-            >
-              {{ saved ? '已保存' : '保存' }}
-            </button>
-          </div>
-        </div>
+      <SourceList
+        :items="sources"
+        title="原版下载源"
+        note="自上而下优先级递减"
+        empty-text="尚未配置下载源"
+        :saved="saved"
+        :is-default="sourcesAreDefault"
+        :drag-index="sourceDrag.dragIndex.value"
+        :over-index="sourceDrag.overIndex.value"
+        toggle-title="关闭后跳过该下载源"
+        :get-display-name="displayName"
+        @add="openEditor(null)"
+        @reset="resetSources"
+        @save="saveSources"
+        @edit="openEditor"
+        @delete="removeSource"
+        @toggle="setSourceEnabled"
+        @drag-start="sourceDrag.onDragStart"
+        @drag-over="sourceDrag.onDragOver"
+        @drag-end="sourceDrag.resetDrag"
+        @drop="onSourceDrop"
+      />
 
-        <div class="mics-list">
-          <div v-if="sources.length === 0" class="mics-empty">尚未配置下载源</div>
+      <SourceList
+        :items="loaderSources"
+        title="模组加载器下载源"
+        note="自上而下优先级递减"
+        empty-text="尚未配置加载器下载源"
+        :saved="loaderSaved"
+        :is-default="loaderSourcesAreDefault"
+        :drag-index="loaderDrag.dragIndex.value"
+        :over-index="loaderDrag.overIndex.value"
+        toggle-title="关闭后跳过该下载源"
+        :get-display-name="loaderDisplayName"
+        @add="openLoaderEditor(null)"
+        @reset="resetLoaderSources"
+        @save="saveLoaderSources"
+        @edit="openLoaderEditor"
+        @delete="removeLoaderSource"
+        @toggle="setLoaderSourceEnabled"
+        @drag-start="loaderDrag.onDragStart"
+        @drag-over="loaderDrag.onDragOver"
+        @drag-end="loaderDrag.resetDrag"
+        @drop="onLoaderDrop"
+      >
+        <template #before-name="{ item }">
+          <span class="mics-badge">{{ LOADER_LABELS[item.kind] }}</span>
+        </template>
+      </SourceList>
 
-          <div
-            v-for="(src, index) in sources"
-            :key="index"
-            class="settings-source"
-            :class="{
-              'settings-source--dragging': index === dragIndex,
-              'settings-source--over': index === overIndex && index !== dragIndex,
-              'settings-source--disabled': !src.enabled,
-            }"
-            @dragover="onDragOver(index, $event)"
-            @drop="onDrop(index)"
+      <SourceList
+        :items="modSources"
+        title="Mod 下载源"
+        note="可添加镜像；CurseForge 需要 API Key"
+        empty-text="尚未配置 Mod 下载源"
+        :saved="modSaved"
+        :is-default="modSourcesAreDefault"
+        :drag-index="modDrag.dragIndex.value"
+        :over-index="modDrag.overIndex.value"
+        toggle-title="关闭后跳过该来源"
+        :get-display-name="modDisplayName"
+        @add="openModEditor(null)"
+        @reset="resetModSources"
+        @save="saveModSources"
+        @edit="openModEditor"
+        @delete="removeModSource"
+        @toggle="setModSourceEnabled"
+        @drag-start="modDrag.onDragStart"
+        @drag-over="modDrag.onDragOver"
+        @drag-end="modDrag.resetDrag"
+        @drop="onModDrop"
+      >
+        <template #before-name="{ item }">
+          <span class="mics-badge">{{ MOD_SOURCE_LABELS[item.kind] }}</span>
+        </template>
+        <template #after-name="{ item }">
+          <span
+            v-if="modSourceNeedsKey(item) && !item.key.trim()"
+            class="settings-source__state"
           >
-            <button
-              class="settings-source__handle"
-              type="button"
-              title="拖拽排序"
-              aria-label="拖拽排序"
-              draggable="true"
-              @dragstart="onDragStart(index, $event)"
-              @dragend="resetDrag"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-                <line x1="8" y1="6" x2="16" y2="6" />
-                <line x1="8" y1="12" x2="16" y2="12" />
-                <line x1="8" y1="18" x2="16" y2="18" />
-              </svg>
-            </button>
-
-            <span class="settings-source__name" :title="displayName(index)">
-              {{ displayName(index) }}
-            </span>
-            <span v-if="!src.enabled" class="settings-source__state">已禁用</span>
-
-            <div class="settings-source__actions">
-              <button
-                class="settings-source__action"
-                type="button"
-                title="编辑"
-                aria-label="编辑"
-                @click="openEditor(index)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                </svg>
-              </button>
-
-              <button
-                class="settings-source__action settings-source__action--danger"
-                type="button"
-                title="删除"
-                aria-label="删除"
-                @click="removeSource(index)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 6h18" />
-                  <path d="M8 6V4h8v2" />
-                  <path d="M19 6l-1 14H6L5 6" />
-                </svg>
-              </button>
-
-              <ToggleSwitch
-                :model-value="src.enabled"
-                :label="`${displayName(index)}：${src.enabled ? '已启用' : '已禁用'}`"
-                title="关闭后跳过该下载源"
-                @update:model-value="setSourceEnabled(index, $event)"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="mics-section">
-        <div class="settings-sources__head">
-          <div class="settings-sources__heading">
-            <h2 class="mics-section__title">模组加载器下载源</h2>
-            <span class="settings-sources__note">自上而下优先级递减</span>
-          </div>
-          <div class="settings-sources__actions">
-            <button
-              class="mics-button mics-button--ghost mics-button--small"
-              @click="openLoaderEditor(null)"
-            >
-              添加源
-            </button>
-            <button
-              class="mics-button mics-button--ghost mics-button--small"
-              title="恢复默认值"
-              :disabled="loaderSourcesAreDefault"
-              @click="resetLoaderSources"
-            >
-              重置
-            </button>
-            <button
-              class="mics-button mics-button--small"
-              :class="loaderSaved ? 'mics-button--ghost' : 'mics-button--primary'"
-              :disabled="loaderSaved"
-              @click="saveLoaderSources"
-            >
-              {{ loaderSaved ? '已保存' : '保存' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="mics-list">
-          <div v-if="loaderSources.length === 0" class="mics-empty">尚未配置加载器下载源</div>
-
-          <div
-            v-for="(src, index) in loaderSources"
-            :key="index"
-            class="settings-source"
-            :class="{
-              'settings-source--dragging': index === loaderDragIndex,
-              'settings-source--over': index === loaderOverIndex && index !== loaderDragIndex,
-              'settings-source--disabled': !src.enabled,
-            }"
-            @dragover="onLoaderDragOver(index, $event)"
-            @drop="onLoaderDrop(index)"
-          >
-            <button
-              class="settings-source__handle"
-              type="button"
-              title="拖拽排序"
-              aria-label="拖拽排序"
-              draggable="true"
-              @dragstart="onLoaderDragStart(index, $event)"
-              @dragend="resetLoaderDrag"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-                <line x1="8" y1="6" x2="16" y2="6" />
-                <line x1="8" y1="12" x2="16" y2="12" />
-                <line x1="8" y1="18" x2="16" y2="18" />
-              </svg>
-            </button>
-
-            <span class="mics-badge">{{ LOADER_LABELS[src.kind] }}</span>
-            <span class="settings-source__name" :title="loaderDisplayName(index)">
-              {{ loaderDisplayName(index) }}
-            </span>
-            <span v-if="!src.enabled" class="settings-source__state">已禁用</span>
-
-            <div class="settings-source__actions">
-              <button
-                class="settings-source__action"
-                type="button"
-                title="编辑"
-                aria-label="编辑"
-                @click="openLoaderEditor(index)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                </svg>
-              </button>
-
-              <button
-                class="settings-source__action settings-source__action--danger"
-                type="button"
-                title="删除"
-                aria-label="删除"
-                @click="removeLoaderSource(index)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 6h18" />
-                  <path d="M8 6V4h8v2" />
-                  <path d="M19 6l-1 14H6L5 6" />
-                </svg>
-              </button>
-
-              <ToggleSwitch
-                :model-value="src.enabled"
-                :label="`${loaderDisplayName(index)}：${src.enabled ? '已启用' : '已禁用'}`"
-                title="关闭后跳过该下载源"
-                @update:model-value="setLoaderSourceEnabled(index, $event)"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="mics-section">
-        <div class="settings-sources__head">
-          <div class="settings-sources__heading">
-            <h2 class="mics-section__title">Mod 下载源</h2>
-            <span class="settings-sources__note">可添加镜像；CurseForge 需要 API Key</span>
-          </div>
-          <div class="settings-sources__actions">
-            <button class="mics-button mics-button--ghost mics-button--small" @click="openModEditor(null)">
-              添加源
-            </button>
-            <button
-              class="mics-button mics-button--ghost mics-button--small"
-              title="恢复默认值"
-              :disabled="modSourcesAreDefault"
-              @click="resetModSources"
-            >
-              重置
-            </button>
-            <button
-              class="mics-button mics-button--small"
-              :class="modSaved ? 'mics-button--ghost' : 'mics-button--primary'"
-              :disabled="modSaved"
-              @click="saveModSources"
-            >
-              {{ modSaved ? '已保存' : '保存' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="mics-list">
-          <div v-if="modSources.length === 0" class="mics-empty">尚未配置 Mod 下载源</div>
-
-          <div
-            v-for="(src, index) in modSources"
-            :key="index"
-            class="settings-source"
-            :class="{
-              'settings-source--dragging': index === modDragIndex,
-              'settings-source--over': index === modOverIndex && index !== modDragIndex,
-              'settings-source--disabled': !src.enabled,
-            }"
-            @dragover="onModDragOver(index, $event)"
-            @drop="onModDrop(index)"
-          >
-            <button
-              class="settings-source__handle"
-              type="button"
-              title="拖拽排序"
-              aria-label="拖拽排序"
-              draggable="true"
-              @dragstart="onModDragStart(index, $event)"
-              @dragend="resetModDrag"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-                <line x1="8" y1="6" x2="16" y2="6" />
-                <line x1="8" y1="12" x2="16" y2="12" />
-                <line x1="8" y1="18" x2="16" y2="18" />
-              </svg>
-            </button>
-
-            <span class="mics-badge">{{ MOD_SOURCE_LABELS[src.kind] }}</span>
-            <span class="settings-source__name" :title="modDisplayName(index)">
-              {{ modDisplayName(index) }}
-            </span>
-            <span v-if="!src.enabled" class="settings-source__state">已禁用</span>
-            <span
-              v-else-if="modSourceNeedsKey(src) && !src.key.trim()"
-              class="settings-source__state"
-            >
-              缺少 API Key
-            </span>
-
-            <div class="settings-source__actions">
-              <button
-                class="settings-source__action"
-                type="button"
-                title="编辑"
-                aria-label="编辑"
-                @click="openModEditor(index)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                </svg>
-              </button>
-
-              <button
-                class="settings-source__action settings-source__action--danger"
-                type="button"
-                title="删除"
-                aria-label="删除"
-                @click="removeModSource(index)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 6h18" />
-                  <path d="M8 6V4h8v2" />
-                  <path d="M19 6l-1 14H6L5 6" />
-                </svg>
-              </button>
-
-              <ToggleSwitch
-                :model-value="src.enabled"
-                :label="`${modDisplayName(index)}：${src.enabled ? '已启用' : '已禁用'}`"
-                title="关闭后跳过该来源"
-                @update:model-value="setModSourceEnabled(index, $event)"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
+            缺少 API Key
+          </span>
+        </template>
+      </SourceList>
 
       <SourceEditorDialog
         :open="editorOpen"
@@ -1098,137 +804,21 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.settings-sources__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.settings-sources__heading {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.settings-sources__note {
-  color: var(--mics-fg-muted);
-  font-size: 11.5px;
-}
-
-.settings-sources__actions {
-  flex: none;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.settings-source {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--mics-border);
-  transition: box-shadow .12s ease, opacity .12s ease;
-}
-
-.settings-source:last-child {
-  border-bottom: 0;
-}
-
-.settings-source--dragging {
-  opacity: .45;
-}
-
-.settings-source--over {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mics-accent) 55%, transparent);
-}
-
-.settings-source__handle,
-.settings-source__action {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--mics-border);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--mics-fg-muted);
-  transition: border-color .12s ease, background .12s ease, color .12s ease;
-}
-
-.settings-source__handle {
-  cursor: grab;
-}
-
-.settings-source__handle:active {
-  cursor: grabbing;
-}
-
-.settings-source__handle:hover,
-.settings-source__action:hover {
-  background: var(--mics-bg-hover);
-  color: var(--mics-fg);
-}
-
-.settings-source__handle:focus-visible,
-.settings-source__action:focus-visible {
-  outline: 2px solid var(--mics-accent);
-  outline-offset: 1px;
-}
-
-.settings-source__action--danger:hover {
-  border-color: color-mix(in srgb, var(--mics-danger) 45%, transparent);
-  background: color-mix(in srgb, var(--mics-danger) 10%, transparent);
-  color: var(--mics-danger);
-}
-
-.settings-source__name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--mics-fg);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-source--disabled .settings-source__name {
-  color: var(--mics-fg-muted);
-}
-
-.settings-source__state {
-  flex: none;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--mics-bg-hover);
-  color: var(--mics-fg-muted);
-  font-size: 10.5px;
-}
-
-.settings-source__actions {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.settings-cache-limit {
+.settings-number {
   flex: none;
   width: 96px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-.settings-cache-unit {
+.settings-unit {
   flex: none;
   color: var(--mics-fg-muted);
   font-size: 12px;
+}
+
+.settings-row-action {
+  margin-left: auto;
 }
 
 .settings-cache {
@@ -1239,5 +829,14 @@ onUnmounted(() => {
 
 .mics-notice {
   margin-top: 10px;
+}
+
+.settings-source__state {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--mics-bg-hover);
+  color: var(--mics-fg-muted);
+  font-size: 10.5px;
 }
 </style>

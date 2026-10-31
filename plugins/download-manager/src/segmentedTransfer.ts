@@ -3,6 +3,7 @@ import { open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import https from 'node:https'
 import type { IncomingMessage } from 'node:http'
+import { MAX_DOWNLOAD_SEGMENTS } from '@mics/sdk'
 import type { FileTransferHandle, TransferOutcome } from '@mics/sdk'
 import { createSingleFileTransfer } from './singleTransfer'
 import {
@@ -29,12 +30,12 @@ const PROBE_TIMEOUT = 20_000
 const REQUEST_TIMEOUT = 30_000
 const MAX_REDIRECTS = 8
 const SEGMENT_RETRIES = 3
-const MIN_SEGMENT_BYTES = 4 * 1024 * 1024
-const MAX_SEGMENTS = 8
+/** 单段最小字节数：分段阈值下限是 1 MB，仍要能拆成两段，同时避免碎片化的 Range 请求 */
+const MIN_SEGMENT_BYTES = 512 * 1024
 const PROGRESS_THROTTLE = 500
 const STATE_SAVE_INTERVAL = 1200
-/** 恢复时每段回退的字节数：进程崩溃时最后一段可能还没真正落盘 */
-const RESUME_OVERLAP = 1024 * 1024
+/** 恢复时每段最多回退的字节数：进程崩溃时最后几个写请求可能还没真正落盘 */
+const RESUME_OVERLAP_MAX = 1024 * 1024
 
 interface RangeProbe {
   total: number
@@ -255,7 +256,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
     if (probe.total < MIN_SEGMENT_BYTES * 2) return null
     const requested = Math.round(options.segments ?? 4)
     const count = Math.min(
-      MAX_SEGMENTS,
+      MAX_DOWNLOAD_SEGMENTS,
       Math.max(2, Number.isFinite(requested) ? requested : 4),
       Math.floor(probe.total / MIN_SEGMENT_BYTES),
     )
@@ -319,7 +320,8 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
       }
       if (!validSegments(record.segments, probe.total)) return null
 
-      // 进程可能没来得及把最后几个写请求落盘；恢复时每段回退一小段重下
+      // 进程可能没来得及把最后几个写请求落盘；恢复时每段回退一小段重下。
+      // 段可能只有约 1 MB，回退量最多取段长的四分之一，避免整段重下。
       const fileBytes = fileSize(options.partPath)
       if (fileBytes <= 0) {
         for (const segment of record.segments) segment.loaded = 0
@@ -329,7 +331,11 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
             segment.loaded,
             Math.max(0, fileBytes - segment.start),
           )
-          segment.loaded = Math.max(0, available - (available > 0 ? RESUME_OVERLAP : 0))
+          const overlap = Math.min(
+            RESUME_OVERLAP_MAX,
+            Math.floor(segmentLength(segment) / 4),
+          )
+          segment.loaded = Math.max(0, available - (available > 0 ? overlap : 0))
         }
       }
       return {
