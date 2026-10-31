@@ -1,6 +1,7 @@
 import type {
   ModDependency,
   ModLoader,
+  ModProjectKind,
   ModSearchRequest,
   ModSource,
   ModSummary,
@@ -9,6 +10,7 @@ import type {
 } from '@mics/sdk'
 import { MOD_LOADER_LABELS, modSourceNeedsKey } from '@mics/sdk'
 import { curseforgeCategoriesOf, curseforgeCategoryLabel } from './categories'
+import { modpackCategoryLabelOf } from '../modpacks/categories'
 import { endpoint, requestJson, withParams } from './http'
 
 /**
@@ -19,8 +21,18 @@ import { endpoint, requestJson, withParams } from './http'
  */
 
 const GAME_ID = 432
-const CLASS_ID = 6
+/** 分类 id：6 = Mod，4471 = 整合包 */
+const MOD_CLASS_ID = 6
+const MODPACK_CLASS_ID = 4471
 const API_KEY_HEADER = 'x-api-key'
+
+function classIdOf(kind: ModProjectKind): number {
+  return kind === 'modpack' ? MODPACK_CLASS_ID : MOD_CLASS_ID
+}
+
+function projectPathOf(kind: ModProjectKind): string {
+  return kind === 'modpack' ? 'modpacks' : 'mc-mods'
+}
 
 /** CurseForge 的 modLoaderType 枚举 */
 const LOADER_IDS: Record<ModLoader, number> = {
@@ -128,7 +140,8 @@ export function curseforgeReady(source: ModSource): boolean {
   return source.enabled && (!modSourceNeedsKey(source) || Boolean(source.key.trim()))
 }
 
-function apiHeaders(source: ModSource): Record<string, string> {
+/** 供整合包安装复用：CurseForge 的文件接口与本模块使用同一套鉴权头 */
+export function curseforgeHeaders(source: ModSource): Record<string, string> {
   const key = source.key.trim()
   if (!key) {
     if (modSourceNeedsKey(source)) {
@@ -139,15 +152,20 @@ function apiHeaders(source: ModSource): Record<string, string> {
   return { [API_KEY_HEADER]: key }
 }
 
-function modSummary(source: ModSource, mod: CurseforgeMod): ModSummary | null {
+function modSummary(
+  source: ModSource,
+  mod: CurseforgeMod,
+  kind: ModProjectKind = 'mod',
+): ModSummary | null {
   const projectId = typeof mod.id === 'number' ? String(mod.id) : ''
   if (!projectId) return null
   const slug = mod.slug?.trim() || projectId
+  const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : curseforgeCategoryLabel
   const categories = [...new Set(
     (mod.categories ?? [])
       .map((category) => category.name?.trim() ?? '')
       .filter(Boolean)
-      .map(curseforgeCategoryLabel),
+      .map(labelOf),
   )]
 
   return {
@@ -166,7 +184,7 @@ function modSummary(source: ModSource, mod: CurseforgeMod): ModSummary | null {
     categories,
     updated: mod.dateModified ?? '',
     url: mod.links?.websiteUrl?.trim()
-      || `https://www.curseforge.com/minecraft/mc-mods/${encodeURIComponent(slug)}`,
+      || `https://www.curseforge.com/minecraft/${projectPathOf(kind)}/${encodeURIComponent(slug)}`,
   }
 }
 
@@ -175,14 +193,19 @@ export async function searchCurseforge(
   request: ModSearchRequest,
   signal: AbortSignal,
   limit: number,
+  kind: ModProjectKind = 'mod',
 ): Promise<{ items: ModSummary[]; total: number }> {
-  const headers = apiHeaders(source)
-  const categoryIds = request.category ? curseforgeCategoriesOf(request.category) : []
+  const headers = curseforgeHeaders(source)
+  const categoryIds = kind === 'modpack' || !request.category
+    ? []
+    : curseforgeCategoriesOf(request.category)
+  // CurseForge 的整合包分类 id 与 Mod 分类不同，暂未维护映射：选择类型时
+  // 该来源不参与，避免返回与筛选条件不符的包。
   if (request.category && categoryIds.length === 0) return { items: [], total: 0 }
 
   const baseParams: Record<string, string> = {
     gameId: String(GAME_ID),
-    classId: String(CLASS_ID),
+    classId: String(classIdOf(kind)),
     searchFilter: request.query,
     gameVersion: request.gameVersion,
     sortField: '6',
@@ -214,7 +237,7 @@ export async function searchCurseforge(
       total = response.pagination.totalCount
     }
     for (const mod of data) {
-      const summary = modSummary(source, mod)
+      const summary = modSummary(source, mod, kind)
       if (summary) items.push(summary)
     }
     if (data.length < pageSize) break
@@ -230,12 +253,13 @@ export async function projectCurseforge(
   source: ModSource,
   projectId: string,
   signal: AbortSignal,
+  kind: ModProjectKind = 'mod',
 ): Promise<ModSummary> {
   const response = await requestJson<CurseforgeModResponse>(
     endpoint(source.api, `mods/${encodeURIComponent(projectId)}`),
-    { headers: apiHeaders(source), signal },
+    { headers: curseforgeHeaders(source), signal },
   )
-  const summary = response.data ? modSummary(source, response.data) : null
+  const summary = response.data ? modSummary(source, response.data, kind) : null
   if (!summary) throw new Error('CurseForge 没有返回有效的项目信息')
   return summary
 }
@@ -314,7 +338,7 @@ async function dependencyProjects(
       {
         method: 'POST',
         body: JSON.stringify({ modIds: [...ids] }),
-        headers: apiHeaders(source),
+        headers: curseforgeHeaders(source),
         signal,
       },
     )
@@ -383,7 +407,7 @@ export async function identifyCurseforge(
   files: Array<{ key: string; murmur2?: number }>,
   signal: AbortSignal,
 ): Promise<Map<string, CurseforgeIdentified>> {
-  const headers = apiHeaders(source)
+  const headers = curseforgeHeaders(source)
   const fingerprints = [...new Set(
     files
       .map((file) => file.murmur2)
@@ -454,7 +478,7 @@ export async function versionsCurseforge(
   request: ModVersionRequest,
   signal: AbortSignal,
 ): Promise<ModVersion[]> {
-  const headers = apiHeaders(source)
+  const headers = curseforgeHeaders(source)
   const params: Record<string, string> = { gameVersion: request.gameVersion }
   if (request.loader !== 'all') {
     params.modLoaderType = String(LOADER_IDS[request.loader])

@@ -1,145 +1,260 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import {
+  INSTANCE_NAME_MAX_LENGTH,
+  MOD_LOADER_LABELS,
+  MOD_LOADERS,
+  sanitizeInstanceName,
+  validateInstanceName,
+} from '@mics/sdk'
+import type {
+  GameVersion,
+  InstallStartResult,
+  InstanceNameCheck,
+  ModCategory,
+  ModLoader,
+  ModSourceInfo,
+  ModSourceKind,
+  ModSummary,
+  ModVersion,
+  ModVersionRequest,
+  NotificationsServiceApi,
+} from '@mics/sdk'
+import { usePluginContext } from '@mics/sdk/renderer'
+import { CatalogBrowser, InstanceInstallDialog } from '@mics/ui'
+import type {
+  CatalogCategory,
+  CatalogGameVersion,
+  CatalogItem,
+  CatalogSearchRequest,
+  CatalogSearchResult,
+  CatalogSourceInfo,
+  CatalogVersion,
+} from '@mics/ui'
 
-interface ModpackItem {
-  id: string
-  name: string
-  author: string
-  summary: string
-  downloads: string
-  versions: string[]
-  tags: string[]
+const ctx = usePluginContext()
+
+const CHANNEL_LABELS = {
+  release: '正式版',
+  beta: '测试版',
+  alpha: '早期版',
 }
 
-const PACKS: ModpackItem[] = [
-  {
-    id: 'star-sea',
-    name: '星海生存',
-    author: '观星者',
-    summary: '在群星之间搭建立足点，附完整任务线与飞船玩法。',
-    downloads: '39 万',
-    versions: ['1.20.1'],
-    tags: ['冒险'],
-  },
-  {
-    id: 'mechanical-era',
-    name: '机械纪元',
-    author: '齿轮',
-    summary: '从水力到核聚变，一条完整的自动化产线。',
-    downloads: '57 万',
-    versions: ['1.20.1'],
-    tags: ['科技'],
-  },
-  {
-    id: 'sky-tale',
-    name: '空岛物语',
-    author: '云隐',
-    summary: '从一棵树开始，把空岛扩成一片大陆。',
-    downloads: '28 万',
-    versions: ['1.21.1'],
-    tags: ['空岛'],
-  },
-  {
-    id: 'dungeon-expedition',
-    name: '地牢远征',
-    author: '石中剑',
-    summary: '随机生成的地牢与 Boss，可单人可联机。',
-    downloads: '45 万',
-    versions: ['1.19.2'],
-    tags: ['冒险'],
-  },
-  {
-    id: 'pastoral',
-    name: '田园牧歌',
-    author: '南风',
-    summary: '种田、钓鱼、造小镇的慢节奏整合。',
-    downloads: '21 万',
-    versions: ['1.21.4'],
-    tags: ['休闲'],
-  },
-  {
-    id: 'deep-sea',
-    name: '深海秘境',
-    author: '潮汐',
-    summary: '以海洋与遗迹为核心的探索整合。',
-    downloads: '33 万',
-    versions: ['1.18.2'],
-    tags: ['冒险'],
-  },
-  {
-    id: 'arcane-corridor',
-    name: '魔法回廊',
-    author: '灰袍',
-    summary: '法术、仪式与维度旅行，兼容主线任务。',
-    downloads: '26 万',
-    versions: ['1.20.1'],
-    tags: ['魔法'],
-  },
-]
+const loaders = MOD_LOADERS.map((value) => ({
+  value,
+  label: MOD_LOADER_LABELS[value],
+}))
 
-const VERSIONS = ['1.21.4', '1.21.1', '1.20.1', '1.19.2', '1.18.2']
-const TAGS = ['科技', '冒险', '休闲', '空岛', '魔法']
+const SUPPORTED_LOADERS = new Set(['fabric', 'forge', 'neoforge'])
 
-const query = ref('')
-const gameVersion = ref('all')
-const tag = ref('all')
-const notice = ref('')
+const activePack = ref<CatalogItem | null>(null)
+const installOpen = ref(false)
+const installVersion = ref<CatalogVersion | null>(null)
+const installing = ref(false)
+const installError = ref('')
 
-const visible = computed(() => {
-  const keyword = query.value.trim().toLowerCase()
-  return PACKS.filter(
-    (pack) =>
-      (gameVersion.value === 'all' || pack.versions.includes(gameVersion.value)) &&
-      (tag.value === 'all' || pack.tags.includes(tag.value)) &&
-      (!keyword || `${pack.name} ${pack.author} ${pack.summary}`.toLowerCase().includes(keyword)),
-  )
+const defaultName = computed(() => {
+  const raw = activePack.value?.name || installVersion.value?.name || '整合包'
+  const cleaned = sanitizeInstanceName(raw).trim().replace(/[. ]+$/, '')
+  return [...cleaned].slice(0, INSTANCE_NAME_MAX_LENGTH).join('') || '整合包'
 })
+
+const blockedReason = computed(() => {
+  const version = installVersion.value
+  if (!version) return ''
+  const supported = version.loaders.filter((loader) => SUPPORTED_LOADERS.has(loader))
+  if (version.loaders.length > 0 && supported.length === 0) {
+    const labels = version.loaders.map((loader) => MOD_LOADER_LABELS[loader as ModLoader] ?? loader)
+    return `暂不支持 ${labels.join(' / ')} 加载器，无法安装该整合包`
+  }
+  return ''
+})
+
+function formatBytes(value: number): string {
+  if (value <= 0) return '未知'
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(0)} KB`
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`
+  return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+const details = computed(() => {
+  const version = installVersion.value
+  if (!version) return []
+  return [
+    { label: '游戏版本', value: version.gameVersions.join(' / ') || '读取整合包清单' },
+    {
+      label: '加载器',
+      value: version.loaders.map((loader) => MOD_LOADER_LABELS[loader as ModLoader] ?? loader)
+        .join(' / ') || '原版',
+    },
+    { label: '包大小', value: formatBytes(version.size) },
+  ]
+})
+
+async function fetchSources(): Promise<CatalogSourceInfo[]> {
+  return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.manager', 'modpacks/sources')
+}
+
+async function fetchCategories(): Promise<CatalogCategory[]> {
+  return ctx.ipc.invoke<ModCategory[]>('mics.download.manager', 'modpacks/categories')
+}
+
+async function fetchGameVersions(): Promise<CatalogGameVersion[]> {
+  return ctx.ipc.invoke<GameVersion[]>('mics.download.manager', 'versions/list')
+}
+
+async function search(request: CatalogSearchRequest): Promise<CatalogSearchResult> {
+  return ctx.ipc.invoke('mics.download.manager', 'modpacks/search', {
+    query: request.query,
+    source: request.source as ModSourceKind | 'all',
+    gameVersion: request.gameVersion,
+    loader: request.loader as ModLoader | 'all',
+    category: request.category,
+    page: request.page,
+    pageSize: request.pageSize,
+  })
+}
+
+async function fetchVersions(item: CatalogItem): Promise<CatalogVersion[]> {
+  const request: ModVersionRequest = {
+    source: item.source as ModSourceKind,
+    ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
+    projectId: item.projectId,
+    gameVersion: '',
+    loader: 'all',
+  }
+  return ctx.ipc.invoke<ModVersion[]>('mics.download.manager', 'modpacks/versions', request)
+}
+
+async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
+  return ctx.ipc.invoke<ModSummary>('mics.download.manager', 'modpacks/project', {
+    source: item.source as ModSourceKind,
+    ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
+    projectId: item.projectId,
+  })
+}
+
+async function checkName(name: string): Promise<InstanceNameCheck> {
+  try {
+    return await ctx.ipc.invoke<InstanceNameCheck>(
+      'mics.download.manager',
+      'install/validate-name',
+      { name },
+    )
+  } catch {
+    return validateInstanceName(name)
+  }
+}
+
+function onOpen(item: CatalogItem): void {
+  activePack.value = item
+}
+
+function openInstall(version: CatalogVersion): void {
+  installVersion.value = version
+  installError.value = ''
+  installOpen.value = true
+}
+
+function closeInstall(): void {
+  if (installing.value) return
+  installOpen.value = false
+  installVersion.value = null
+  installError.value = ''
+}
+
+function openDownloadSettings(): void {
+  ctx.ui.navigate('settings.download')
+}
+
+function notify(message: string): void {
+  const options = {
+    level: 'info' as const,
+    title: '已开始安装',
+    message,
+    // 安装通知不自动消失，避免用户切回窗口时已经错过
+    duration: 0,
+  }
+  const globalApi = (globalThis as typeof globalThis & {
+    __MICS_NOTIFICATIONS__?: NotificationsServiceApi
+  }).__MICS_NOTIFICATIONS__
+  if (globalApi) {
+    globalApi.show(options)
+    return
+  }
+  ctx.notifications.show(options)
+}
+
+async function install(name: string): Promise<void> {
+  const version = installVersion.value
+  if (!version || installing.value || blockedReason.value) return
+  installing.value = true
+  installError.value = ''
+  try {
+    const result = await ctx.ipc.invoke<InstallStartResult>(
+      'mics.download.manager',
+      'modpacks/install',
+      {
+        instanceName: name,
+        title: activePack.value?.name || version.name,
+        version: version.versionNumber || version.name,
+        file: {
+          url: version.fileUrl,
+          fileName: version.fileName,
+          sha1: version.sha1,
+          size: version.size,
+        },
+        source: version.source as ModSourceKind,
+        ...(activePack.value?.sourceApi ? { sourceApi: activePack.value.sourceApi } : {}),
+      },
+    )
+    if (result.error) {
+      installError.value = result.error
+      return
+    }
+    installOpen.value = false
+    installVersion.value = null
+    notify(`「${name}」已加入下载队列，可在「下载进度」查看。`)
+  } catch (cause) {
+    installError.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    installing.value = false
+  }
+}
 </script>
 
 <template>
-  <div class="mics-page">
-    <header class="mics-page__header">
-      <h1 class="mics-page__title">整合包</h1>
-    </header>
+  <CatalogBrowser
+    title="整合包"
+    entity-label="整合包"
+    search-placeholder="搜索整合包"
+    empty-text="没有匹配的整合包"
+    version-title="整合包版本"
+    version-search-placeholder="搜索整合包版本"
+    :loaders="loaders"
+    :channel-labels="CHANNEL_LABELS"
+    :fetch-sources="fetchSources"
+    :fetch-categories="fetchCategories"
+    :fetch-game-versions="fetchGameVersions"
+    :search="search"
+    :fetch-versions="fetchVersions"
+    :fetch-project="fetchProject"
+    @open="onOpen"
+    @install="openInstall"
+    @settings="openDownloadSettings"
+  />
 
-    <p v-if="notice" class="mics-notice">{{ notice }}</p>
-
-    <div class="mics-toolbar">
-      <input v-model="query" class="mics-input mics-toolbar__grow" placeholder="搜索整合包" />
-      <select v-model="gameVersion" class="mics-select">
-        <option value="all">全部版本</option>
-        <option v-for="version in VERSIONS" :key="version" :value="version">{{ version }}</option>
-      </select>
-      <select v-model="tag" class="mics-select">
-        <option value="all">全部玩法</option>
-        <option v-for="item in TAGS" :key="item" :value="item">{{ item }}</option>
-      </select>
-    </div>
-
-    <section class="mics-section">
-      <h2 class="mics-section__title">结果 · {{ visible.length }}</h2>
-
-      <div v-if="visible.length" class="mics-grid">
-        <article v-for="pack in visible" :key="pack.id" class="mics-card">
-          <div class="mics-card__head">
-            <span class="mics-card__title">{{ pack.name }}</span>
-            <span class="mics-badge">{{ pack.tags[0] }}</span>
-          </div>
-          <p class="mics-card__text">{{ pack.summary }}</p>
-          <div class="mics-card__foot">
-            <span class="mics-card__meta">
-              {{ pack.author }} · {{ pack.versions[0] }} · 下载 {{ pack.downloads }}
-            </span>
-            <button
-              class="mics-button mics-button--ghost mics-button--small"
-              @click="notice = `「${pack.name}」的安装流程尚未接入。`"
-            >
-              安装
-            </button>
-          </div>
-        </article>
-      </div>
-      <div v-else class="mics-empty">没有匹配的整合包</div>
-    </section>
-  </div>
+  <InstanceInstallDialog
+    :open="installOpen"
+    title="安装整合包"
+    :subtitle="installVersion?.name"
+    :default-name="defaultName"
+    :check-name="checkName"
+    :installing="installing"
+    :error="installError"
+    :details="details"
+    :blocked-reason="blockedReason"
+    @close="closeInstall"
+    @install="install"
+  />
 </template>

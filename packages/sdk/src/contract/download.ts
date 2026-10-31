@@ -6,6 +6,7 @@
  */
 
 import type { ModSource } from './mod'
+import type { ModpackInstallMeta } from './modpack'
 
 /** 下载源提供的游戏版本摘要 */
 export interface GameVersion {
@@ -95,6 +96,13 @@ export interface DownloadTask {
   direct?: boolean
   state: DownloadTaskState
   progress: DownloadProgress
+  /**
+   * 本次安装真正从网络收到的字节数。
+   *
+   * 与 `progress.loaded` 不同：命中下载缓存、复用共享库时 `loaded` 会直接跳到
+   * 文件大小，但这些字节不是本次传输的，不能计入速度。
+   */
+  transferred?: number
   error?: string
   /** 创建时间戳 */
   createdAt: number
@@ -124,9 +132,11 @@ export type InstallMode = 'install' | 'repair'
  * 下载任务的种类。
  *
  * - `game`：安装 / 补全游戏实例（旧记录没有该字段，按 game 处理）；
- * - `mod`：把 Mod 文件写进一个或多个实例，额外的任务字段见 title/detail。
+ * - `mod`：把 Mod 文件写进一个或多个实例，额外的任务字段见 title/detail；
+ * - `modpack`：先解析整合包归档，再创建实例并下载包内文件；实例语义与 game 相同，
+ *   完成前需要额外合并覆盖文件。
  */
-export type InstallJobKind = 'game' | 'mod'
+export type InstallJobKind = 'game' | 'mod' | 'modpack'
 
 /** 一次安装的聚合进度；下载页只依赖这份汇总，不拉取逐文件任务 */
 export interface InstallJobStats {
@@ -144,6 +154,13 @@ export interface InstallJobStats {
   loaded: number
   /** 预计总字节；未知大小的任务按 size 或 0 计 */
   bytes: number
+  /**
+   * 真正从网络收到的字节（不含缓存 / 共享库复用）。
+   *
+   * 下载页用它算速度：`loaded` 会因为缓存命中整段跳变，直接差分会算出假速度。
+   * 旧记录没有该字段，按 0 处理。
+   */
+  transferred?: number
   /** 0–100 */
   percent: number
 }
@@ -170,6 +187,8 @@ export interface InstallJob {
   versionId?: string
   /** 加载器（原版为空） */
   loader?: { kind: LoaderKind; version: string }
+  /** 整合包安装信息；只有 kind=modpack 时存在 */
+  modpack?: ModpackInstallMeta
   /** 任务 id；终态安装归档后会清空，统计改看 stats */
   taskIds: string[]
   createdAt: number
@@ -190,6 +209,19 @@ export interface InstallJob {
    * 让「下安装器 / 取依赖库」也计入同一根进度条。就绪后清空。
    */
   preparePercent?: number
+  /**
+   * 准备阶段正在传输的字节数（目前是整合包归档）。
+   *
+   * 这段下载在任务队列之外，`stats.loaded` 覆盖不到；下载页靠它算速度。
+   * 进入下一步或安装就绪后清空。
+   */
+  prepareLoaded?: number
+  /** 准备阶段传输的总字节数；服务端没给 Content-Length 时为空 */
+  prepareTotal?: number
+  /** 准备阶段累计从网络收到的字节；进入下载队列后仍继续累加 */
+  prepareTransferred?: number
+  /** 准备阶段最近一次收到传输数据的时刻；下载页据此判断是否还在传输 */
+  prepareTransferAt?: number
   /** 安装方式；旧记录没有该字段，按 install 处理 */
   mode?: InstallMode
   /** 终态汇总；任务明细被清理后，下载页仍能显示历史统计 */
@@ -215,8 +247,18 @@ export interface InstallJobSummary {
   error?: string
   /** 准备阶段的当前步骤；与 InstallJob.note 同源 */
   note?: string
-  /** 准备阶段的整体进度（0–100）；与 InstallJob.preparePercent 同源 */
+  /**
+   * 准备阶段的当前步骤进度（0–100）；与 InstallJob.preparePercent 同源。
+   *
+   * 为空表示这一步没有可度量的进度（例如解压归档），下载页显示不确定态。
+   */
   preparePercent?: number
+  /** 准备阶段正在传输的字节；与 InstallJob.prepareLoaded 同源 */
+  prepareLoaded?: number
+  /** 准备阶段传输的总字节；与 InstallJob.prepareTotal 同源 */
+  prepareTotal?: number
+  /** 最近一次收到准备阶段传输数据的时刻；用于判断速度是否仍然有效 */
+  prepareTransferAt?: number
   createdAt: number
   /** 准备阶段之外、已经没有进行中的文件时为 true */
   finished: boolean
@@ -419,12 +461,49 @@ export function normalizeLoaderSources(value: unknown): LoaderSource[] {
 /** 最大并发下载文件的默认值 */
 export const DEFAULT_DOWNLOAD_CONCURRENCY = '64'
 
+/**
+ * 单文件分段下载设置。
+ *
+ * `auto` 表示对达到阈值的大文件自动使用 4 条 Range 连接；数字表示固定
+ * 连接数；`1` 表示关闭分段。服务端不支持 Range 时实现会自动退回单连接。
+ */
+export const DEFAULT_DOWNLOAD_SEGMENTS = 'auto'
+
+/** 只有达到该大小的文件才值得分段；小文件多连接只会增加握手与排队开销 */
+export const DOWNLOAD_SEGMENT_THRESHOLD = 32 * 1024 * 1024
+
+/** 分段阈值默认值（MB）；设置页可在 DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS 中选择 */
+export const DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD = '32'
+
+/** 设置页使用的分段阈值选项（MB） */
+export const DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: '8', label: '8 MB' },
+  { value: '16', label: '16 MB' },
+  { value: '32', label: '32 MB' },
+  { value: '64', label: '64 MB' },
+  { value: '128', label: '128 MB' },
+]
+
+/** 设置页使用的分段选项 */
+export const DOWNLOAD_SEGMENT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'auto', label: '自动（4 连接）' },
+  { value: '1', label: '关闭（单连接）' },
+  { value: '2', label: '2 连接' },
+  { value: '4', label: '4 连接' },
+  { value: '6', label: '6 连接' },
+  { value: '8', label: '8 连接' },
+]
+
 /** 下载缓存上限（GB）的默认值 */
 export const DEFAULT_DOWNLOAD_CACHE_LIMIT = '5'
 
 /** 下载管线持久化设置 */
 export interface DownloadSettings {
   concurrency: string
+  /** 单文件分段下载配置；见 DEFAULT_DOWNLOAD_SEGMENTS */
+  segments: string
+  /** 启用分段的大小阈值（MB）；见 DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD */
+  segmentThreshold: string
   cacheLimit: string
   sources: DownloadSource[]
   loaderSources: LoaderSource[]

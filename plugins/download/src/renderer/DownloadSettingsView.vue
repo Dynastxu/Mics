@@ -4,9 +4,13 @@ import { usePluginContext } from '@mics/sdk/renderer'
 import {
   DEFAULT_DOWNLOAD_CACHE_LIMIT,
   DEFAULT_DOWNLOAD_CONCURRENCY,
+  DEFAULT_DOWNLOAD_SEGMENTS,
+  DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD,
   DEFAULT_DOWNLOAD_SOURCES,
   DEFAULT_LOADER_SOURCES,
   DEFAULT_MOD_SOURCES,
+  DOWNLOAD_SEGMENT_OPTIONS,
+  DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS,
   LOADER_LABELS,
   MOD_SOURCE_LABELS,
   modSourceNeedsKey,
@@ -23,7 +27,15 @@ import ModSourceDialog from './ModSourceDialog.vue'
 const ctx = usePluginContext()
 const loading = ref(true)
 const concurrency = ref(DEFAULT_DOWNLOAD_CONCURRENCY)
+const segments = ref(DEFAULT_DOWNLOAD_SEGMENTS)
+const segmentThreshold = ref(DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD)
 const cacheLimit = ref(DEFAULT_DOWNLOAD_CACHE_LIMIT)
+const cacheBytes = ref(0)
+const cacheFiles = ref(0)
+const cacheLoading = ref(false)
+const cacheClearing = ref(false)
+const cacheError = ref('')
+const confirmClear = ref(false)
 const sources = ref<DownloadSource[]>(DEFAULT_DOWNLOAD_SOURCES.map((source) => ({ ...source })))
 const loaderSources = ref<LoaderSource[]>(
   DEFAULT_LOADER_SOURCES.map((source) => ({ ...source })),
@@ -101,12 +113,16 @@ async function loadSettings(): Promise<void> {
   try {
     const settings = await ctx.ipc.invoke<{
       concurrency: string
+      segments: string
+      segmentThreshold: string
       cacheLimit: string
       sources: DownloadSource[]
       loaderSources: LoaderSource[]
       modSources: ModSource[]
     }>('mics.download.manager', 'settings/get')
     concurrency.value = settings.concurrency
+    segments.value = settings.segments || DEFAULT_DOWNLOAD_SEGMENTS
+    segmentThreshold.value = settings.segmentThreshold || DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD
     cacheLimit.value = settings.cacheLimit
     sources.value = normalizeDownloadSources(settings.sources)
     loaderSources.value = normalizeLoaderSources(settings.loaderSources)
@@ -164,6 +180,30 @@ function resetConcurrency(): void {
   saveConcurrency()
 }
 
+function saveSegments(): void {
+  void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
+    key: 'segments',
+    value: segments.value,
+  })
+}
+
+function resetSegments(): void {
+  segments.value = DEFAULT_DOWNLOAD_SEGMENTS
+  saveSegments()
+}
+
+function saveSegmentThreshold(): void {
+  void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
+    key: 'segmentThreshold',
+    value: segmentThreshold.value,
+  })
+}
+
+function resetSegmentThreshold(): void {
+  segmentThreshold.value = DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD
+  saveSegmentThreshold()
+}
+
 function saveCacheLimit(): void {
   void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'cacheLimit',
@@ -174,6 +214,72 @@ function saveCacheLimit(): void {
 function resetCacheLimit(): void {
   cacheLimit.value = DEFAULT_DOWNLOAD_CACHE_LIMIT
   saveCacheLimit()
+}
+
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+async function loadCacheStats(): Promise<void> {
+  cacheLoading.value = true
+  try {
+    const usage = await ctx.ipc.invoke<{ bytes: number; files: number }>(
+      'mics.download.manager',
+      'cache/stats',
+    )
+    cacheBytes.value = usage.bytes
+    cacheFiles.value = usage.files
+    cacheError.value = ''
+  } catch (cause) {
+    cacheError.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    cacheLoading.value = false
+  }
+}
+
+let confirmClearTimer: ReturnType<typeof setTimeout> | null = null
+
+function resetConfirmClear(): void {
+  if (confirmClearTimer) {
+    clearTimeout(confirmClearTimer)
+    confirmClearTimer = null
+  }
+  confirmClear.value = false
+}
+
+/** 清空缓存不可撤销，先切成「确认清空」再执行 */
+function requestClearCache(): void {
+  if (!confirmClear.value) {
+    confirmClear.value = true
+    if (confirmClearTimer) clearTimeout(confirmClearTimer)
+    confirmClearTimer = setTimeout(() => {
+      confirmClearTimer = null
+      confirmClear.value = false
+    }, 4000)
+    return
+  }
+  void clearCache()
+}
+
+async function clearCache(): Promise<void> {
+  resetConfirmClear()
+  cacheClearing.value = true
+  try {
+    const usage = await ctx.ipc.invoke<{ bytes: number; files: number }>(
+      'mics.download.manager',
+      'cache/clear',
+    )
+    cacheBytes.value = usage.bytes
+    cacheFiles.value = usage.files
+    cacheError.value = ''
+  } catch (cause) {
+    cacheError.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    cacheClearing.value = false
+  }
 }
 
 async function resetSources(): Promise<void> {
@@ -419,13 +525,20 @@ function removeSource(index: number): void {
   markDirty()
 }
 
-onMounted(loadSettings)
+onMounted(() => {
+  void loadSettings()
+  void loadCacheStats()
+})
 
 onUnmounted(() => {
   if (concurrencyTimer) {
     clearTimeout(concurrencyTimer)
     concurrencyTimer = null
     persistConcurrency()
+  }
+  if (confirmClearTimer) {
+    clearTimeout(confirmClearTimer)
+    confirmClearTimer = null
   }
 })
 </script>
@@ -467,6 +580,64 @@ onUnmounted(() => {
           </div>
 
           <div class="mics-field">
+            <div>
+              <div class="mics-field__label">大文件分段</div>
+              <div class="mics-field__hint">
+                达到分段阈值且服务端支持 Range 时，单文件使用多连接；自动 = 4 连接
+              </div>
+            </div>
+            <div class="mics-field__control">
+              <select v-model="segments" class="mics-select" @change="saveSegments">
+                <option
+                  v-for="option in DOWNLOAD_SEGMENT_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+              <button
+                class="mics-button mics-button--ghost mics-button--small"
+                title="恢复默认值"
+                :disabled="segments === DEFAULT_DOWNLOAD_SEGMENTS"
+                @click="resetSegments"
+              >
+                重置
+              </button>
+            </div>
+          </div>
+
+          <div class="mics-field">
+            <div>
+              <div class="mics-field__label">分段阈值</div>
+              <div class="mics-field__hint">只有达到该大小的文件才启用多连接</div>
+            </div>
+            <div class="mics-field__control">
+              <select
+                v-model="segmentThreshold"
+                class="mics-select"
+                @change="saveSegmentThreshold"
+              >
+                <option
+                  v-for="option in DOWNLOAD_SEGMENT_THRESHOLD_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+              <button
+                class="mics-button mics-button--ghost mics-button--small"
+                title="恢复默认值"
+                :disabled="segmentThreshold === DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD"
+                @click="resetSegmentThreshold"
+              >
+                重置
+              </button>
+            </div>
+          </div>
+
+          <div class="mics-field">
             <div class="mics-field__label">缓存上限</div>
             <div class="mics-field__control">
               <select v-model="cacheLimit" class="mics-select" @change="saveCacheLimit">
@@ -485,7 +656,29 @@ onUnmounted(() => {
               </button>
             </div>
           </div>
+
+          <div class="mics-field">
+            <div>
+              <div class="mics-field__label">已用缓存</div>
+              <div class="mics-field__hint">重装或安装到其它实例时，缓存里的文件会直接复用</div>
+            </div>
+            <div class="mics-field__control">
+              <span class="settings-cache">
+                {{ cacheLoading ? '统计中…' : `${fmtBytes(cacheBytes)} · ${cacheFiles} 个文件` }}
+              </span>
+              <button
+                class="mics-button mics-button--small"
+                :class="confirmClear ? 'mics-button--danger' : 'mics-button--ghost'"
+                :disabled="cacheClearing || cacheLoading || (cacheBytes === 0 && !confirmClear)"
+                @click="requestClearCache"
+              >
+                {{ confirmClear ? '确认清空' : '清空' }}
+              </button>
+            </div>
+          </div>
         </div>
+
+        <p v-if="cacheError" class="mics-notice">{{ cacheError }}</p>
       </section>
 
       <section class="mics-section">
@@ -951,5 +1144,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.settings-cache {
+  color: var(--mics-fg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mics-notice {
+  margin-top: 10px;
 }
 </style>

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { DataBrowser, defaultSelection } from '@mics/ui'
+import { DataBrowser, defaultSelection, InstanceNameField } from '@mics/ui'
 import type { FilterGroup, FilterOption, FilterSelection, ListRow } from '@mics/ui'
 import { usePluginContext } from '@mics/sdk/renderer'
-import { LOADER_LABELS, LOADER_SOURCE_KINDS, sanitizeInstanceName, validateInstanceName } from '@mics/sdk'
+import { LOADER_LABELS, LOADER_SOURCE_KINDS } from '@mics/sdk'
 import type {
   GameVersion,
   InstallStartResult,
@@ -108,11 +108,10 @@ const installTarget = ref<VersionItem | null>(null)
 const loaderId = ref(VANILLA_LOADER.id)
 const loaderVersion = ref('')
 const nameDraft = ref('')
+const nameField = ref<InstanceType<typeof InstanceNameField> | null>(null)
 
 /** 名称可用性：本地规则即时判断，重名由主进程检查 */
 const nameCheck = ref<InstanceNameCheck>({ ok: true, name: '' })
-let nameCheckTimer: ReturnType<typeof setTimeout> | null = null
-let nameCheckSeq = 0
 
 const currentLoader = computed(
   () => LOADERS.find((item) => item.id === loaderId.value) ?? VANILLA_LOADER,
@@ -124,11 +123,6 @@ const defaultName = computed(() => {
   const parts = [target.id]
   if (loaderVersion.value) parts.push(currentLoader.value.label, loaderVersion.value)
   return parts.join('-')
-})
-
-const effectiveName = computed(() => {
-  const custom = nameDraft.value.trim().replace(/[. ]+$/, '')
-  return custom || defaultName.value
 })
 
 /** Mojang type -> 中文类型 */
@@ -194,67 +188,17 @@ const loaderSort = bySort(
   (row) => CHANNEL_RANK[(row.badge ?? '') as LoaderChannel] ?? 0,
 )
 
-/**
- * 校验当前名称：本地规则先给结论，再问主进程是否重名。
- * 返回最终结论，提交前可以直接用。
- */
-async function runNameCheck(): Promise<InstanceNameCheck> {
-  const seq = ++nameCheckSeq
-  const local = validateInstanceName(effectiveName.value)
-  if (!local.ok) {
-    nameCheck.value = local
-    return local
-  }
-
-  try {
-    const remote = await ctx.ipc.invoke<InstanceNameCheck>(
-      'mics.download.manager',
-      'install/validate-name',
-      { name: local.name },
-    )
-    if (seq === nameCheckSeq) nameCheck.value = remote
-    return remote
-  } catch {
-    // 主进程查询失败时先按本地规则放行，提交时主进程仍会把关
-    if (seq === nameCheckSeq) nameCheck.value = local
-    return local
-  }
-}
-
-function scheduleNameCheck(delay = 220): void {
-  if (nameCheckTimer) clearTimeout(nameCheckTimer)
-  nameCheckTimer = setTimeout(() => {
-    nameCheckTimer = null
-    void runNameCheck()
-  }, delay)
-}
-
-function onNameInput(event: Event): void {
-  const input = event.target as HTMLInputElement
-  const sanitized = sanitizeInstanceName(input.value)
-  if (sanitized !== input.value) {
-    const caret = Math.max(0, (input.selectionStart ?? 0) - (input.value.length - sanitized.length))
-    input.value = sanitized
-    input.setSelectionRange(caret, caret)
-  }
-  nameDraft.value = sanitized
-  scheduleNameCheck()
-}
-
-function normalizeName(): void {
-  nameDraft.value = nameDraft.value.trim().replace(/[. ]+$/, '')
-}
-
-function onNameBlur(): void {
-  normalizeName()
-  void runNameCheck()
+/** 主进程重名校验；本地规则由 InstanceNameField 负责 */
+async function checkName(name: string): Promise<InstanceNameCheck> {
+  return ctx.ipc.invoke<InstanceNameCheck>(
+    'mics.download.manager',
+    'install/validate-name',
+    { name },
+  )
 }
 
 function syncNameDraft(previousDefault: string): void {
-  if (nameDraft.value === previousDefault) {
-    nameDraft.value = defaultName.value
-    scheduleNameCheck()
-  }
+  if (nameDraft.value === previousDefault) nameDraft.value = defaultName.value
 }
 
 /** 主进程元数据请求的超时兜底：网络挂住时页面不能一直停在加载态 */
@@ -363,15 +307,10 @@ function openInstall(id: string): void {
   notice.value = ''
   noticeError.value = false
   nameCheck.value = { ok: true, name: '' }
-  scheduleNameCheck(0)
   scrollToTop()
 }
 
 function closeInstall(): void {
-  if (nameCheckTimer) {
-    clearTimeout(nameCheckTimer)
-    nameCheckTimer = null
-  }
   installTarget.value = null
   notice.value = ''
   noticeError.value = false
@@ -394,7 +333,9 @@ async function install(): Promise<void> {
       return
     }
 
-    const name = await runNameCheck()
+    const name = nameField.value
+      ? await nameField.value.validate()
+      : nameCheck.value
     if (!name.ok) {
       noticeError.value = true
       notice.value = name.message ?? '实例名称不可用'
@@ -424,7 +365,6 @@ async function install(): Promise<void> {
 
     // 下载页不可用（插件被禁用）时留在当前页给出提示
     notice.value = `「${name.name}」已加入下载队列。`
-    scheduleNameCheck(0)
   } catch (cause) {
     noticeError.value = true
     notice.value = cause instanceof Error ? cause.message : String(cause)
@@ -452,7 +392,6 @@ async function loadVersions(): Promise<void> {
 onMounted(loadVersions)
 
 onUnmounted(() => {
-  if (nameCheckTimer) clearTimeout(nameCheckTimer)
   // 丢弃仍在途的加载器版本查询，避免组件卸载后回写状态
   loaderSeq += 1
 })
@@ -494,18 +433,15 @@ onUnmounted(() => {
 
         <div class="install__actions">
           <div class="install__row">
-            <input
-              class="mics-input install__name"
-              :class="{ 'is-invalid': !nameCheck.ok }"
-              type="text"
-              :value="nameDraft"
-              :placeholder="defaultName"
-              aria-label="实例名称"
-              :aria-invalid="!nameCheck.ok"
-              :aria-describedby="nameCheck.ok ? undefined : 'install-name-error'"
-              spellcheck="false"
-              @input="onNameInput"
-              @blur="onNameBlur"
+            <InstanceNameField
+              ref="nameField"
+              v-model="nameDraft"
+              class="install__name"
+              label=""
+              :fallback-name="defaultName"
+              :check-name="checkName"
+              :disabled="installing"
+              @update:check="nameCheck = $event"
             />
 
             <button
@@ -516,10 +452,6 @@ onUnmounted(() => {
               {{ installing ? '提交中…' : '安装' }}
             </button>
           </div>
-
-          <p v-if="!nameCheck.ok" id="install-name-error" class="install__name-error">
-            {{ nameCheck.message }}
-          </p>
         </div>
       </header>
 
@@ -622,17 +554,6 @@ onUnmounted(() => {
 .install__name {
   flex: 1 1 260px;
   min-width: 140px;
-}
-
-.install__name.is-invalid {
-  border-color: var(--mics-danger);
-}
-
-.install__name-error {
-  margin: 0;
-  color: var(--mics-danger);
-  font-size: 11px;
-  line-height: 1.4;
 }
 
 .install__submit {

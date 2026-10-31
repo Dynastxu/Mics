@@ -4,13 +4,25 @@ import { MOD_LOADER_LABELS } from '@mics/sdk'
 import type {
   InstallStartResult,
   InstanceSummary,
-  ModVersion,
+  ModLoader,
 } from '@mics/sdk'
 import { usePluginContext } from '@mics/sdk/renderer'
+import { Dialog } from '@mics/ui'
+
+/** 只依赖安装真正需要的字段，Mod / 整合包等目录条目都能直接传入 */
+interface InstallableVersion {
+  name: string
+  fileName: string
+  fileUrl: string
+  sha1: string
+  size: number
+  loaders: string[]
+  gameVersions: string[]
+}
 
 const props = defineProps<{
   open: boolean
-  version: ModVersion | null
+  version: InstallableVersion | null
 }>()
 
 const emit = defineEmits<{
@@ -41,7 +53,7 @@ function incompatibleReason(instance: InstanceSummary): string {
   if (!version) return '未选择文件'
 
   if (version.loaders.length > 0) {
-    const allowed = version.loaders.map((loader) => MOD_LOADER_LABELS[loader])
+    const allowed = version.loaders.map((loader) => MOD_LOADER_LABELS[loader as ModLoader] ?? loader)
     if (!allowed.includes(instance.loader)) return `需要 ${allowed.join(' / ')}`
   }
   if (version.gameVersions.length > 0 && !version.gameVersions.includes(instance.minecraft)) {
@@ -159,152 +171,95 @@ watch(
 </script>
 
 <template>
-  <Teleport to="body">
-    <div
-      v-if="open"
-      class="install-dialog"
-      role="presentation"
-      @click.self="close"
-      @keydown.esc.stop.prevent="close"
-    >
-      <div
-        class="install-dialog__box"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="mod-install-dialog-title"
-      >
-        <header class="install-dialog__header">
-          <h2 id="mod-install-dialog-title" class="install-dialog__title">选择实例</h2>
-          <p class="install-dialog__subtitle">
-            {{ version?.name }}<span v-if="version?.fileName"> · {{ version.fileName }}</span>
-          </p>
-        </header>
+  <Dialog
+    :open="open"
+    title="选择实例"
+    :subtitle="version ? `${version.name}${version.fileName ? ` · ${version.fileName}` : ''}` : ''"
+    @close="close"
+  >
+    <p v-if="error" class="mics-notice mics-notice--error">{{ error }}</p>
 
-        <p v-if="error" class="mics-notice mics-notice--error">{{ error }}</p>
+    <div v-if="loading" class="mics-empty">正在读取实例…</div>
 
-        <div v-if="loading" class="mics-empty">正在读取实例…</div>
-
-        <div v-else-if="instances.length === 0" class="mics-empty">
-          还没有可用实例，请先在「原版」页安装一个带模组加载器的实例。
-        </div>
-
-        <div v-else-if="visible.length === 0" class="mics-empty">没有支持的实例</div>
-
-        <div v-else class="install-dialog__list">
-          <label
-            v-for="instance in visible"
-            :key="instance.id"
-            class="install-instance"
-          >
-            <input
-              type="checkbox"
-              class="install-instance__check"
-              :checked="selected.includes(instance.id)"
-              :disabled="installing"
-              @change="toggle(instance.id)"
-            />
-            <span class="install-instance__main">
-              <span class="install-instance__name">{{ instance.name }}</span>
-              <span class="install-instance__meta">
-                {{ instance.minecraft }} · {{ instance.loader }} · {{ instance.mods }} 个 Mod
-              </span>
-            </span>
-            <span v-if="incompatibleReason(instance)" class="install-instance__reason">
-              {{ incompatibleReason(instance) }}
-            </span>
-          </label>
-        </div>
-
-        <footer class="install-dialog__footer">
-          <div class="install-dialog__left">
-            <button
-              v-if="visible.length > 0"
-              class="mics-button mics-button--ghost mics-button--small"
-              type="button"
-              :disabled="installing"
-              @click="toggleAll"
-            >
-              {{ allSelected ? '取消全选' : '全选' }}
-            </button>
-            <label v-if="unsupportedCount > 0" class="install-dialog__toggle">
-              <input
-                v-model="showUnsupported"
-                type="checkbox"
-                class="install-instance__check"
-                :disabled="installing"
-              />
-              显示不支持的实例 ({{ unsupportedCount }})
-            </label>
-            <span v-if="visible.length > 0" class="install-dialog__count">
-              已选 {{ selected.length }} / {{ visible.length }}
-            </span>
-          </div>
-
-          <div class="install-dialog__actions">
-            <button
-              class="mics-button mics-button--ghost"
-              type="button"
-              :disabled="installing"
-              @click="close"
-            >
-              取消
-            </button>
-            <button
-              class="mics-button mics-button--primary"
-              type="button"
-              :disabled="installing || selected.length === 0"
-              @click="install"
-            >
-              {{ installing ? '提交中…' : `安装 (${selected.length})` }}
-            </button>
-          </div>
-        </footer>
-      </div>
+    <div v-else-if="instances.length === 0" class="mics-empty">
+      还没有可用实例，请先在「原版」页安装一个带模组加载器的实例。
     </div>
-  </Teleport>
+
+    <div v-else-if="visible.length === 0" class="mics-empty">没有支持的实例</div>
+
+    <div v-else class="install-dialog__list">
+      <label
+        v-for="instance in visible"
+        :key="instance.id"
+        class="install-instance"
+      >
+        <input
+          type="checkbox"
+          class="install-instance__check"
+          :checked="selected.includes(instance.id)"
+          :disabled="installing"
+          @change="toggle(instance.id)"
+        />
+        <span class="install-instance__main">
+          <span class="install-instance__name">{{ instance.name }}</span>
+          <span class="install-instance__meta">
+            {{ instance.minecraft }} · {{ instance.loader }} · {{ instance.mods }} 个 Mod
+          </span>
+        </span>
+        <span v-if="incompatibleReason(instance)" class="install-instance__reason">
+          {{ incompatibleReason(instance) }}
+        </span>
+      </label>
+    </div>
+
+    <template #footer>
+      <div class="install-dialog__left">
+        <button
+          v-if="visible.length > 0"
+          class="mics-button mics-button--ghost mics-button--small"
+          type="button"
+          :disabled="installing"
+          @click="toggleAll"
+        >
+          {{ allSelected ? '取消全选' : '全选' }}
+        </button>
+        <label v-if="unsupportedCount > 0" class="install-dialog__toggle">
+          <input
+            v-model="showUnsupported"
+            type="checkbox"
+            class="install-instance__check"
+            :disabled="installing"
+          />
+          显示不支持的实例 ({{ unsupportedCount }})
+        </label>
+        <span v-if="visible.length > 0" class="install-dialog__count">
+          已选 {{ selected.length }} / {{ visible.length }}
+        </span>
+      </div>
+
+      <div class="install-dialog__actions">
+        <button
+          class="mics-button mics-button--ghost"
+          type="button"
+          :disabled="installing"
+          @click="close"
+        >
+          取消
+        </button>
+        <button
+          class="mics-button mics-button--primary"
+          type="button"
+          :disabled="installing || selected.length === 0"
+          @click="install"
+        >
+          {{ installing ? '提交中…' : `安装 (${selected.length})` }}
+        </button>
+      </div>
+    </template>
+  </Dialog>
 </template>
 
 <style scoped>
-.install-dialog {
-  position: fixed;
-  inset: 0;
-  z-index: 300;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgb(0 0 0 / 0.5);
-  backdrop-filter: blur(2px);
-}
-
-.install-dialog__box {
-  display: flex;
-  flex-direction: column;
-  width: min(560px, 100%);
-  max-height: min(640px, 86vh);
-  padding: 18px;
-  border: 1px solid var(--mics-border);
-  border-radius: 12px;
-  background: var(--mics-bg-elevated);
-  box-shadow: 0 24px 60px rgb(0 0 0 / 0.5);
-}
-
-.install-dialog__header {
-  margin-bottom: 14px;
-}
-
-.install-dialog__title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.install-dialog__subtitle {
-  margin: 4px 0 0;
-  color: var(--mics-fg-muted);
-  font-size: 11.5px;
-  overflow-wrap: anywhere;
-}
-
 .install-dialog__list {
   flex: 1 1 auto;
   min-height: 0;
@@ -364,15 +319,6 @@ watch(
   color: var(--mics-fg-muted);
   font-size: 10.5px;
   text-align: right;
-}
-
-.install-dialog__footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 16px;
 }
 
 .install-dialog__left {

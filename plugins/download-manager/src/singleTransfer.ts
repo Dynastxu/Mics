@@ -1,0 +1,167 @@
+import { createHash, type Hash } from 'node:crypto'
+import { rm } from 'node:fs/promises'
+import path from 'node:path'
+import { Transform } from 'node:stream'
+import { DownloaderHelper } from 'node-downloader-helper'
+import type {
+  FileTransferHandle,
+  TransferOutcome,
+  TransferProgress,
+} from '@mics/sdk'
+import { fileSize, hashRange, toError, type FileTransferOptions } from './transferCommon'
+
+/**
+ * 单连接文件传输。
+ *
+ * 把「断点续传、Range、重定向、重试」交给 node-downloader-helper，
+ * 下载管线只关心任务编排（多源、并发、校验、缓存）。
+ *
+ * 约定：文件先写到 `<目标>.part`，成功后由调用方改名；
+ * 暂停/失败都保留 .part，下次从已有字节续传。
+ *
+ * 分段传输见 `segmentedTransfer.ts`；两条路径共用 `transfer.ts` 的入口，
+ * 调用方（下载管线）不需要知道当前用的是哪一种。
+ */
+
+export type { TransferOutcome, TransferProgress }
+
+export function createSingleFileTransfer(options: FileTransferOptions): FileTransferHandle {
+  let helper: DownloaderHelper | null = null
+  let stopRequested = false
+  let ended: { incomplete: boolean } | null = null
+  let hash: Hash | null = options.sha1 ? createHash('sha1') : null
+
+  const tap = new Transform({
+    transform(chunk, _encoding, callback) {
+      hash?.update(chunk as Buffer)
+      callback(null, chunk)
+    },
+  })
+
+  async function start(): Promise<TransferOutcome> {
+    const partSize = fileSize(options.partPath)
+
+    // 上次已经写完但没来得及改名：直接校验，不必再发请求
+    if (options.size > 0 && partSize === options.size) {
+      if (!hash) return { status: 'done' }
+      await hashRange(options.partPath, partSize, hash)
+      return { status: 'done', digest: hash.digest('hex') }
+    }
+
+    let resuming = partSize > 0
+    if (resuming && options.size <= 0) {
+      // 总大小未知时无法判断 .part 是否完整，续传风险太大，直接重来
+      await rm(options.partPath, { force: true }).catch(() => undefined)
+      resuming = false
+    } else if (resuming && partSize > options.size) {
+      // 比目标文件还大，只能是损坏的残留，重来
+      await rm(options.partPath, { force: true }).catch(() => undefined)
+      resuming = false
+    }
+
+    if (resuming && hash) {
+      // 续传时先补上已有字节的摘要，再让库接着写
+      await hashRange(options.partPath, partSize, hash)
+    }
+
+    if (stopRequested) return { status: 'paused' }
+
+    helper = new DownloaderHelper(options.url, path.dirname(options.partPath), {
+      fileName: path.basename(options.partPath),
+      override: true,
+      removeOnStop: false,
+      removeOnFail: false,
+      resumeOnIncomplete: true,
+      resumeOnIncompleteMaxRetry: 3,
+      timeout: 15_000,
+      progressThrottle: 500,
+      // 镜像站（尤其是 BMCLAPI 重定向后的 CERNET 节点）会拒绝无 UA 的请求
+      headers: options.headers ?? {},
+      httpRequestOptions: { agent: options.agents.http },
+      httpsRequestOptions: { agent: options.agents.https },
+    })
+
+    // 停滞看门狗：建连成功但长时间收不到数据时，主动结束本轮传输
+    const STALL_TIMEOUT_MS = 30_000
+    let stallTimer: NodeJS.Timeout | null = null
+    let stallReject: ((reason: Error) => void) | null = null
+    const stalled = new Promise<never>((_resolve, reject) => {
+      stallReject = reject
+    })
+    const armStall = (): void => {
+      if (stallTimer) clearTimeout(stallTimer)
+      stallTimer = setTimeout(() => {
+        stallTimer = null
+        stallReject?.(new Error('下载停滞：长时间没有收到数据'))
+      }, STALL_TIMEOUT_MS)
+    }
+    const disarmStall = (): void => {
+      if (!stallTimer) return
+      clearTimeout(stallTimer)
+      stallTimer = null
+    }
+
+    // EventEmitter 如果没有 error 监听会在 emit 时抛异常；错误统一走 start() 的 reject
+    helper.on('error', () => undefined)
+    helper.on('warning', () => undefined)
+    helper.on('download', (info) => {
+      if (!info.isResumed) {
+        // 服务端忽略了 Range：文件已被清空，摘要与进度都要从头开始
+        hash = options.sha1 ? createHash('sha1') : null
+        options.onRestart?.()
+      }
+      armStall()
+      options.onProgress?.({ loaded: info.downloadedSize, total: info.totalSize ?? -1 })
+    })
+    helper.on('progress.throttled', (stats) => {
+      armStall()
+      options.onProgress?.({ loaded: stats.downloaded, total: stats.total ?? -1 })
+    })
+    helper.on('end', (info) => {
+      ended = info
+    })
+    helper.pipe(tap)
+
+    // 极短窗口内被暂停：此时 stop() 可能早于 start()，不能再发起请求
+    if (stopRequested) {
+      await helper.stop().catch(() => undefined)
+      return { status: 'paused' }
+    }
+
+    armStall()
+    const running = resuming
+      ? helper.resumeFromFile(options.partPath, {
+        downloaded: partSize,
+        fileName: path.basename(options.partPath),
+        ...(options.size > 0 ? { total: options.size } : {}),
+      })
+      : helper.start()
+    // 停滞超时后不再等原来的 promise，但要消费掉它的拒绝，避免未处理异常
+    running.catch(() => undefined)
+
+    try {
+      await Promise.race([running, stalled])
+      disarmStall()
+    } catch (cause) {
+      disarmStall()
+      if (stopRequested) return { status: 'paused' }
+      // 连接卡死：停掉本次传输（.part 保留），交给上层换源
+      await helper.stop().catch(() => undefined)
+      return { status: 'failed', error: toError(cause) }
+    }
+
+    if (stopRequested) return { status: 'paused' }
+    if (ended?.incomplete) {
+      return { status: 'failed', error: new Error('下载未完成') }
+    }
+    return { status: 'done', digest: hash ? hash.digest('hex') : undefined }
+  }
+
+  async function stop(): Promise<void> {
+    stopRequested = true
+    if (!helper) return
+    await helper.stop().catch(() => undefined)
+  }
+
+  return { start, stop }
+}

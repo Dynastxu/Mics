@@ -6,7 +6,7 @@ Minecraft Integrated Control Software 的桌面 UI 骨架：**左侧导航、每
 - 外壳：Electron `^45.0.0` + electron-vite 6 + Vite 8 + Vue 3.5 + TypeScript 6
 - 包管理：pnpm workspace
 
-当前阶段账户（离线可用；正版设备码暂时借用官方 Live id，见下文 TODO）与启动已经可用；下载管线支持原版与加载器安装。
+当前阶段账户（离线可用；正版设备码暂时借用官方 Live id，见下文 TODO）与启动已经可用；下载管线支持原版 / 加载器安装、Mod 多实例安装与整合包安装。
 账户与启动之间的契约是 `auth.credentials` 能力：启动页只消费凭据，不关心登录方式。
 
 ## 快速开始
@@ -199,7 +199,7 @@ interface LaunchCredentials {
 - 填的是 GUID 时自动切到 Entra 端点，数字串则使用 Live 端点，不需要额外开关。
 - 清空该设置后正版登录不可用，账户页会提示先填 client id。
 
-## 下载与 Mod
+## 下载、Mod 与整合包
 
 - 原版页负责游戏版本与加载器的安装；Mod 页从 Modrinth / CurseForge 搜索 Mod，搜索条件包括名称、来源、MC 版本、加载器与类型（使用通用漏斗筛选面板），结果在底部按页翻页，点击卡片进入 Mod 详情。
 - 进入 Mod 详情时会把搜索页选中的 MC 版本 / 加载器自动设为详情筛选的初始值；筛选选项仍来自该 Mod 的全部版本，用户随时可以改，不存在被搜索条件锁死的情况。
@@ -210,6 +210,10 @@ interface LaunchCredentials {
 - Mod 详情页左上角有「主页」，跳过前置返回栈直接回到 Mod 搜索；版本列表滚动后右下角出现悬浮的「返回顶部」。
 - 选择文件后可以一次把同一个 jar 安装到多个实例：实例列表按文件的游戏版本与加载器标记兼容性，原版实例、安装未完成的实例与不匹配的实例不可选；提交后关闭弹窗并在右下角提示，下载任务在「下载进度」里显示每个实例的进度，可暂停、取消或重试，已存在且 SHA1 一致的文件会直接跳过。
 - 实例详情的 Mod 列表：左侧显示 jar 内嵌图标（没有图标也保留空位），右侧是删除按钮与启停开关（`.jar` ↔ `.jar.disabled`）；删除会二次确认，避免误删。
+- 整合包页复用同一套目录交互（来源 / MC 版本 / 加载器 / 类型筛选，详情与版本列表）。选择版本后先输入实例名：默认取整合包名，非法字符即时清理，重名由主进程校验，不通过时不能提交。
+- 整合包安装支持 Modrinth `.mrpack` 与 CurseForge 整合包 zip：主进程先下载归档、解析 `modrinth.index.json` / `manifest.json`，从清单确定游戏版本与加载器，再走与原版安装相同的下载管线；包内 Mod 与游戏文件进同一个队列，`overrides/` 等覆盖文件在所有任务完成后才合并，避免被下载结果覆盖。Quilt 整合包暂不支持，会在安装前给出明确提示。准备阶段还没有文件级任务，下载页会显示当前步骤：归档、加载器安装器与依赖库等传输都会显示实时速度和已下载字节，解析、解压等无法度量进度的步骤显示不确定态进度条。
+- 下载队列会优先启动大文件，减少「最后只剩几个大文件、每个文件一条连接」的长尾；「设置 → 下载设置 → 大文件分段」可以对达到分段阈值的文件启用单文件多 Range 连接（默认自动 4 连接，可关闭），阈值本身也在同一页配置（8–128 MB）。服务端不支持 `Accept-Ranges`、文件大小未知或校验值变化时会自动退回单连接，暂停/继续仍按分段断点恢复。
+- 下载页的速度只统计真正走网络的字节：命中下载缓存、复用共享库或跳过已存在的文件时进度会前进，但不会虚增速度。缓存占用与清空按钮在「设置 → 下载设置 → 已用缓存」；传输进行中不允许清空，避免正在写入缓存的整合包归档被删掉。
 
 ## 日志
 
@@ -252,10 +256,32 @@ export default defineMainPlugin({
 下载页里的「筛选按钮 / 筛选面板 / 通用列表」是同一种 UI，抽在 `@mics/ui`：
 
 ```ts
-import { DataBrowser, DataList, FilterButton, FilterPanel, ToggleSwitch } from '@mics/ui'
-import type { FilterGroup, FilterSelection, ListRow } from '@mics/ui'
+import {
+  BackToTop,
+  CatalogBrowser,
+  CatalogCard,
+  DataBrowser,
+  DataList,
+  Dialog,
+  FilterButton,
+  FilterPanel,
+  InstanceInstallDialog,
+  InstanceNameField,
+  ListPager,
+  ToggleSwitch,
+} from '@mics/ui'
+import type { CatalogVersion, FilterGroup, FilterSelection, ListRow } from '@mics/ui'
 ```
 
+- `CatalogBrowser`：完整的「搜索项目 → 详情 → 版本列表 → 安装」交互，包含来源筛选、分页、
+  返回栈、详情滚动恢复与「返回顶部」；页面只注入 IPC 调用与加载器 / 渠道标签，
+  `#version-extra` / `#version-action` / `#card` 插槽用于业务特有内容（例如 Mod 的前置）；
+- `CatalogCard`：目录网格卡片（图标 / 作者 / 来源徽标 / 类型 / 下载量）；
+- `ListPager`：目录分页条，`page` / `page-count` + `@change`；
+- `BackToTop`：右下角悬浮「返回顶部」按钮；
+- `Dialog`：Teleport 到 body 的通用模态框，统一遮罩、标题、副标题与 footer 插槽；
+- `InstanceNameField`：实例名输入与即时校验，本地规则 + 可选的主进程重名检查，`validate()` 可在提交前再确认；
+- `InstanceInstallDialog`：整合包这类「新建实例」的安装弹窗，默认名、重名阻断、版本信息与错误展示都已收口；
 - `FilterButton`：漏斗按钮 + 「非默认筛选」小圆点，`v-model:open` 控制面板开关；
 - `FilterPanel`：按 `FilterGroup[]` 渲染分组胶囊，`v-model` 的形状是 `Record<string, string[]>`；
   `mode: 'single'` 只取一个值，`multi` 选中多项时要求**同时满足**；组名左侧用实心圆 / 空心正方形

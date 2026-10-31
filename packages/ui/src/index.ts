@@ -8,13 +8,35 @@
  * 这里放的是「纯 Vue 组件」：不依赖 cordis，也不做运行时注册，
  * 插件在自己的 bundle 里静态引入即可（类型完整、按需打包）。
  */
+export { default as BackToTop } from './BackToTop.vue'
+export { default as CatalogBrowser } from './CatalogBrowser.vue'
+export { default as CatalogCard } from './CatalogCard.vue'
 export { default as DataBrowser } from './DataBrowser.vue'
 export { default as DataList } from './DataList.vue'
+export { default as Dialog } from './Dialog.vue'
 export { default as FilterButton } from './FilterButton.vue'
 export { default as FilterPanel } from './FilterPanel.vue'
+export { default as InstanceInstallDialog } from './InstanceInstallDialog.vue'
+export { default as InstanceNameField } from './InstanceNameField.vue'
+export { default as ListPager } from './ListPager.vue'
 export { default as ToggleSwitch } from './ToggleSwitch.vue'
 export { defaultSelection, filterRows, isFilterActive, matchesQuery } from './list'
 export type { FilterRowsOptions } from './list'
+export { formatDownloads } from './catalog'
+export type {
+  CatalogCategory,
+  CatalogDependency,
+  CatalogGameVersion,
+  CatalogIntent,
+  CatalogItem,
+  CatalogLoaderOption,
+  CatalogOpenOptions,
+  CatalogSearchRequest,
+  CatalogSearchResult,
+  CatalogSourceError,
+  CatalogSourceInfo,
+  CatalogVersion,
+} from './catalog'
 export type {
   BadgeItem,
   FilterGroup,

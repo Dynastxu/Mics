@@ -2,6 +2,7 @@ import type {
   ModCategory,
   ModIdentifyFile,
   ModIdentity,
+  ModProjectKind,
   ModProjectRequest,
   ModSearchRequest,
   ModSearchResult,
@@ -68,6 +69,7 @@ export async function searchMods(
   sources: ModSource[],
   request: ModSearchRequest,
   signal: AbortSignal,
+  kind: ModProjectKind = 'mod',
 ): Promise<ModSearchResult> {
   const selected = sources.filter(
     (source) => source.enabled && (request.source === 'all' || source.kind === request.source),
@@ -85,8 +87,8 @@ export async function searchMods(
   const settled = await Promise.allSettled(
     usable.map(async (source) => {
       const result = source.kind === 'curseforge'
-        ? await searchCurseforge(source, request, signal, limit)
-        : await searchModrinth(source, request, signal, limit)
+        ? await searchCurseforge(source, request, signal, limit, kind)
+        : await searchModrinth(source, request, signal, limit, kind)
       return { source, ...result }
     }),
   )
@@ -131,7 +133,7 @@ export async function searchMods(
 }
 
 /** 在已启用的来源里挑选实际使用的那一个；sourceApi 用于锁定命中的镜像 */
-function resolveSource(
+export function resolveModSource(
   sources: ModSource[],
   kind: ModSourceKind,
   sourceApi: string | undefined,
@@ -151,8 +153,9 @@ export async function listModVersions(
   sources: ModSource[],
   request: ModVersionRequest,
   signal: AbortSignal,
+  kind: ModProjectKind = 'mod',
 ): Promise<ModVersion[]> {
-  const source = resolveSource(sources, request.source, request.sourceApi)
+  const source = resolveModSource(sources, request.source, request.sourceApi)
   return request.source === 'curseforge'
     ? versionsCurseforge(source, request, signal)
     : versionsModrinth(source, request, signal)
@@ -168,11 +171,12 @@ export async function loadModProject(
   sources: ModSource[],
   request: ModProjectRequest,
   signal: AbortSignal,
+  kind: ModProjectKind = 'mod',
 ): Promise<ModSummary> {
-  const source = resolveSource(sources, request.source, request.sourceApi)
+  const source = resolveModSource(sources, request.source, request.sourceApi)
   return request.source === 'curseforge'
-    ? projectCurseforge(source, request.projectId, signal)
-    : projectModrinth(source, request.projectId, signal)
+    ? projectCurseforge(source, request.projectId, signal, kind)
+    : projectModrinth(source, request.projectId, signal, kind)
 }
 
 /**

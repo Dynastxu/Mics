@@ -1,52 +1,14 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync, type Stats } from 'node:fs'
 import path from 'node:path'
-import { inflateRawSync } from 'node:zlib'
+import {
+  isReadableZipBuffer,
+  readZipEntries,
+  zipEntryData,
+  type ZipEntry,
+} from '@mics/sdk/main'
 
-const EOCD_SIGNATURE = 0x06054b50
-const CENTRAL_SIGNATURE = 0x02014b50
-const LOCAL_SIGNATURE = 0x04034b50
-const MAX_COMMENT = 0xffff
-
-interface ZipEntry {
-  name: string
-  method: number
-  compressedSize: number
-  uncompressedSize: number
-  localOffset: number
-}
-
-function readEntries(buffer: Buffer): ZipEntry[] {
-  let eocd = -1
-  const start = Math.max(0, buffer.length - MAX_COMMENT - 22)
-  for (let offset = buffer.length - 22; offset >= start; offset -= 1) {
-    if (buffer.readUInt32LE(offset) === EOCD_SIGNATURE) {
-      eocd = offset
-      break
-    }
-  }
-  if (eocd < 0) throw new Error('不是有效的 Zip 文件')
-
-  const count = buffer.readUInt16LE(eocd + 10)
-  let offset = buffer.readUInt32LE(eocd + 16)
-  const entries: ZipEntry[] = []
-
-  for (let index = 0; index < count; index += 1) {
-    if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== CENTRAL_SIGNATURE) break
-    const method = buffer.readUInt16LE(offset + 10)
-    const compressedSize = buffer.readUInt32LE(offset + 20)
-    const uncompressedSize = buffer.readUInt32LE(offset + 24)
-    const nameLength = buffer.readUInt16LE(offset + 28)
-    const extraLength = buffer.readUInt16LE(offset + 30)
-    const commentLength = buffer.readUInt16LE(offset + 32)
-    const localOffset = buffer.readUInt32LE(offset + 42)
-    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString('utf8')
-    entries.push({ name, method, compressedSize, uncompressedSize, localOffset })
-    offset += 46 + nameLength + extraLength + commentLength
-  }
-
-  return entries
-}
+// Zip 读取与结构校验是下载管线 / 启动插件共用的实现，放在 @mics/sdk/main。
 
 export interface JarModInfo {
   /** mod id；用于在 Mod 目录里搜索对应项目 */
@@ -145,7 +107,7 @@ function iconRank(name: string, modId?: string): number {
 function metadataOf(entries: ZipEntry[], buffer: Buffer): { id?: string; name?: string } {
   const readJson = (entry: ZipEntry | undefined): Record<string, unknown> | null => {
     if (!entry) return null
-    const data = entryData(buffer, entry)
+    const data = zipEntryData(buffer, entry)
     if (!data) return null
     try {
       return JSON.parse(data.toString('utf8')) as Record<string, unknown>
@@ -176,7 +138,7 @@ function metadataOf(entries: ZipEntry[], buffer: Buffer): { id?: string; name?: 
     (entry) => entry.name === 'META-INF/mods.toml' || entry.name === 'META-INF/neoforge.mods.toml',
   )
   if (tomlEntry) {
-    const data = entryData(buffer, tomlEntry)
+    const data = zipEntryData(buffer, tomlEntry)
     if (data) {
       const text = data.toString('utf8')
       const id = /^\s*modId\s*=\s*["']([^"']+)["']/m.exec(text)?.[1]
@@ -209,7 +171,7 @@ export function readJarModInfo(file: string): JarModInfo {
   let result: JarModInfo = {}
   try {
     const buffer = readFileSync(file)
-    const entries = readEntries(buffer)
+    const entries = readZipEntries(buffer)
     const metadata = metadataOf(entries, buffer)
     const sha1 = createHash('sha1').update(buffer).digest('hex')
     const fingerprint = murmur2(buffer)
@@ -223,7 +185,7 @@ export function readJarModInfo(file: string): JarModInfo {
 
     const chosen = candidates[0]?.entry
     if (chosen) {
-      const data = entryData(buffer, chosen)
+      const data = zipEntryData(buffer, chosen)
       const mime = imageMime(chosen.name)
       if (data && mime) icon = `data:${mime};base64,${data.toString('base64')}`
     }
@@ -251,32 +213,11 @@ const NATIVE_PATTERN = /\.(dll|so|dylib|jnilib)$/i
  * JVM 会报 ClassNotFoundException。这里对齐 EOCD、中央目录与首个本地头。
  */
 export function isReadableJar(file: string): boolean {
-  let buffer: Buffer
   try {
-    buffer = readFileSync(file)
+    return isReadableZipBuffer(readFileSync(file))
   } catch {
     return false
   }
-  if (buffer.length < 22) return false
-
-  const start = Math.max(0, buffer.length - MAX_COMMENT - 22)
-  let eocd = -1
-  for (let offset = buffer.length - 22; offset >= start; offset -= 1) {
-    if (buffer.readUInt32LE(offset) === EOCD_SIGNATURE) {
-      eocd = offset
-      break
-    }
-  }
-  if (eocd < 0) return false
-
-  const count = buffer.readUInt16LE(eocd + 10)
-  const cdOffset = buffer.readUInt32LE(eocd + 16)
-  if (count === 0 || cdOffset + 46 > buffer.length) return false
-  if (buffer.readUInt32LE(cdOffset) !== CENTRAL_SIGNATURE) return false
-
-  const localOffset = buffer.readUInt32LE(cdOffset + 42)
-  return localOffset + 4 <= buffer.length
-    && buffer.readUInt32LE(localOffset) === LOCAL_SIGNATURE
 }
 
 export interface NativeSyncResult {
@@ -292,24 +233,6 @@ function isLockedFileError(cause: unknown): boolean {
   return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
 }
 
-function entryData(buffer: Buffer, entry: ZipEntry): Buffer | null {
-  if (buffer.readUInt32LE(entry.localOffset) !== LOCAL_SIGNATURE) return null
-  const nameLength = buffer.readUInt16LE(entry.localOffset + 26)
-  const extraLength = buffer.readUInt16LE(entry.localOffset + 28)
-  const dataStart = entry.localOffset + 30 + nameLength + extraLength
-  const data = buffer.subarray(dataStart, dataStart + entry.compressedSize)
-
-  if (entry.method === 0) return data
-  if (entry.method === 8) {
-    try {
-      return inflateRawSync(data)
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-
 /**
  * 把 native jar 里的动态库同步到目标目录，复用已有的同名文件。
  *
@@ -322,7 +245,7 @@ function entryData(buffer: Buffer, entry: ZipEntry): Buffer | null {
  */
 export function syncNativeLibraries(jarPath: string, destDir: string): NativeSyncResult {
   const buffer = readFileSync(jarPath)
-  const entries = readEntries(buffer)
+  const entries = readZipEntries(buffer)
   mkdirSync(destDir, { recursive: true })
 
   const files: string[] = []
@@ -330,7 +253,6 @@ export function syncNativeLibraries(jarPath: string, destDir: string): NativeSyn
 
   for (const entry of entries) {
     if (!NATIVE_PATTERN.test(entry.name) || entry.name.startsWith('META-INF/')) continue
-    if (buffer.readUInt32LE(entry.localOffset) !== LOCAL_SIGNATURE) continue
 
     const target = path.join(destDir, path.basename(entry.name))
     files.push(target)
@@ -356,7 +278,7 @@ export function syncNativeLibraries(jarPath: string, destDir: string): NativeSyn
       }
     }
 
-    const data = entryData(buffer, entry)
+    const data = zipEntryData(buffer, entry)
     if (data) writeFileSync(target, data)
   }
 

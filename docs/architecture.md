@@ -333,7 +333,7 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 | 目录 | 内容 | 归属 |
 | --- | --- | --- |
 | `.minecraft/` | 游戏根，结构对齐原版启动器：`versions/`、`libraries/`、`assets/`，见下 | 下载管线（写）/ 启动管线（读） |
-| `cache/downloads/` | 按 URL / sha1 复用的下载缓存 | 下载管线 |
+| `cache/downloads/` | 按 URL / sha1 复用的下载缓存；大文件分段的断点状态以 `.part.segments.json` 与 `.part` 相邻存放 | 下载管线 |
 | `plugins/` | 第三方插件本体 | 插件管理 |
 | `logs/` | 每次启动一个 `mics-<时间>.log` | 日志插件 |
 | `profiles/` | `boot.config.json` 指向的 profile | 内核 |
@@ -342,6 +342,12 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 游戏数据与应用数据分开放：`.minecraft` 可以整目录备份或搬到别的盘，而 `plugins` /
 `logs` / `profiles` / `cache` 是启动器自己的东西。插件在根下新增目录前先确认没有
 其它归属方，避免两个插件写同一路径。
+
+下载管线的单文件传输默认一条 HTTP 连接；「下载设置 → 大文件分段」可对达到分段阈值
+的文件启用多条 Range 连接（阈值与连接数都在设置页配置，默认 32 MB / 自动 4 条）。
+传输层先探测 `bytes=0-0`，只有服务端返回 206 与有效 `Content-Range` 时才分段；
+否则自动回退单连接。分段进度写在 `.part.segments.json`，暂停、失败与应用重启后
+都能按段续传。
 
 ### 实例布局
 
@@ -380,6 +386,11 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
   每个实例有自己的游戏目录，`.minecraft` 下的共享层只放与版本无关的资源。
 - **一个实例 = 一次安装 = 一个加载器**。安装入口只接受尚不存在的实例名
   （`checkInstanceName`），没有「原地换加载器 / 追加版本」的接口。
+- **整合包是「先解析、再按原版安装」**：归档下载到 `cache/downloads`，解析
+  `modrinth.index.json` / `manifest.json` 后得到游戏版本、加载器与包内文件；游戏文件
+  与包内文件进入同一个下载队列。`overrides/` 先解压到实例内的临时目录，等所有任务
+  完成后再合并进实例根（跳过 `instance.json` / `install-state.json` / 版本档案），
+  这样同名覆盖文件不会被下载结果反过来覆盖。
 
 ### 为什么实例里没有 `versions/<版本 id>/` 这一层
 

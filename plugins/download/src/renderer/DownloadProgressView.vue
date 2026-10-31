@@ -12,17 +12,23 @@ interface JobRow {
   paused: boolean
   /** 已受理、仍在后台构建下载清单 */
   preparing: boolean
-  /** 准备阶段的当前步骤进度（0–100），preparing 时填总进度条 */
-  preparePercent: number
+  /** 准备阶段的当前步骤进度（0–100）；空表示这一步没有可度量的进度 */
+  preparePercent: number | undefined
+  /** 准备阶段最近几秒内还有网络传输，速度才有意义 */
+  prepareActive: boolean
 }
 
 interface SpeedSample {
-  loaded: number
+  /** 真正从网络收到的字节；缓存复用不计入 */
+  transferred: number
   at: number
   speed: number
 }
 
 const ctx = usePluginContext()
+
+/** 准备阶段最近一次收到数据后，速度与字节显示还能保留多久 */
+const PREPARE_TRANSFER_WINDOW_MS = 5000
 
 const jobs = ref<InstallJobSummary[]>([])
 const jobSpeeds = ref<Record<string, number>>({})
@@ -52,7 +58,11 @@ const activeRows = computed<JobRow[]>(() =>
       speed: jobSpeeds.value[job.id] ?? 0,
       paused: jobPaused(job.stats),
       preparing: job.state === 'preparing',
-      preparePercent: Math.max(0, Math.min(100, Math.round(job.preparePercent ?? 0))),
+      preparePercent: job.preparePercent === undefined
+        ? undefined
+        : Math.max(0, Math.min(100, Math.round(job.preparePercent))),
+      prepareActive: job.prepareTransferAt !== undefined
+        && Date.now() - job.prepareTransferAt < PREPARE_TRANSFER_WINDOW_MS,
     })),
 )
 
@@ -134,6 +144,13 @@ function fmtSpeed(bytesPerSecond: number): string {
   return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`
 }
 
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
 async function invoke(method: string, jobId: string): Promise<void> {
   if (blocking.has(jobId)) return
   blocking.add(jobId)
@@ -148,27 +165,32 @@ async function invoke(method: string, jobId: string): Promise<void> {
   }
 }
 
-/** 速度由两次汇总的已下载字节差算出，主进程不再逐任务传进度 */
+/** 速度由两次汇总的网络字节差算出；缓存复用不增加这个计数 */
 function sampleSpeeds(): void {
   const now = Date.now()
   const speeds: Record<string, number> = {}
 
   for (const job of activeJobs.value) {
-    const loaded = job.stats.loaded
-    const downloading = job.stats.downloading > 0
+    const preparing = job.state === 'preparing'
+    const transferred = job.stats.transferred ?? 0
+    const receiving = preparing
+      ? job.prepareTransferAt !== undefined
+        && now - job.prepareTransferAt < PREPARE_TRANSFER_WINDOW_MS
+      : job.stats.downloading > 0
     const previous = speedSamples.get(job.id)
 
-    let speed = previous?.speed ?? 0
+    let speed = 0
     if (previous) {
+      speed = previous.speed
       const elapsed = (now - previous.at) / 1000
       if (elapsed > 0.2) {
-        const instant = Math.max(0, loaded - previous.loaded) / elapsed
+        const instant = Math.max(0, transferred - previous.transferred) / elapsed
         speed = previous.speed * 0.4 + instant * 0.6
       }
     }
-    if (!downloading) speed = 0
+    if (!receiving) speed = 0
 
-    speedSamples.set(job.id, { loaded, at: now, speed })
+    speedSamples.set(job.id, { transferred, at: now, speed })
     speeds[job.id] = speed
   }
 
@@ -224,12 +246,17 @@ onUnmounted(() => {
                 <span v-if="row.job.detail" class="mics-badge">{{ row.job.detail }}</span>
               </template>
               <template v-else>
-                <span class="mics-badge">{{ row.job.gameVersion }}</span>
+                <span v-if="row.job.kind === 'modpack'" class="mics-badge">整合包</span>
+                <span v-if="row.job.kind === 'modpack' && row.job.detail" class="mics-badge">
+                  {{ row.job.detail }}
+                </span>
+                <span v-if="row.job.gameVersion" class="mics-badge">{{ row.job.gameVersion }}</span>
                 <span v-if="row.job.loader" class="mics-badge">
                   {{ LOADER_LABELS[row.job.loader.kind] ?? row.job.loader.kind }}
                   {{ row.job.loader.version }}
                 </span>
                 <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
+                <span v-if="row.preparing" class="mics-badge mics-badge--accent">准备中</span>
               </template>
               <span v-if="isSuperseded(row.job)" class="mics-badge">旧记录</span>
             </div>
@@ -251,22 +278,43 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div v-if="row.preparing" class="progress-job__progress">
-            <div
-              class="progress-job__bar"
-              role="progressbar"
-              :aria-valuenow="row.preparePercent"
-              aria-valuemin="0"
-              aria-valuemax="100"
-            >
-              <div class="progress-job__bar-fill" :style="{ width: row.preparePercent + '%' }" />
+          <template v-if="row.preparing">
+            <div class="progress-job__progress">
+              <div
+                class="progress-job__bar"
+                :class="{ 'progress-job__bar--indeterminate': row.preparePercent === undefined }"
+                role="progressbar"
+                :aria-valuenow="row.preparePercent"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <div
+                  class="progress-job__bar-fill"
+                  :style="row.preparePercent === undefined ? undefined : { width: row.preparePercent + '%' }"
+                />
+              </div>
+              <span v-if="row.preparePercent !== undefined" class="progress-job__percent">
+                {{ row.preparePercent }}%
+              </span>
             </div>
-            <span class="progress-job__percent">{{ row.preparePercent }}%</span>
-          </div>
 
-          <div v-if="row.preparing" class="progress-job__preparing">
-            {{ row.job.note || '正在准备下载清单…' }}
-          </div>
+            <div class="progress-job__preparing">
+              {{ row.job.note || '正在准备下载清单…' }}
+            </div>
+
+            <div
+              v-if="row.prepareActive"
+              class="progress-job__stats"
+            >
+              <span v-if="row.job.prepareLoaded !== undefined" class="progress-stat">
+                已下载 <b>{{ fmtBytes(row.job.prepareLoaded) }}</b>
+                <template v-if="row.job.prepareTotal"> / {{ fmtBytes(row.job.prepareTotal) }}</template>
+              </span>
+              <span class="progress-stat progress-stat--speed">
+                下载速度 <b>{{ fmtSpeed(row.speed) }}</b>
+              </span>
+            </div>
+          </template>
 
           <template v-else>
             <div class="progress-job__progress">
@@ -314,7 +362,11 @@ onUnmounted(() => {
                 <span v-if="row.job.detail" class="mics-badge">{{ row.job.detail }}</span>
               </template>
               <template v-else>
-                <span class="mics-badge">{{ row.job.gameVersion }}</span>
+                <span v-if="row.job.kind === 'modpack'" class="mics-badge">整合包</span>
+                <span v-if="row.job.kind === 'modpack' && row.job.detail" class="mics-badge">
+                  {{ row.job.detail }}
+                </span>
+                <span v-if="row.job.gameVersion" class="mics-badge">{{ row.job.gameVersion }}</span>
                 <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
               </template>
               <span
@@ -433,6 +485,17 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--mics-accent);
   transition: width .3s ease;
+}
+
+/* 没有可度量进度的准备步骤（解析清单、解压覆盖文件）用不确定态，避免假装 100% */
+.progress-job__bar--indeterminate .progress-job__bar-fill {
+  width: 35%;
+  animation: progress-job-indeterminate 1.1s ease-in-out infinite;
+}
+
+@keyframes progress-job-indeterminate {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(320%); }
 }
 
 .progress-job__percent {

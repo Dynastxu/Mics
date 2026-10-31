@@ -1,6 +1,7 @@
 import type {
   ModDependency,
   ModLoader,
+  ModProjectKind,
   ModSearchRequest,
   ModSource,
   ModSummary,
@@ -9,6 +10,10 @@ import type {
 } from '@mics/sdk'
 import { isModLoader } from '@mics/sdk'
 import { categoryLabelOf, MOD_LOADER_CATEGORY_KEYS, modrinthCategoryOf } from './categories'
+import {
+  modpackCategoryLabelOf,
+  modpackModrinthCategoryOf,
+} from '../modpacks/categories'
 import { endpoint, requestJson, withParams } from './http'
 
 /**
@@ -98,14 +103,19 @@ export interface ModrinthIdentified {
 /** 一次最多取多少条；Modrinth 的 limit 上限是 100 */
 const MAX_LIMIT = 100
 
-function hitSummary(source: ModSource, hit: ModrinthSearchHit): ModSummary | null {
+function hitSummary(
+  source: ModSource,
+  hit: ModrinthSearchHit,
+  kind: ModProjectKind,
+): ModSummary | null {
   const projectId = typeof hit.project_id === 'string' ? hit.project_id : ''
   if (!projectId) return null
   const slug = hit.slug || projectId
+  const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : categoryLabelOf
   const categories = [...new Set(
     (hit.display_categories ?? hit.categories ?? [])
       .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
-      .map(categoryLabelOf),
+      .map(labelOf),
   )]
 
   return {
@@ -123,7 +133,7 @@ function hitSummary(source: ModSource, hit: ModrinthSearchHit): ModSummary | nul
     follows: hit.follows ?? 0,
     categories,
     updated: hit.date_modified ?? '',
-    url: `https://modrinth.com/mod/${encodeURIComponent(slug)}`,
+    url: `https://modrinth.com/${kind}/${encodeURIComponent(slug)}`,
   }
 }
 
@@ -132,12 +142,15 @@ export async function searchModrinth(
   request: ModSearchRequest,
   signal: AbortSignal,
   limit: number,
+  kind: ModProjectKind = 'mod',
 ): Promise<{ items: ModSummary[]; total: number }> {
-  const facets: string[][] = [['project_type:mod']]
+  const facets: string[][] = [[`project_type:${kind}`]]
   if (request.gameVersion) facets.push([`versions:${request.gameVersion}`])
   if (request.loader !== 'all') facets.push([`categories:${request.loader}`])
   if (request.category) {
-    const category = modrinthCategoryOf(request.category)
+    const category = kind === 'modpack'
+      ? modpackModrinthCategoryOf(request.category)
+      : modrinthCategoryOf(request.category)
     if (!category) return { items: [], total: 0 }
     facets.push([`categories:${category}`])
   }
@@ -162,7 +175,7 @@ export async function searchModrinth(
     const data = response.hits ?? []
     if (typeof response.total_hits === 'number') total = response.total_hits
     for (const hit of data) {
-      const summary = hitSummary(source, hit)
+      const summary = hitSummary(source, hit, kind)
       if (summary) items.push(summary)
     }
     if (data.length < pageSize) break
@@ -285,14 +298,19 @@ function versionOf(
   }
 }
 
-function projectSummary(source: ModSource, project: ModrinthProject): ModSummary | null {
+function projectSummary(
+  source: ModSource,
+  project: ModrinthProject,
+  kind: ModProjectKind = 'mod',
+): ModSummary | null {
   const projectId = typeof project.id === 'string' ? project.id : ''
   if (!projectId) return null
   const slug = project.slug || projectId
+  const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : categoryLabelOf
   const categories = [...new Set(
     (project.categories ?? [])
       .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
-      .map(categoryLabelOf),
+      .map(labelOf),
   )]
 
   return {
@@ -310,7 +328,7 @@ function projectSummary(source: ModSource, project: ModrinthProject): ModSummary
     follows: project.follows ?? 0,
     categories,
     updated: project.date_modified ?? '',
-    url: `https://modrinth.com/mod/${encodeURIComponent(slug)}`,
+    url: `https://modrinth.com/${kind}/${encodeURIComponent(slug)}`,
   }
 }
 
@@ -345,12 +363,13 @@ export async function projectModrinth(
   source: ModSource,
   projectId: string,
   signal: AbortSignal,
+  kind: ModProjectKind = 'mod',
 ): Promise<ModSummary> {
   const project = await requestJson<ModrinthProject>(
     endpoint(source.api, `project/${encodeURIComponent(projectId)}`),
     { signal },
   )
-  const summary = projectSummary(source, project)
+  const summary = projectSummary(source, project, kind)
   if (!summary) throw new Error('Modrinth 没有返回有效的项目信息')
   const author = await projectAuthor(source, project.team, signal)
   return { ...summary, author }

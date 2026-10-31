@@ -142,6 +142,17 @@ export const MOD_LOADERS = ['fabric', 'forge', 'neoforge', 'quilt'] as const
 
 export type ModLoader = (typeof MOD_LOADERS)[number]
 
+/**
+ * 目录项目类型。
+ *
+ * Mod 与整合包使用同一套 Modrinth / CurseForge 项目接口，只是搜索时的
+ * `project_type` / `classId` 不同；复用同一份摘要与版本契约，页面无需
+ * 为整合包再造一套「项目 / 文件」类型。
+ */
+export const MOD_PROJECT_KINDS = ['mod', 'modpack'] as const
+
+export type ModProjectKind = (typeof MOD_PROJECT_KINDS)[number]
+
 export const MOD_LOADER_LABELS: Record<ModLoader, string> = {
   fabric: 'Fabric',
   forge: 'Forge',

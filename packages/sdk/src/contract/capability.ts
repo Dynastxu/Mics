@@ -105,6 +105,13 @@ export interface FileTransferSpec {
    * 的请求并返回 403，所以调用方必须把品牌头透传下来。
    */
   headers?: Record<string, string>
+  /**
+   * 单文件最多使用多少条并行 Range 连接；1 或省略表示单连接。
+   *
+   * 只有文件大小已知且服务端支持 `Accept-Ranges: bytes` 时实现才会启用，
+   * 不支持时实现必须自动退回单连接。
+   */
+  segments?: number
   onProgress?: (progress: TransferProgress) => void
   /** 服务端忽略 Range、从头下载时通知调用方重置进度 */
   onRestart?: () => void

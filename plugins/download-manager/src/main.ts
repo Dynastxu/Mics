@@ -4,7 +4,7 @@ import path from 'node:path'
 import https from 'node:https'
 import http from 'node:http'
 import os from 'node:os'
-import { copyFile, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { app } from 'electron'
 import type { Context } from 'cordis'
 import {
@@ -20,9 +20,12 @@ import { findJava } from '@mics/java'
 import {
   DEFAULT_DOWNLOAD_CACHE_LIMIT,
   DEFAULT_DOWNLOAD_CONCURRENCY,
+  DEFAULT_DOWNLOAD_SEGMENTS,
+  DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD,
   DEFAULT_DOWNLOAD_SOURCES,
   DEFAULT_LOADER_SOURCES,
   DEFAULT_MOD_SOURCES,
+  DOWNLOAD_SEGMENT_THRESHOLD,
   FILE_TRANSFER,
   INSTANCE_STATE_FILE,
   LOADER_LABELS,
@@ -52,12 +55,14 @@ import type {
   InstallStartResult,
   LoaderSource,
   LoaderSourceKind,
+  LoaderKind,
   LoaderVersion,
   ModCategory,
   ModIdentifyFile,
   ModIdentifyRequest,
   ModIdentity,
   ModInstallRequest,
+  ModpackInstallRequest,
   ModProjectRequest,
   ModSearchRequest,
   ModSearchResult,
@@ -77,9 +82,17 @@ import {
   listModVersions,
   loadModProject,
   modSourceReady,
+  resolveModSource,
   searchMods,
 } from './mods'
-import { createFileTransfer, type FileTransferOptions } from './transfer'
+import { listModpackCategories } from './modpacks/categories'
+import {
+  extractModpackOverrides,
+  modpackArchiveName,
+  parseModpackArchive,
+} from './modpacks/archive'
+import { resolveCurseforgeModpackFiles } from './modpacks/curseforgeFiles'
+import { createFileTransfer, transferStatePath, transferStateProgress, type FileTransferOptions } from './transfer'
 import { listLoaderVersions, prepareLoaderInstall, safeLoaderKind } from './loaders'
 import { tailLastLine } from './loaders/fs'
 import {
@@ -358,6 +371,11 @@ export function apply(ctx: Context): void {
 
   /** 已受理但尚未落盘的实例名：并发提交同名安装时先占位 */
   const reservedInstanceNames = new Set<string>()
+
+  /** 整合包覆盖文件在实例内的暂存目录；完成安装后合并并删除 */
+  const MODPACK_OVERRIDES_DIR = '.mics-modpack-overrides'
+  /** 覆盖文件不得改写的实例根文件（实例元数据与版本档案） */
+  const RESERVED_INSTANCE_ROOT_FILES = new Set(['instance.json', INSTANCE_STATE_FILE])
 
   /** Windows 文件名不区分大小写，重名判断也要一致 */
   function instanceKey(name: string): string {
@@ -641,9 +659,37 @@ export function apply(ctx: Context): void {
     return path.join(cacheRoot, 'url', key.slice(0, 2), key)
   }
 
+  /** 统计下载缓存占用；缓存目录不存在时按 0 处理 */
+  async function cacheUsage(): Promise<{ bytes: number; files: number }> {
+    let bytes = 0
+    let files = 0
+    const stack = [cacheRoot]
+    while (stack.length > 0) {
+      const dir = stack.pop()
+      if (!dir) continue
+      let entries
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          stack.push(full)
+        } else if (entry.isFile()) {
+          try {
+            bytes += (await stat(full)).size
+            files += 1
+          } catch { /* 统计期间被删除 */ }
+        }
+      }
+    }
+    return { bytes, files }
+  }
+
   /** 缓存里的文件能否直接复用：有摘要按摘要，没有摘要时至少要是完整的 jar */
-  async function cachedFileUsable(file: string, sha1: string, target: string): Promise<boolean> {
-    let info
+  async function cachedFileUsable(file: string, sha1: string, target: string): Promise<boolean> {    let info
     try {
       info = await stat(file)
     } catch {
@@ -671,14 +717,43 @@ export function apply(ctx: Context): void {
     return Math.max(1, Math.min(128, Number(raw) || fallback))
   }
 
+  /**
+   * 单个文件允许的 Range 连接数。
+   *
+   * 小文件多连接只会增加握手与排队开销，因此只有达到阈值的文件才分段；
+   * `auto` 固定用 4 条连接，数字配置受 8 条上限约束。服务端不支持 Range
+   * 时传输层会自己回退单连接，这里不需要探测。
+   */
+  function segmentsFor(task: DownloadTask): number {
+    if (task.size < segmentThresholdBytes()) return 1
+    const raw = ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS)
+    if (raw === '1' || raw === 'off') return 1
+    if (!raw || raw === 'auto') return 4
+    const requested = Math.round(Number(raw))
+    return Number.isFinite(requested) ? Math.max(2, Math.min(8, requested)) : 4
+  }
+
+  /** 分段阈值（字节）；设置页按 MB 存字符串，读取时兜底并收窄范围 */
+  function segmentThresholdBytes(): number {
+    const fallbackMb = Math.round(DOWNLOAD_SEGMENT_THRESHOLD / 1024 / 1024)
+    const raw = Number(
+      ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD),
+    )
+    const mb = Number.isFinite(raw) && raw > 0 ? raw : fallbackMb
+    return Math.max(1, Math.min(1024, Math.round(mb))) * 1024 * 1024
+  }
+
   function ensureDir(dir: string): void {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   }
 
-  /** .part 已落盘的字节数；文件不存在时为 0 */
+  /** .part 已落盘的字节数；分段下载时以元数据里的实际进度为准 */
   function partSizeOf(savePath: string): number {
+    const partPath = `${savePath}.part`
+    const segmented = transferStateProgress(partPath)
+    if (segmented !== null) return segmented
     try {
-      return statSync(savePath + '.part').size
+      return statSync(partPath).size
     } catch {
       return 0
     }
@@ -815,6 +890,8 @@ export function apply(ctx: Context): void {
     let cancelled = 0
     let loaded = 0
     let bytes = 0
+    /** 真正走网络的字节；缓存复用只改 loaded，不计入这里 */
+    let transferred = 0
 
     for (const taskId of job.taskIds) {
       const task = tasks.get(taskId)
@@ -839,6 +916,7 @@ export function apply(ctx: Context): void {
           waiting += 1
       }
       loaded += task.progress.loaded
+      transferred += task.transferred ?? 0
       bytes += task.progress.total > 0 ? task.progress.total : Math.max(task.size, 0)
     }
 
@@ -858,6 +936,7 @@ export function apply(ctx: Context): void {
       cancelled,
       loaded,
       bytes,
+      transferred: transferred + (job.prepareTransferred ?? 0),
       percent: Math.min(100, Math.max(0, Math.round(measured))),
     }
   }
@@ -922,6 +1001,10 @@ export function apply(ctx: Context): void {
       error: job.error,
       note: job.note,
       preparePercent: job.preparePercent,
+      // 归档传输只在准备阶段有意义；就绪后不再把旧字节数发给下载页
+      prepareLoaded: job.state === 'preparing' ? job.prepareLoaded : undefined,
+      prepareTotal: job.state === 'preparing' ? job.prepareTotal : undefined,
+      prepareTransferAt: job.state === 'preparing' ? job.prepareTransferAt : undefined,
       createdAt: job.createdAt,
       finished: isFinishedJob(job, stats),
       stats,
@@ -946,6 +1029,54 @@ export function apply(ctx: Context): void {
     if (!isGameJob(job)) return true
     const latest = latestJobFor(job.instanceName)
     return !latest || latest.id === job.id
+  }
+
+  /**
+   * 把覆盖文件暂存目录合并进实例。
+   *
+   * 只复制文件、不整目录替换：实例里已经有下载好的 Mod / 配置时，覆盖文件
+   * 只应补上或替换同名项，不能把其它文件一起删掉。
+   */
+  async function mergeOverrides(
+    source: string,
+    target: string,
+    reservedRoot: Set<string>,
+    depth = 0,
+  ): Promise<void> {
+    const entries = await readdir(source, { withFileTypes: true })
+    for (const entry of entries) {
+      if (depth === 0 && reservedRoot.has(entry.name)) continue
+      const from = path.join(source, entry.name)
+      const to = path.join(target, entry.name)
+      if (entry.isDirectory()) {
+        ensureDir(to)
+        await mergeOverrides(from, to, reservedRoot, depth + 1)
+      } else if (entry.isFile()) {
+        ensureDir(path.dirname(to))
+        await copyFile(from, to)
+      }
+    }
+  }
+
+  /** 整合包任务完成前的收尾：合并覆盖文件，失败时不能写 ready 标记 */
+  async function finalizeModpackJob(job: InstallJob): Promise<void> {
+    const meta = job.modpack
+    if (!meta?.overridesDir) return
+    const staging = meta.overridesDir
+    const instanceDir = instanceDirOf(job.instanceName)
+    if (!existsSync(staging)) {
+      delete meta.overridesDir
+      return
+    }
+
+    const reserved = new Set([
+      ...RESERVED_INSTANCE_ROOT_FILES,
+      `${installedVersionId(job)}.json`,
+    ])
+    await mergeOverrides(staging, instanceDir, reserved)
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined)
+    delete meta.overridesDir
+    log.info('整合包「%s」的覆盖文件已合并进实例', meta.name || job.instanceName)
   }
 
   /**
@@ -999,6 +1130,18 @@ export function apply(ctx: Context): void {
           log.warn('安装「%s」的实例文件已被删除，job %s 标记为失败', job.instanceName, job.id)
           persistRecords(true)
           return
+        }
+        if (job.kind === 'modpack') {
+          try {
+            // 覆盖文件必须在所有 Mod 下载完成后合并，才能覆盖同名文件
+            await finalizeModpackJob(job)
+          } catch (cause) {
+            job.state = 'failed'
+            job.error = `合并整合包覆盖文件失败：${toError(cause).message}`
+            log.error('整合包「%s」合并覆盖文件失败：%s', job.instanceName, job.error)
+            persistRecords(true)
+            return
+          }
         }
         try {
           await writeInstallState(instanceDir, installRecordOf(job, 'ready'))
@@ -1325,20 +1468,33 @@ export function apply(ctx: Context): void {
     size = 0,
     signal?: AbortSignal,
     onProgress?: (progress: TransferProgress) => void,
+    options: {
+      direct?: boolean
+      useCache?: boolean
+      /** 本次调用真正从网络收到的字节增量；命中缓存直接返回时不会触发 */
+      onBytes?: (delta: number) => void
+    } = {},
   ): Promise<void> {
-    const candidates = downloadCandidates(url)
+    const candidates: DownloadCandidate[] = options.direct
+      ? [{ key: `direct:${url}`, label: '直链', url, category: 'other' }]
+      : downloadCandidates(url)
     if (candidates.length === 0) throw new Error('没有可用的下载源')
     if (signal?.aborted) throw new Error('已取消')
 
+    const useCache = options.useCache !== false
     // 以前这里只写缓存不读缓存：取消一次重试就得把安装器、依赖库重新下一遍
-    const cached = sha1 ? cachePath(sha1) : urlCachePath(url)
-    if (await cachedFileUsable(cached, sha1, target)) {
-      ensureDir(path.dirname(target))
-      await copyFile(cached, target)
+    const cached = !useCache ? '' : sha1 ? cachePath(sha1) : urlCachePath(url)
+    const sameFile = Boolean(cached)
+      && path.resolve(cached) === path.resolve(target)
+    if (cached && await cachedFileUsable(cached, sha1, target)) {
+      if (!sameFile) {
+        ensureDir(path.dirname(target))
+        await copyFile(cached, target)
+      }
       onProgress?.({ loaded: 1, total: 1 })
       return
     }
-    await rm(cached, { force: true }).catch(() => undefined)
+    if (cached) await rm(cached, { force: true }).catch(() => undefined)
 
     ensureDir(path.dirname(target))
 
@@ -1348,6 +1504,8 @@ export function apply(ctx: Context): void {
     let settled = false
     /** 进度取各源里最大的那个：多个源同时下，不能让进度条来回跳 */
     let reported = 0
+    /** 首帧可能包含上次中断留下的 .part 字节；那不是本次网络流量，不能算进速度 */
+    let byteBaselineSet = false
 
     // 取消安装时立刻掐断所有在途请求，而不是等它们跑完
     const abortAll = (): void => {
@@ -1367,7 +1525,10 @@ export function apply(ctx: Context): void {
         agents: { http: httpAgent, https: httpsAgent },
         onProgress: (progress) => {
           if (settled || progress.loaded <= reported) return
+          const previous = reported
           reported = progress.loaded
+          if (byteBaselineSet) options.onBytes?.(progress.loaded - previous)
+          else byteBaselineSet = true
           onProgress?.(progress)
         },
       })
@@ -1402,8 +1563,12 @@ export function apply(ctx: Context): void {
         throw toError(cause)
       }
 
-      const cacheTarget = sha1 ? cachePath(sha1) : urlCachePath(url)
-      if (!existsSync(cacheTarget)) {
+      const cacheTarget = useCache
+        ? sha1 ? cachePath(sha1) : urlCachePath(url)
+        : ''
+      const sameCacheTarget = Boolean(cacheTarget)
+        && path.resolve(cacheTarget) === path.resolve(target)
+      if (cacheTarget && !sameCacheTarget && !existsSync(cacheTarget)) {
         try {
           ensureDir(path.dirname(cacheTarget))
           await copyFile(target, cacheTarget)
@@ -1525,27 +1690,26 @@ export function apply(ctx: Context): void {
   function createLoaderEnvironment(
     kind: LoaderSourceKind,
     signal: AbortSignal,
-    report?: (note: string, percent?: number) => void,
+    progress?: PrepareProgress,
   ): LoaderEnvironment {
     const sources = enabledSourcesOf(loadLoaderSources(), kind)
     /** 加载器自己的日志文本就是「当前步骤」 */
     let step = ''
 
     const publish = (loaded?: number, total?: number): void => {
-      if (!report || !step) return
+      if (!progress || !step) return
       if (loaded === undefined || total === undefined) {
-        report(step)
+        progress.report(step)
         return
       }
-      if (total > 0) report(step, (loaded / total) * 100)
-      else report(`${step} ${(loaded / 1048576).toFixed(1)} MB`)
+      progress.report(step, total > 0 ? (loaded / total) * 100 : undefined)
     }
 
     return {
       signal,
       sources,
       report: (note: string, percent?: number) => {
-        report?.(note, percent)
+        progress?.report(note, percent)
       },
       log: (level, message) => {
         if (level === 'warn') log.warn('[%s] %s', LOADER_LABELS[kind], message)
@@ -1563,15 +1727,25 @@ export function apply(ctx: Context): void {
       fetchJsonUrl: <T>(url: string): Promise<T> => {
         return firstSuccessful([url], signal, (text) => JSON.parse(text) as T)
       },
-      download: (url, target, sha1 = '', size = 0, options = {}) =>
-        downloadFileNow(
+      download: (url, target, sha1 = '', size = 0, options = {}) => {
+        // 预取依赖库不逐文件上报：清掉上一个文件的字节显示，避免看着像没变
+        if (options.reportProgress === false) progress?.clearTransfer()
+        return downloadFileNow(
           url,
           target,
           sha1,
           size,
           signal,
-          options.reportProgress === false ? undefined : ({ loaded, total }) => publish(loaded, total),
-        ),
+          options.reportProgress === false
+            ? undefined
+            : ({ loaded, total }) => {
+                progress?.transfer(loaded, total)
+                publish(loaded, total)
+              },
+          // 预取依赖库时关闭逐文件百分比（避免多个文件来回跳），但仍要统计网络字节
+          { onBytes: (delta) => progress?.bytes(delta) },
+        )
+      },
       runJava: async (spec) => {
         publish()
         // 安装器没有进度接口：把它的日志末行和已用时间报给界面，同时用停滞超时兜底
@@ -1582,7 +1756,7 @@ export function apply(ctx: Context): void {
             if (line) lastLine = line
             const seconds = Math.floor((Date.now() - started) / 1000)
             const detail = lastLine ? `：${lastLine}` : ''
-            report?.(`${step || '运行安装器'}（已 ${seconds} 秒）${detail}`)
+            progress?.report(`${step || '运行安装器'}（已 ${seconds} 秒）${detail}`)
           }).catch(() => undefined)
         }, 1500)
         try {
@@ -1599,9 +1773,8 @@ export function apply(ctx: Context): void {
     const active = [...tasks.values()].filter((t) => t.state === 'downloading').length
     const slots = maxConcurrency() - active
     if (slots <= 0) return
-    const pending = [...tasks.values()].filter(
-      (task) => task.state === 'pending' && !pausedJobs.has(task.installId),
-    )
+    const pending = [...tasks.values()]
+      .filter((task) => task.state === 'pending' && !pausedJobs.has(task.installId))
     for (const task of pending.slice(0, slots)) {
       void startDownload(task)
     }
@@ -1614,6 +1787,9 @@ export function apply(ctx: Context): void {
     task.progress.speed = 0
     for (const file of files) {
       await rm(file, { force: true }).catch(() => undefined)
+      if (file.endsWith('.part')) {
+        await rm(transferStatePath(file), { force: true }).catch(() => undefined)
+      }
     }
     return true
   }
@@ -1638,10 +1814,20 @@ export function apply(ctx: Context): void {
     const pausedNow = (): boolean => pausedJobs.has(task.installId) || task.state === 'paused'
 
     // Mod 任务的目标在实例目录内；实例可能在排队期间被用户删除，
-    // 不能靠 ensureDir 把空目录重新建出来。
+    // 不能靠 ensureDir 把空目录重新建出来。整合包任务同理：它的目标全在实例内。
     if (task.direct) {
       const job = jobs.get(task.installId)
-      if (job && !isGameJob(job)) {
+      if (job?.kind === 'modpack') {
+        if (!existsSync(instanceDirOf(job.instanceName))) {
+          task.state = 'failed'
+          task.error = '目标实例已被删除'
+          task.progress.speed = 0
+          persistRecords()
+          scheduleLoop()
+          void settleJob(task.installId)
+          return
+        }
+      } else if (job && !isGameJob(job)) {
         const instanceDir = path.dirname(path.dirname(task.savePath))
         if (!existsSync(instanceDir)) {
           task.state = 'failed'
@@ -1754,10 +1940,15 @@ export function apply(ctx: Context): void {
         // 没有摘要的文件不做断点续传：服务端忽略 Range 时会把完整文件追加到
         // 残缺的 .part 后面，得到结构损坏却「下载完成」的文件
         size: task.sha1 && task.size > 0 ? task.size : 0,
+        // 大文件才给多连接；服务端不支持 Range 时传输层自动回退单连接
+        segments: segmentsFor(task),
         headers: downloadHeaders(),
         agents: { http: httpAgent, https: httpsAgent },
         onProgress: ({ loaded, total }) => {
           if (!current()) return
+          // 只把前进的字节算作本次网络流量；缓存复制、共享库复用不会走到这里
+          const previous = task.progress.loaded
+          task.transferred = (task.transferred ?? 0) + (loaded >= previous ? loaded - previous : loaded)
           task.progress.loaded = loaded
           if (total > 0) {
             task.progress.total = total
@@ -1815,6 +2006,7 @@ export function apply(ctx: Context): void {
         if (result.digest !== task.sha1) {
           // 分片来自损坏的镜像或残留文件，删掉后从下一个源重新开始
           await rm(partPath, { force: true }).catch(() => undefined)
+          await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
           reportSource(candidate.key, candidate.category, false, candidate.label)
           if (ci < order.length - 1) continue
           task.state = 'failed'
@@ -1831,6 +2023,7 @@ export function apply(ctx: Context): void {
       ) {
         // 没有摘要的 jar 也要拒绝镜像的错误页 / 空文件
         await rm(partPath, { force: true }).catch(() => undefined)
+        await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
         reportSource(candidate.key, candidate.category, false, candidate.label)
         if (ci < order.length - 1) continue
         task.state = 'failed'
@@ -1913,7 +2106,9 @@ export function apply(ctx: Context): void {
     task.progress.speed = 0
     const transfer = transfers.get(taskId)
     if (transfer) await transfer.stop().catch(() => undefined)
-    await rm(task.savePath + '.part', { force: true }).catch(() => undefined)
+    const partPath = task.savePath + '.part'
+    await rm(partPath, { force: true }).catch(() => undefined)
+    await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
   }
 
   function nextTaskId(): string {
@@ -2150,7 +2345,13 @@ export function apply(ctx: Context): void {
 
   /** 登记下载任务；安装与补全共用 */
   function enqueueTasks(job: InstallJob, specs: TaskSpec[], paused: boolean): void {
-    for (const spec of specs) {
+    // 大文件优先：并发充足时先啃硬骨头，尾部的剩余任务更小，
+    // 不会出现「最后几个大文件各自只有一条连接」的长尾。
+    // 排序只做一次；之后调度按 Map 插入顺序取任务，避免每次完成都重排。
+    const ordered = [...specs].sort(
+      (a, b) => Math.max(b.size, 0) - Math.max(a.size, 0),
+    )
+    for (const spec of ordered) {
       const task: DownloadTask = {
         id: nextTaskId(),
         installId: job.id,
@@ -2175,6 +2376,126 @@ export function apply(ctx: Context): void {
   }
 
   /**
+   * 准备游戏本体（原版或加载器）并写入版本档案。
+   *
+   * 原版安装与整合包安装共用：整合包只是先解析归档拿到游戏版本 / 加载器，
+   * 之后的客户端、依赖库、资源索引生成逻辑完全一致。
+   */
+  async function prepareGameVersion(
+    job: InstallJob,
+    gameVersion: string,
+    loader: InstallJob['loader'],
+    instanceDir: string,
+    signal: AbortSignal,
+    progress: PrepareProgress,
+    isCancelled: () => boolean,
+  ): Promise<{ versionId: string; versionDetail: MojangVersionDetail; onlyMissing: boolean }> {
+    progress.report('获取版本信息')
+    const parent = await fetchVersionDetail(gameVersion, signal)
+    if (isCancelled()) throw new Error('已取消')
+
+    let versionId = gameVersion
+    let versionDetail: MojangVersionDetail = parent
+    let onlyMissing = false
+
+    if (loader) {
+      const kind = safeLoaderKind(loader.kind)
+      if (!kind) throw new Error(`不支持的加载器：${String(loader.kind)}`)
+      const loaderVersion = safeVersionId(loader.version)
+      if (!loaderVersion) throw new Error('无效的加载器版本')
+
+      // 安装器类加载器在准备阶段就把文件放进实例；profile 类只需要版本档案
+      const plan = await prepareLoaderInstall(
+        kind,
+        {
+          gameVersion,
+          loaderVersion,
+          instanceDir,
+          librariesDir: sharedLibrariesDir(dataDir),
+          parent,
+        },
+        createLoaderEnvironment(kind, signal, progress),
+      )
+      if (isCancelled()) throw new Error('已取消')
+
+      versionId = safeVersionId(plan.versionId) ?? ''
+      if (!versionId) throw new Error('加载器返回了无效的版本 id')
+      versionDetail = mergeVersion(parent, plan.version)
+      onlyMissing = plan.mode === 'installer'
+      // 安装器可能改写过版本 jar，不能再按原版 sha1 校验
+      if (onlyMissing) versionDetail = stripClientChecksum(versionDetail)
+      // 版本文件与版本目录同名，启动时按 id 找 jar / 版本文件
+      versionDetail = { ...versionDetail, id: versionId }
+      job.loader = { kind, version: loaderVersion }
+      log.info(
+        '加载器 %s %s 已就绪：实例版本 %s',
+        LOADER_LABELS[kind],
+        loaderVersion,
+        versionId,
+      )
+    }
+
+    job.versionId = versionId
+    // 实例目录本身就是版本目录：版本档案与客户端 jar 直接放在实例根
+    ensureDir(instanceDir)
+    await writeFile(
+      instanceVersionJson(instanceDir, versionId),
+      JSON.stringify(versionDetail, null, 2),
+      'utf8',
+    )
+    return { versionId, versionDetail, onlyMissing }
+  }
+
+  interface PrepareProgress {
+    /** 更新步骤文字与当前步骤的百分比（0–100） */
+    report: (note: string, percent?: number) => void
+    /** 记录归档这类单文件传输的当前位置，供下载页显示已下载字节 */
+    transfer: (loaded: number, total: number) => void
+    /** 清掉单文件字节显示；批量下载不逐文件上报时使用 */
+    clearTransfer: () => void
+    /** 累加真正从网络收到的字节；缓存复制、共享库复用不会调用 */
+    bytes: (delta: number) => void
+  }
+
+  /**
+   * 准备阶段的上报器。
+   *
+   * 百分比是「当前步骤」的进度（和 PCL 的分步百分比一致），换到一个没有
+   * 可度量进度的步骤时清空：否则进度条会停在上一步的 100%，看起来像卡死。
+   * 字节与传输时刻单独记录：下载页据此在任意「下载…」步骤显示速度，并在
+   * 传输停止后自动收起。
+   */
+  function createPrepareProgress(job: InstallJob): PrepareProgress {
+    return {
+      report(note, percent) {
+        const stepChanged = job.note !== note
+        job.note = note
+        if (percent !== undefined && !Number.isNaN(percent)) {
+          job.preparePercent = Math.max(0, Math.min(100, Math.round(percent)))
+          return
+        }
+        if (stepChanged) job.preparePercent = undefined
+      },
+      transfer(loaded, total) {
+        // downloadFileNow 命中缓存时用 1/1 表示完成，不是真实传输，不能显示成 1 B
+        if (loaded <= 1 && total <= 1) return
+        job.prepareLoaded = loaded
+        if (total > 0) job.prepareTotal = total
+        job.prepareTransferAt = Date.now()
+      },
+      clearTransfer() {
+        job.prepareLoaded = undefined
+        job.prepareTotal = undefined
+      },
+      bytes(delta) {
+        if (delta <= 0) return
+        job.prepareTransferred = (job.prepareTransferred ?? 0) + delta
+        job.prepareTransferAt = Date.now()
+      },
+    }
+  }
+
+  /**
    * 后台准备安装：拉版本详情、资源索引与清单，再登记下载任务。
    *
    * 它不阻塞 `install/start`：界面可以先跳到下载页，任务就绪后自动出现。
@@ -2186,15 +2507,7 @@ export function apply(ctx: Context): void {
     const abort = new AbortController()
     prepAborts.set(job.id, abort)
     const isCancelled = (): boolean => cancelledJobs.has(job.id)
-    /**
-     * 准备阶段的进度：文本进下载页的步骤说明，百分比进同一个进度条。
-     * 百分比是「当前步骤」的进度（和 PCL 的分步百分比一致），换步骤时重新计。
-     */
-    const report = (note: string, percent?: number): void => {
-      job.note = note
-      if (percent === undefined || Number.isNaN(percent)) return
-      job.preparePercent = Math.max(0, Math.min(100, Math.round(percent)))
-    }
+    const progress = createPrepareProgress(job)
     let createdInstance = false
     log.info('开始准备安装「%s」（版本 %s，job %s）', job.instanceName, request.gameVersion, job.id)
 
@@ -2205,73 +2518,26 @@ export function apply(ctx: Context): void {
       await writeInstallState(instanceDir, installRecordOf(job, 'installing'))
       if (isCancelled()) return
 
-      report('获取版本信息')
-      const parent = await fetchVersionDetail(request.gameVersion, abort.signal)
-      if (isCancelled()) return
-
-      const loader = request.loader
-      let versionId = request.gameVersion
-      let versionDetail: MojangVersionDetail = parent
-      let onlyMissing = false
-
-      if (loader) {
-        const kind = safeLoaderKind(loader.kind)
-        if (!kind) throw new Error(`不支持的加载器：${String(loader.kind)}`)
-        const loaderVersion = safeVersionId(loader.version)
-        if (!loaderVersion) throw new Error('无效的加载器版本')
-
-        // 安装器类加载器在准备阶段就把文件放进实例；profile 类只需要版本档案
-        const plan = await prepareLoaderInstall(
-          kind,
-          {
-            gameVersion: request.gameVersion,
-            loaderVersion,
-            instanceDir,
-            librariesDir: sharedLibrariesDir(dataDir),
-            parent,
-          },
-          createLoaderEnvironment(kind, abort.signal, report),
-        )
-        if (isCancelled()) return
-
-        versionId = safeVersionId(plan.versionId) ?? ''
-        if (!versionId) throw new Error('加载器返回了无效的版本 id')
-        versionDetail = mergeVersion(parent, plan.version)
-        onlyMissing = plan.mode === 'installer'
-        // 安装器可能改写过版本 jar，不能再按原版 sha1 校验
-        if (onlyMissing) versionDetail = stripClientChecksum(versionDetail)
-        // 版本文件与版本目录同名，启动时按 id 找 jar / 版本文件
-        versionDetail = { ...versionDetail, id: versionId }
-        job.loader = { kind, version: loaderVersion }
-        log.info(
-          '加载器 %s %s 已就绪：实例版本 %s',
-          LOADER_LABELS[kind],
-          loaderVersion,
-          versionId,
-        )
-      }
-
-      job.versionId = versionId
-      // 实例目录本身就是版本目录：版本档案与客户端 jar 直接放在实例根
-      const layout = resolveInstanceLayout(dataDir, instanceDir)
-
-      // 2. version.json：加载器版本已与父版本合并成自包含文件，
-      //    启动与补全只需要读这一个文件。
-      ensureDir(layout.instanceDir)
-      await writeFile(
-        instanceVersionJson(instanceDir, versionId),
-        JSON.stringify(versionDetail, null, 2),
-        'utf8',
+      const prepared = await prepareGameVersion(
+        job,
+        request.gameVersion,
+        request.loader,
+        instanceDir,
+        abort.signal,
+        progress,
+        isCancelled,
       )
       if (isCancelled()) return
 
-      report('生成下载清单')
+      const layout = resolveInstanceLayout(dataDir, instanceDir)
+
+      progress.report('生成下载清单')
       const taskSpecs = await collectTaskSpecs(
-        versionDetail,
+        prepared.versionDetail,
         layout,
-        versionId,
+        prepared.versionId,
         abort.signal,
-        { onlyMissing },
+        { onlyMissing: prepared.onlyMissing },
       )
       if (isCancelled()) return
 
@@ -2322,6 +2588,217 @@ export function apply(ctx: Context): void {
         }
       }
       // 版本目录此时已落盘；后续重名判断交给目录检查
+      reservedInstanceNames.delete(nameKey)
+      persistRecords(true)
+    }
+  }
+
+  /**
+   * 整合包安装的准备阶段。
+   *
+   * 顺序很重要：先下载归档并解析清单拿到「真实」游戏版本 / 加载器，再复用
+   * 原版安装的准备逻辑；包内文件与游戏文件一起进同一个下载队列，覆盖文件
+   * 暂存到实例内，等所有任务完成后再合并（避免同名文件被下载结果覆盖）。
+   */
+  async function prepareModpackJob(job: InstallJob, request: ModpackInstallRequest): Promise<void> {
+    const instanceDir = instanceDirOf(job.instanceName)
+    const nameKey = instanceKey(job.instanceName)
+    const abort = new AbortController()
+    prepAborts.set(job.id, abort)
+    const isCancelled = (): boolean => cancelledJobs.has(job.id)
+    const progress = createPrepareProgress(job)
+    let createdInstance = false
+    log.info('开始准备整合包安装「%s」（实例 %s，job %s）', request.title || request.file.fileName, job.instanceName, job.id)
+
+    try {
+      createdInstance = true
+      // 先占住实例目录：归档可能很大，下载期间启动页也应该看到「安装中」
+      await writeInstallState(instanceDir, { state: 'installing', jobId: job.id })
+      progress.report('下载整合包', 0)
+      // 有摘要时直接以缓存为落点，避免同一个大归档在磁盘上存两份
+      const archive = request.file.sha1
+        ? cachePath(request.file.sha1)
+        : path.join(
+            cacheRoot,
+            'modpacks',
+            modpackArchiveName('', request.file.url, request.file.fileName),
+          )
+      await downloadFileNow(
+        request.file.url,
+        archive,
+        request.file.sha1 ?? '',
+        request.file.size ?? 0,
+        abort.signal,
+        ({ loaded, total }) => {
+          progress.transfer(loaded, total)
+          progress.report('下载整合包', total > 0 ? (loaded / total) * 100 : undefined)
+        },
+        {
+          direct: true,
+          useCache: Boolean(request.file.sha1),
+          onBytes: progress.bytes,
+        },
+      )
+      if (isCancelled()) return
+
+      progress.report('读取整合包清单')
+      const pack = await parseModpackArchive(archive)
+      if (pack.unsupportedLoader) {
+        throw new Error(`暂不支持 ${pack.unsupportedLoader} 加载器，无法安装该整合包`)
+      }
+      if (!safeVersionId(pack.gameVersion)) throw new Error('整合包没有声明有效的游戏版本')
+
+      job.gameVersion = pack.gameVersion
+      job.title = [pack.name, pack.version].filter(Boolean).join(' ').trim()
+      job.detail = `实例：${job.instanceName}`
+      if (pack.loader) job.loader = { kind: pack.loader.kind as LoaderKind, version: pack.loader.version }
+
+      // 先落 installing，启动页从解析归档开始就把它显示为「下载中」
+      await writeInstallState(instanceDir, installRecordOf(job, 'installing'))
+      if (isCancelled()) return
+
+      const prepared = await prepareGameVersion(
+        job,
+        pack.gameVersion,
+        pack.loader
+          ? { kind: pack.loader.kind as LoaderKind, version: pack.loader.version }
+          : undefined,
+        instanceDir,
+        abort.signal,
+        progress,
+        isCancelled,
+      )
+      if (isCancelled()) return
+
+      const layout = resolveInstanceLayout(dataDir, instanceDir)
+      progress.report('生成下载清单')
+      const gameSpecs = await collectTaskSpecs(
+        prepared.versionDetail,
+        layout,
+        prepared.versionId,
+        abort.signal,
+        { onlyMissing: prepared.onlyMissing },
+      )
+      if (isCancelled()) return
+
+      const packSpecs: TaskSpec[] = []
+      const reservedRoot = new Set([
+        ...RESERVED_INSTANCE_ROOT_FILES,
+        `${prepared.versionId}.json`,
+        MODPACK_OVERRIDES_DIR,
+      ])
+      for (const file of pack.files) {
+        if (file.kind !== 'direct') continue
+        // 整合包文件不能改写实例元数据 / 版本档案 / 暂存目录
+        if (reservedRoot.has(file.path.split('/')[0] ?? '')) {
+          throw new Error(`整合包包含不允许的文件路径：${file.path}`)
+        }
+        packSpecs.push({
+          label: path.basename(file.path) || file.path,
+          url: file.url,
+          savePath: path.join(instanceDir, file.path),
+          sha1: file.sha1,
+          size: file.size,
+          direct: true,
+        })
+      }
+
+      const curseforgeEntries = pack.files
+        .filter((file) => file.kind === 'curseforge')
+        .map((file) => ({ projectId: file.projectId, fileId: file.fileId, required: file.required }))
+      if (curseforgeEntries.length > 0) {
+        progress.report('解析整合包文件', 0)
+        let source: ModSource
+        try {
+          source = resolveModSource(
+            loadModSources(),
+            'curseforge',
+            request.source === 'curseforge' ? request.sourceApi : undefined,
+          )
+        } catch (cause) {
+          throw new Error(`整合包包含 CurseForge 文件，但无法使用 CurseForge 下载源：${toError(cause).message}`)
+        }
+        const resolved = await resolveCurseforgeModpackFiles(
+          source,
+          curseforgeEntries,
+          abort.signal,
+          (done, total) => progress.report(
+            '解析整合包文件',
+            total > 0 ? (done / total) * 100 : undefined,
+          ),
+        )
+        if (isCancelled()) return
+        for (const { file } of resolved) {
+          packSpecs.push({
+            label: file.fileName,
+            url: file.url,
+            savePath: path.join(instanceDir, 'mods', file.fileName),
+            sha1: file.sha1 ?? '',
+            size: file.size ?? 0,
+            direct: true,
+          })
+        }
+      }
+
+      progress.report('解压整合包覆盖文件')
+      let overridesDir: string | undefined
+      if (pack.overridePrefixes.length > 0) {
+        const staging = path.join(instanceDir, MODPACK_OVERRIDES_DIR)
+        const count = await extractModpackOverrides(archive, pack.overridePrefixes, staging)
+        if (count > 0) overridesDir = staging
+        else await rm(staging, { recursive: true, force: true }).catch(() => undefined)
+      }
+      if (isCancelled()) return
+
+      job.modpack = {
+        name: pack.name,
+        version: pack.version,
+        ...(overridesDir ? { overridesDir } : {}),
+      }
+
+      const taskSpecs = [...gameSpecs, ...packSpecs]
+      if (taskSpecs.length === 0) {
+        job.note = undefined
+        job.preparePercent = undefined
+        await completeJob(job)
+        return
+      }
+
+      const paused = pausedJobs.has(job.id)
+      enqueueTasks(job, taskSpecs, paused)
+      job.state = 'ready'
+      job.note = undefined
+      job.preparePercent = undefined
+      log.info(
+        '整合包「%s」的下载清单已就绪：%d 个文件（其中包内文件 %d 个），job %s',
+        job.title || job.instanceName,
+        taskSpecs.length,
+        packSpecs.length,
+        job.id,
+      )
+      persistRecords(true)
+      if (!paused) scheduleLoop()
+    } catch (cause) {
+      if (isCancelled()) return
+      job.state = 'failed'
+      job.note = undefined
+      job.preparePercent = undefined
+      job.error = toError(cause).message
+      log.error('准备整合包安装「%s」失败：%s', job.instanceName, job.error)
+    } finally {
+      prepAborts.delete(job.id)
+      if (isCancelled()) {
+        job.state = 'cancelled'
+        job.note = undefined
+        job.preparePercent = undefined
+        log.info('整合包安装「%s」已取消，job %s', job.instanceName, job.id)
+      }
+      if (job.state === 'failed' || job.state === 'cancelled') {
+        pausedJobs.delete(job.id)
+        if (createdInstance) {
+          await rm(instanceDir, { recursive: true, force: true }).catch(() => undefined)
+        }
+      }
       reservedInstanceNames.delete(nameKey)
       persistRecords(true)
     }
@@ -2426,6 +2903,11 @@ export function apply(ctx: Context): void {
 
   ctx.ipc.handle('settings/get', () => ({
     concurrency: String(maxConcurrency()),
+    segments: ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS),
+    segmentThreshold: ctx.storage.get<string>(
+      'segmentThreshold',
+      DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD,
+    ),
     cacheLimit: ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT),
     sources: loadSources(),
     loaderSources: loadLoaderSources(),
@@ -2458,6 +2940,29 @@ export function apply(ctx: Context): void {
     }
     ctx.storage.set(key, value)
     log.info('下载设置已更新：%s', key)
+  })
+
+  ctx.ipc.handle('cache/stats', () => cacheUsage())
+
+  /**
+   * 清空下载缓存。
+   *
+   * 只删共享缓存，不动实例目录与游戏文件。传输中拒绝清理：整合包归档本身
+   * 就落在缓存里，边下边删会让解析失败。
+   */
+  ctx.ipc.handle('cache/clear', async () => {
+    const busy = [...jobs.values()].some((job) => job.state === 'preparing')
+      || [...tasks.values()].some((task) =>
+        task.state === 'downloading' || task.state === 'verifying')
+    if (busy) throw new Error('正在下载，暂时不能清空缓存')
+    const before = await cacheUsage()
+    try {
+      await rm(cacheRoot, { recursive: true, force: true })
+    } catch (cause) {
+      throw new Error(`清空缓存失败：${toError(cause).message}`)
+    }
+    log.info('下载缓存已清空：%d 个文件，%d 字节', before.files, before.bytes)
+    return cacheUsage()
   })
 
   /**
@@ -2663,6 +3168,98 @@ export function apply(ctx: Context): void {
     }
   })
 
+  // ── 整合包目录（与 Mod 共用来源 / 缓存，仅项目类型不同）──
+
+  ctx.ipc.handle('modpacks/sources', (): ModSourceInfo[] => modSourceInfos())
+
+  ctx.ipc.handle('modpacks/categories', (): ModCategory[] => listModpackCategories())
+
+  ctx.ipc.handle<ModSearchRequest>('modpacks/search', async (request): Promise<ModSearchResult> => {
+    const normalized = normalizeModSearch(request)
+    const cacheKey = `modpack:${JSON.stringify(normalized)}`
+    const cached = readModCache(modSearchCache, cacheKey, MOD_SEARCH_TTL)
+    if (cached) return cached
+
+    const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+    try {
+      const result = await searchMods(loadModSources(), normalized, abort.signal, 'modpack')
+      if (result.errors.length === 0) writeModCache(modSearchCache, cacheKey, result)
+      return result
+    } finally {
+      clearTimeout(timeout)
+      abort.abort()
+    }
+  })
+
+  ctx.ipc.handle<ModVersionRequest>('modpacks/versions', async (request): Promise<ModVersion[]> => {
+    const source = request?.source === 'curseforge'
+      ? 'curseforge'
+      : request?.source === 'modrinth' ? 'modrinth' : null
+    if (!source) throw new Error('不支持的整合包下载源')
+    const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的整合包项目 id')
+
+    const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
+    const normalized: ModVersionRequest = {
+      source,
+      ...(sourceApi ? { sourceApi } : {}),
+      projectId,
+      gameVersion: safeVersionId(request?.gameVersion) ?? '',
+      loader: isModLoader(request?.loader) ? request.loader : 'all',
+    }
+    const cacheKey = `modpack:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}:${normalized.gameVersion}:${normalized.loader}`
+    const cached = readModCache(modVersionCache, cacheKey, MOD_VERSION_TTL)
+    if (cached) return cached
+
+    const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+    try {
+      const versions = await listModVersions(loadModSources(), normalized, abort.signal, 'modpack')
+      writeModCache(modVersionCache, cacheKey, versions)
+      return versions
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)
+    } finally {
+      clearTimeout(timeout)
+      abort.abort()
+    }
+  })
+
+  ctx.ipc.handle<ModProjectRequest>('modpacks/project', async (request): Promise<ModSummary> => {
+    const source = request?.source === 'curseforge'
+      ? 'curseforge'
+      : request?.source === 'modrinth' ? 'modrinth' : null
+    if (!source) throw new Error('不支持的整合包下载源')
+    const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的整合包项目 id')
+
+    const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
+    const normalized: ModProjectRequest = {
+      source,
+      ...(sourceApi ? { sourceApi } : {}),
+      projectId,
+    }
+    const cacheKey = `modpack:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}`
+    const cached = readModCache(modProjectCache, cacheKey, MOD_VERSION_TTL)
+    if (cached) return cached
+
+    const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+    try {
+      const project = await loadModProject(loadModSources(), normalized, abort.signal, 'modpack')
+      writeModCache(modProjectCache, cacheKey, project)
+      return project
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)
+    } finally {
+      clearTimeout(timeout)
+      abort.abort()
+    }
+  })
+
   /**
    * 把同一个 Mod 文件登记为下载任务，写进多个实例的 mods/ 目录。
    *
@@ -2763,6 +3360,85 @@ export function apply(ctx: Context): void {
       job.id,
     )
     scheduleLoop()
+    return { jobId: job.id }
+  })
+
+  /**
+   * 受理整合包安装。
+   *
+   * 与原版安装一样「受理即返回」：归档解析、游戏版本 / 加载器准备、包内文件
+   * 解析都在后台完成。实例名在这里就校验，避免准备阶段跑很久后才因重名失败。
+   */
+  ctx.ipc.handle<ModpackInstallRequest>('modpacks/install', (request): InstallStartResult => {
+    const file = request?.file
+    if (!file) return { jobId: '', error: '缺少整合包文件信息' }
+
+    const rawUrl = typeof file.url === 'string' ? file.url.trim() : ''
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(rawUrl)
+    } catch {
+      return { jobId: '', error: '无效的整合包下载地址' }
+    }
+    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+      return { jobId: '', error: '整合包下载地址必须使用 HTTP(S)' }
+    }
+
+    const rawName = typeof file.fileName === 'string' ? file.fileName : ''
+    const fileName = path.basename(rawName)
+    if (
+      !fileName
+      || fileName !== rawName
+      || !/\.(mrpack|zip)$/i.test(fileName)
+      || /[\\/:*?"<>|\u0000-\u001f]/.test(fileName)
+    ) {
+      return { jobId: '', error: '无效的整合包文件名' }
+    }
+    if (request.source !== 'modrinth' && request.source !== 'curseforge') {
+      return { jobId: '', error: '不支持的整合包下载源' }
+    }
+    if (typeof request.instanceName !== 'string') {
+      return { jobId: '', error: '无效的实例名称' }
+    }
+
+    const check = checkInstanceName(request.instanceName)
+    if (!check.ok) return { jobId: '', error: check.message ?? '实例名称无效' }
+
+    const rawSha1 = typeof file.sha1 === 'string' ? file.sha1.trim().toLowerCase() : ''
+    const sha1 = /^[0-9a-f]{40}$/.test(rawSha1) ? rawSha1 : ''
+    const size = typeof file.size === 'number' && Number.isFinite(file.size)
+      ? Math.max(0, file.size)
+      : 0
+    const title = typeof request.title === 'string' && request.title.trim()
+      ? request.title.trim().slice(0, 120)
+      : fileName
+    const sourceApi = typeof request.sourceApi === 'string' ? request.sourceApi.trim() : ''
+
+    const job: InstallJob = {
+      id: nextJobId(),
+      kind: 'modpack',
+      title,
+      detail: `实例：${check.name}`,
+      instanceName: check.name,
+      gameVersion: '',
+      taskIds: [],
+      createdAt: Date.now(),
+      state: 'preparing',
+      mode: 'install',
+    }
+    jobs.set(job.id, job)
+    archiveSupersededJobs(check.name, job.id)
+    reservedInstanceNames.add(instanceKey(check.name))
+    persistRecords()
+    log.info('已受理整合包安装「%s」：%s → 实例「%s」，job %s', title, fileName, check.name, job.id)
+
+    void prepareModpackJob(job, {
+      ...request,
+      instanceName: check.name,
+      file: { url: parsedUrl.toString(), fileName, ...(sha1 ? { sha1 } : {}), size },
+      ...(sourceApi ? { sourceApi } : {}),
+    }).catch(() => undefined)
+
     return { jobId: job.id }
   })
 
@@ -2906,7 +3582,14 @@ export function apply(ctx: Context): void {
       .filter((task): task is DownloadTask => (
         task !== undefined && task.state === 'failed' && task.error !== '已取消'
       ))
-    if (failed.length === 0) return
+    if (failed.length === 0) {
+      // 整合包可能在合并覆盖文件时失败：文件都下完了，重试应重新收尾
+      if (job.kind === 'modpack') {
+        job.state = 'ready'
+        await completeJob(job)
+      }
+      return
+    }
 
     if (isGameJob(job)) {
       await writeInstallState(instanceDirOf(job.instanceName), installRecordOf(job, 'installing'))
