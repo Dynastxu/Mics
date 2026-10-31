@@ -1121,13 +1121,26 @@ onBeforeUnmount(() => {
 
       <nav v-if="pageCount > 1" class="mods-pager" aria-label="分页">
         <button
-          class="mods-pager__button"
+          class="mods-pager__button mods-pager__arrow"
           type="button"
           :disabled="page <= 1"
           aria-label="上一页"
+          title="上一页"
           @click="goToPage(page - 1)"
         >
-          ‹
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m15 6-6 6 6 6" />
+          </svg>
         </button>
         <template v-for="(item, index) in pagerItems" :key="`${item}-${index}`">
           <span v-if="item === 'gap'" class="mods-pager__gap">…</span>
@@ -1143,13 +1156,26 @@ onBeforeUnmount(() => {
           </button>
         </template>
         <button
-          class="mods-pager__button"
+          class="mods-pager__button mods-pager__arrow"
           type="button"
           :disabled="page >= pageCount"
           aria-label="下一页"
+          title="下一页"
           @click="goToPage(page + 1)"
         >
-          ›
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m9 6 6 6-6 6" />
+          </svg>
         </button>
       </nav>
     </template>
@@ -1288,7 +1314,9 @@ onBeforeUnmount(() => {
 
 .mods-pager {
   position: sticky;
-  bottom: 10px;
+  /* 分页条要贴到窗口底部：shell 的滚动容器底部留了 40px 内边距，而 sticky 的
+     bottom 以容器内容盒为基准，减去这段内边距才能落到窗口底部附近 */
+  bottom: calc(16px - var(--mics-page-pad-bottom, 40px));
   z-index: 2;
   align-self: center;
   margin-top: auto;
@@ -1311,6 +1339,13 @@ onBeforeUnmount(() => {
   color: var(--mics-fg-muted);
   font-size: 12px;
   transition: background 0.12s ease, color 0.12s ease;
+}
+
+/* 上一页 / 下一页只有图标：定宽居中，不和页码按钮的左右内边距打架 */
+.mods-pager__arrow {
+  display: grid;
+  place-items: center;
+  padding: 0;
 }
 
 .mods-pager__button:hover:not(:disabled) {

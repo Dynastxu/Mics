@@ -284,10 +284,13 @@ svg.mics-icon {
 /* 访问过的页面叠在这里：切换导航只切 visibility，页面 DOM 不参与重排，
    列表、表单和各自的滚动位置都原地保留 */
 .mics-main__page {
+  /* 底部内边距同时是页面内悬浮元素（分页条等）贴底时的让位区；
+     这个值需要用 CSS 变量的形式对页面内容可见 */
+  --mics-page-pad-bottom: 40px;
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: 26px 32px 40px;
+  padding: 26px 32px var(--mics-page-pad-bottom);
   visibility: hidden;
 }
 
@@ -985,7 +988,8 @@ svg.mics-icon {
 /* 窗口可以缩到 640×420，表单在窄宽度下改为上下排布，避免横向溢出 */
 @media (max-width: 900px) {
   .mics-main__page {
-    padding: 18px 18px 28px;
+    --mics-page-pad-bottom: 28px;
+    padding: 18px 18px var(--mics-page-pad-bottom);
   }
 
   .mics-page {
