@@ -2,7 +2,7 @@
   "name": "mics",
   "description": "Minecraft Integrated Control Software (MICS)",
   "version": "0.0.0",
-  "packageManager": "pnpm@12.11.2",
+  "packageManager": "pnpm@12.16.1",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -14,17 +14,29 @@
     "build:plugins": "node scripts/build-plugins.mjs",
     "watch:plugins": "node scripts/build-plugins.mjs --watch",
     "demo:ui": "pnpm --filter @mics/ui demo",
+    "lint": "eslint --cache .",
+    "lint:fix": "eslint --cache --fix .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "vue-tsc --noEmit -p apps/desktop/tsconfig.web.json && tsc --noEmit -p apps/desktop/tsconfig.node.json && vue-tsc --noEmit -p plugins/tsconfig.json",
     "start": "pnpm --filter @mics/desktop start"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^6.0.10",
     "cordis": "4.0.0-rc.12",
     "esbuild": "^0.28.2",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.12.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.7.4",
     "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
     "vite": "^8.3.5",
+    "vite-plugin-vue-devtools": "^8.2.1",
     "vue": "^3.5.44",
-    "vue-tsc": "^3.3.13",
-    "vite-plugin-vue-devtools": "^8.2.1"
+    "vue-eslint-parser": "^10.4.1",
+    "vue-tsc": "^3.3.14"
   }
 }
