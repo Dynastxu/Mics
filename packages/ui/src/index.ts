@@ -35,7 +35,7 @@ export type {
   CatalogSearchResult,
   CatalogSourceError,
   CatalogSourceInfo,
-  CatalogVersion,
+  CatalogVersion
 } from './catalog'
 export type {
   BadgeItem,
@@ -43,5 +43,5 @@ export type {
   FilterOption,
   FilterSelection,
   ListRow,
-  ListRowRole,
+  ListRowRole
 } from './types'

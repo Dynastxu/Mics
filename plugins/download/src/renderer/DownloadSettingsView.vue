@@ -22,14 +22,9 @@ import {
   normalizeDownloadSources,
   normalizeLoaderSources,
   normalizeModSources,
-  parseDownloadCacheLimit,
+  parseDownloadCacheLimit
 } from '@mics/sdk'
-import type {
-  DownloadCacheLimitMode,
-  DownloadSource,
-  LoaderSource,
-  ModSource,
-} from '@mics/sdk'
+import type { DownloadCacheLimitMode, DownloadSource, LoaderSource, ModSource } from '@mics/sdk'
 import SourceEditorDialog from './SourceEditorDialog.vue'
 import LoaderSourceDialog from './LoaderSourceDialog.vue'
 import ModSourceDialog from './ModSourceDialog.vue'
@@ -51,9 +46,7 @@ const cacheClearing = ref(false)
 const cacheError = ref('')
 const confirmClear = ref(false)
 const sources = ref<DownloadSource[]>(DEFAULT_DOWNLOAD_SOURCES.map((source) => ({ ...source })))
-const loaderSources = ref<LoaderSource[]>(
-  DEFAULT_LOADER_SOURCES.map((source) => ({ ...source })),
-)
+const loaderSources = ref<LoaderSource[]>(DEFAULT_LOADER_SOURCES.map((source) => ({ ...source })))
 const modSources = ref<ModSource[]>(DEFAULT_MOD_SOURCES.map((source) => ({ ...source })))
 const saved = ref(true)
 const loaderSaved = ref(true)
@@ -68,21 +61,20 @@ const loaderEditorIndex = ref<number | null>(null)
 const modEditorOpen = ref(false)
 const modEditorIndex = ref<number | null>(null)
 const sourcesAreDefault = computed(
-  () => JSON.stringify(sources.value) === JSON.stringify(DEFAULT_DOWNLOAD_SOURCES),
+  () => JSON.stringify(sources.value) === JSON.stringify(DEFAULT_DOWNLOAD_SOURCES)
 )
 const loaderSourcesAreDefault = computed(
-  () => JSON.stringify(loaderSources.value) === JSON.stringify(DEFAULT_LOADER_SOURCES),
+  () => JSON.stringify(loaderSources.value) === JSON.stringify(DEFAULT_LOADER_SOURCES)
 )
 const modSourcesAreDefault = computed(
-  () => JSON.stringify(modSources.value) === JSON.stringify(DEFAULT_MOD_SOURCES),
+  () => JSON.stringify(modSources.value) === JSON.stringify(DEFAULT_MOD_SOURCES)
 )
 const segmentsAreDefault = computed(
-  () => normalizeDownloadSegments(segments.value) === DEFAULT_DOWNLOAD_SEGMENTS,
+  () => normalizeDownloadSegments(segments.value) === DEFAULT_DOWNLOAD_SEGMENTS
 )
 const segmentThresholdIsDefault = computed(
   () =>
-    normalizeDownloadSegmentThreshold(segmentThreshold.value)
-    === DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD,
+    normalizeDownloadSegmentThreshold(segmentThreshold.value) === DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD
 )
 const editorSource = computed<DownloadSource | null>(() => {
   if (editorIndex.value === null) return null
@@ -116,8 +108,6 @@ const modDisplayName = (index: number): string => {
   if (!source) return `Mod 源 ${index + 1}`
   return source.label.trim() || `${MOD_SOURCE_LABELS[source.kind]} 源 ${index + 1}`
 }
-
-
 
 function markDirty(): void {
   saved.value = false
@@ -165,11 +155,11 @@ async function saveSources(): Promise<void> {
     launchermeta: source.launchermeta.trim(),
     libraries: source.libraries.trim(),
     resources: source.resources.trim(),
-    enabled: source.enabled !== false,
+    enabled: source.enabled !== false
   }))
   await ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'sources',
-    value: JSON.stringify(normalized),
+    value: JSON.stringify(normalized)
   })
   sources.value = normalized
   saved.value = true
@@ -178,7 +168,7 @@ async function saveSources(): Promise<void> {
 function persistConcurrency(): void {
   void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'concurrency',
-    value: concurrency.value,
+    value: concurrency.value
   })
 }
 
@@ -207,7 +197,7 @@ function resetConcurrency(): void {
 function persistSegments(): void {
   void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'segments',
-    value: segments.value,
+    value: segments.value
   })
 }
 
@@ -236,7 +226,7 @@ function resetSegments(): void {
 function persistSegmentThreshold(): void {
   void ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'segmentThreshold',
-    value: segmentThreshold.value,
+    value: segmentThreshold.value
   })
 }
 
@@ -268,16 +258,14 @@ function cacheLimitValue(): string {
   return normalizeDownloadCacheLimit(cacheLimitMb.value)
 }
 
-const cacheLimitIsDefault = computed(
-  () => cacheLimitValue() === DEFAULT_DOWNLOAD_CACHE_LIMIT,
-)
+const cacheLimitIsDefault = computed(() => cacheLimitValue() === DEFAULT_DOWNLOAD_CACHE_LIMIT)
 
 async function persistCacheLimit(): Promise<void> {
   try {
     const usage = await ctx.ipc.invoke<{ bytes: number; files: number } | void>(
       'mics.download.manager',
       'settings/set',
-      { key: 'cacheLimit', value: cacheLimitValue() },
+      { key: 'cacheLimit', value: cacheLimitValue() }
     )
     if (usage) {
       cacheBytes.value = usage.bytes
@@ -326,7 +314,7 @@ async function loadCacheStats(): Promise<void> {
   try {
     const usage = await ctx.ipc.invoke<{ bytes: number; files: number }>(
       'mics.download.manager',
-      'cache/stats',
+      'cache/stats'
     )
     cacheBytes.value = usage.bytes
     cacheFiles.value = usage.files
@@ -368,7 +356,7 @@ async function clearCache(): Promise<void> {
   try {
     const usage = await ctx.ipc.invoke<{ bytes: number; files: number }>(
       'mics.download.manager',
-      'cache/clear',
+      'cache/clear'
     )
     cacheBytes.value = usage.bytes
     cacheFiles.value = usage.files
@@ -394,12 +382,12 @@ async function saveLoaderSources(): Promise<void> {
       // 留空表示使用官方地址；与主进程的归一化保持一致
       meta: source.meta.trim() || official?.meta || '',
       maven: source.maven.trim() || official?.maven || '',
-      enabled: source.enabled !== false,
+      enabled: source.enabled !== false
     }
   })
   await ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'loaderSources',
-    value: JSON.stringify(normalized),
+    value: JSON.stringify(normalized)
   })
   loaderSources.value = normalized
   loaderSaved.value = true
@@ -453,12 +441,12 @@ async function saveModSources(): Promise<void> {
       // 留空表示使用官方地址；与主进程的归一化保持一致
       api: source.api.trim() || official?.api || '',
       key: source.key.trim(),
-      enabled: source.enabled !== false,
+      enabled: source.enabled !== false
     }
   })
   await ctx.ipc.invoke('mics.download.manager', 'settings/set', {
     key: 'modSources',
-    value: JSON.stringify(normalized),
+    value: JSON.stringify(normalized)
   })
   modSources.value = normalized
   modSaved.value = true
@@ -591,104 +579,104 @@ onUnmounted(() => {
         <h2 class="mics-section__title">下载行为</h2>
         <div class="mics-form">
           <SettingsField label="最大并发" hint="同时下载的文件数（1–128）">
-              <input
-                v-model="concurrency"
-                class="mics-input settings-number"
-                inputmode="numeric"
-                @input="queueConcurrencySave"
-                @change="saveConcurrency"
-              />
-              <button
-                class="mics-button mics-button--ghost mics-button--small settings-row-action"
-                title="恢复默认值"
-                :disabled="concurrency === DEFAULT_DOWNLOAD_CONCURRENCY"
-                @click="resetConcurrency"
-              >
-                重置
-              </button>
-            </SettingsField>
+            <input
+              v-model="concurrency"
+              class="mics-input settings-number"
+              inputmode="numeric"
+              @input="queueConcurrencySave"
+              @change="saveConcurrency"
+            />
+            <button
+              class="mics-button mics-button--ghost mics-button--small settings-row-action"
+              title="恢复默认值"
+              :disabled="concurrency === DEFAULT_DOWNLOAD_CONCURRENCY"
+              @click="resetConcurrency"
+            >
+              重置
+            </button>
+          </SettingsField>
 
           <SettingsField label="大文件分段">
-              <template #hint>
-                达到分段阈值且服务端支持 Range 时，单文件使用的连接数（{{
-                  MIN_DOWNLOAD_SEGMENTS
-                }}–{{ MAX_DOWNLOAD_SEGMENTS }}）
-              </template>
-              <input
-                v-model="segments"
-                class="mics-input settings-number"
-                inputmode="numeric"
-                @input="queueSegmentsSave"
-                @change="saveSegments"
-              />
-              <button
-                class="mics-button mics-button--ghost mics-button--small settings-row-action"
-                title="恢复默认值"
-                :disabled="segmentsAreDefault"
-                @click="resetSegments"
-              >
-                重置
-              </button>
-            </SettingsField>
+            <template #hint>
+              达到分段阈值且服务端支持 Range 时，单文件使用的连接数（{{ MIN_DOWNLOAD_SEGMENTS }}–{{
+                MAX_DOWNLOAD_SEGMENTS
+              }}）
+            </template>
+            <input
+              v-model="segments"
+              class="mics-input settings-number"
+              inputmode="numeric"
+              @input="queueSegmentsSave"
+              @change="saveSegments"
+            />
+            <button
+              class="mics-button mics-button--ghost mics-button--small settings-row-action"
+              title="恢复默认值"
+              :disabled="segmentsAreDefault"
+              @click="resetSegments"
+            >
+              重置
+            </button>
+          </SettingsField>
 
           <SettingsField label="分段阈值" hint="只有达到该大小的文件才启用多连接">
-              <input
-                v-model="segmentThreshold"
-                class="mics-input settings-number"
-                inputmode="numeric"
-                @input="queueSegmentThresholdSave"
-                @change="saveSegmentThreshold"
-              />
-              <span class="settings-unit">MB (> 1)</span>
-              <button
-                class="mics-button mics-button--ghost mics-button--small settings-row-action"
-                title="恢复默认值"
-                :disabled="segmentThresholdIsDefault"
-                @click="resetSegmentThreshold"
-              >
-                重置
-              </button>
-            </SettingsField>
+            <input
+              v-model="segmentThreshold"
+              class="mics-input settings-number"
+              inputmode="numeric"
+              @input="queueSegmentThresholdSave"
+              @change="saveSegmentThreshold"
+            />
+            <span class="settings-unit">MB (> 1)</span>
+            <button
+              class="mics-button mics-button--ghost mics-button--small settings-row-action"
+              title="恢复默认值"
+              :disabled="segmentThresholdIsDefault"
+              @click="resetSegmentThreshold"
+            >
+              重置
+            </button>
+          </SettingsField>
 
           <SettingsField label="缓存上限" hint="超出后清理最旧的文件，不缓存会停用并清空缓存">
-              <select v-model="cacheLimitMode" class="mics-select" @change="saveCacheLimit">
-                <option value="limit">限制大小</option>
-                <option value="off">不缓存</option>
-                <option value="unlimited">无限制</option>
-              </select>
-              <template v-if="cacheLimitMode === 'limit'">
-                <input
-                  v-model="cacheLimitMb"
-                  class="mics-input settings-number"
-                  inputmode="numeric"
-                  @input="queueCacheLimitSave"
-                  @change="saveCacheLimit"
-                />
-                <span class="settings-unit">MB</span>
-              </template>
-              <button
-                class="mics-button mics-button--ghost mics-button--small settings-row-action"
-                title="恢复默认值"
-                :disabled="cacheLimitIsDefault"
-                @click="resetCacheLimit"
-              >
-                重置
-              </button>
-            </SettingsField>
+            <select v-model="cacheLimitMode" class="mics-select" @change="saveCacheLimit">
+              <option value="limit">限制大小</option>
+              <option value="off">不缓存</option>
+              <option value="unlimited">无限制</option>
+            </select>
+            <template v-if="cacheLimitMode === 'limit'">
+              <input
+                v-model="cacheLimitMb"
+                class="mics-input settings-number"
+                inputmode="numeric"
+                @input="queueCacheLimitSave"
+                @change="saveCacheLimit"
+              />
+              <span class="settings-unit">MB</span>
+            </template>
+            <button
+              class="mics-button mics-button--ghost mics-button--small settings-row-action"
+              title="恢复默认值"
+              :disabled="cacheLimitIsDefault"
+              @click="resetCacheLimit"
+            >
+              重置
+            </button>
+          </SettingsField>
 
           <SettingsField label="已用缓存" hint="重装或安装到其它实例时，缓存里的文件会直接复用">
-              <span class="settings-cache">
-                {{ cacheLoading ? '统计中…' : `${fmtBytes(cacheBytes)} · ${cacheFiles} 个文件` }}
-              </span>
-              <button
-                class="mics-button mics-button--small settings-row-action"
-                :class="confirmClear ? 'mics-button--danger' : 'mics-button--ghost'"
-                :disabled="cacheClearing || cacheLoading || (cacheBytes === 0 && !confirmClear)"
-                @click="requestClearCache"
-              >
-                {{ confirmClear ? '确认清空' : '清空' }}
-              </button>
-            </SettingsField>
+            <span class="settings-cache">
+              {{ cacheLoading ? '统计中…' : `${fmtBytes(cacheBytes)} · ${cacheFiles} 个文件` }}
+            </span>
+            <button
+              class="mics-button mics-button--small settings-row-action"
+              :class="confirmClear ? 'mics-button--danger' : 'mics-button--ghost'"
+              :disabled="cacheClearing || cacheLoading || (cacheBytes === 0 && !confirmClear)"
+              @click="requestClearCache"
+            >
+              {{ confirmClear ? '确认清空' : '清空' }}
+            </button>
+          </SettingsField>
         </div>
 
         <p v-if="cacheError" class="mics-notice">{{ cacheError }}</p>
@@ -770,10 +758,7 @@ onUnmounted(() => {
           <span class="mics-badge">{{ MOD_SOURCE_LABELS[item.kind] }}</span>
         </template>
         <template #after-name="{ item }">
-          <span
-            v-if="modSourceNeedsKey(item) && !item.key.trim()"
-            class="settings-source__state"
-          >
+          <span v-if="modSourceNeedsKey(item) && !item.key.trim()" class="settings-source__state">
             缺少 API Key
           </span>
         </template>

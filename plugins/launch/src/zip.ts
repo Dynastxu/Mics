@@ -1,12 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync, type Stats } from 'node:fs'
 import path from 'node:path'
-import {
-  isReadableZipBuffer,
-  readZipEntries,
-  zipEntryData,
-  type ZipEntry,
-} from '@mics/sdk/main'
+import { isReadableZipBuffer, readZipEntries, zipEntryData, type ZipEntry } from '@mics/sdk/main'
 
 // Zip 读取与结构校验是下载管线 / 启动插件共用的实现，放在 @mics/sdk/main。
 
@@ -77,7 +72,7 @@ const ICON_MIME: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
+  '.webp': 'image/webp'
 }
 
 const modInfoCache = new Map<string, { key: string; info: JarModInfo }>()
@@ -120,7 +115,7 @@ function metadataOf(entries: ZipEntry[], buffer: Buffer): { id?: string; name?: 
   if (fabric) {
     return {
       id: typeof fabric.id === 'string' ? fabric.id : undefined,
-      name: typeof fabric.name === 'string' ? fabric.name : undefined,
+      name: typeof fabric.name === 'string' ? fabric.name : undefined
     }
   }
 
@@ -130,12 +125,12 @@ function metadataOf(entries: ZipEntry[], buffer: Buffer): { id?: string; name?: 
     const metadata = quilt.metadata as Record<string, unknown> | undefined
     return {
       id: typeof loader?.id === 'string' ? loader.id : undefined,
-      name: typeof metadata?.name === 'string' ? metadata.name : undefined,
+      name: typeof metadata?.name === 'string' ? metadata.name : undefined
     }
   }
 
   const tomlEntry = entries.find(
-    (entry) => entry.name === 'META-INF/mods.toml' || entry.name === 'META-INF/neoforge.mods.toml',
+    (entry) => entry.name === 'META-INF/mods.toml' || entry.name === 'META-INF/neoforge.mods.toml'
   )
   if (tomlEntry) {
     const data = zipEntryData(buffer, tomlEntry)

@@ -52,7 +52,7 @@ export interface MicsBridge {
       target: PluginId,
       method: string,
       params?: unknown,
-      callerId?: PluginId,
+      callerId?: PluginId
     ): Promise<T>
   }
   readonly events: {

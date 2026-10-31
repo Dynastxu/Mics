@@ -23,7 +23,7 @@ const draft = reactive<{
   label: '',
   kind: 'fabric',
   meta: '',
-  maven: '',
+  maven: ''
 })
 
 const nameInput = ref<HTMLInputElement | null>(null)
@@ -53,7 +53,7 @@ watch(
     draft.maven = props.source?.maven ?? ''
     await nextTick()
     nameInput.value?.focus()
-  },
+  }
 )
 
 function submit(): void {
@@ -62,7 +62,7 @@ function submit(): void {
     kind: draft.kind,
     meta: draft.meta.trim(),
     maven: draft.maven.trim(),
-    enabled: props.source?.enabled ?? true,
+    enabled: props.source?.enabled ?? true
   })
 }
 
@@ -94,11 +94,7 @@ function cancel(): void {
         <div class="source-dialog__fields">
           <label class="source-dialog__field">
             <span class="source-dialog__label">加载器</span>
-            <select
-              class="mics-select"
-              :value="draft.kind"
-              @change="onKindInput"
-            >
+            <select class="mics-select" :value="draft.kind" @change="onKindInput">
               <option v-for="kind in LOADER_SOURCE_KINDS" :key="kind" :value="kind">
                 {{ LOADER_LABELS[kind] }}
               </option>
@@ -107,12 +103,7 @@ function cancel(): void {
 
           <label class="source-dialog__field">
             <span class="source-dialog__label">名称</span>
-            <input
-              ref="nameInput"
-              v-model="draft.label"
-              class="mics-input"
-              autocomplete="off"
-            />
+            <input ref="nameInput" v-model="draft.label" class="mics-input" autocomplete="off" />
           </label>
 
           <label class="source-dialog__field">
@@ -139,9 +130,7 @@ function cancel(): void {
         </div>
 
         <div class="source-dialog__footer">
-          <button class="mics-button mics-button--ghost" type="button" @click="cancel">
-            取消
-          </button>
+          <button class="mics-button mics-button--ghost" type="button" @click="cancel">取消</button>
           <button class="mics-button mics-button--primary" type="submit">确定</button>
         </div>
       </form>

@@ -15,7 +15,7 @@ import path from 'node:path'
 export async function moveTreeInto(
   source: string,
   target: string,
-  options: { overwrite?: boolean } = {},
+  options: { overwrite?: boolean } = {}
 ): Promise<void> {
   let entries: Dirent[]
   try {

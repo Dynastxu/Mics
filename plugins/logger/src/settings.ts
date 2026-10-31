@@ -9,8 +9,8 @@ export function readLogSettings(storage: StorageServiceApi): LogSettings {
   return {
     maxFiles: normalizeLogMaxFiles(
       storage.get<unknown>(MAX_FILES_KEY, DEFAULT_LOG_MAX_FILES),
-      DEFAULT_LOG_MAX_FILES,
-    ),
+      DEFAULT_LOG_MAX_FILES
+    )
   }
 }
 

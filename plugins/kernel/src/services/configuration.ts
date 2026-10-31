@@ -4,7 +4,7 @@ import type {
   ConfigurationContribution,
   ConfigurationProperty,
   PluginConfigurationInfo,
-  PluginId,
+  PluginId
 } from '@mics/sdk'
 import { normalizeConfigurationValue } from '@mics/sdk'
 import { StorageService } from './storage'
@@ -64,9 +64,9 @@ export class ConfigurationService extends Service {
           ...property,
           key,
           value: resolved.value,
-          source: resolved.source,
+          source: resolved.source
         }
-      }),
+      })
     }
   }
 

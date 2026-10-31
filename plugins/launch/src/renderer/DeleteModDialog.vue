@@ -20,7 +20,7 @@ watch(
     if (!open) return
     await nextTick()
     cancelButton.value?.focus()
-  },
+  }
 )
 
 function cancel(): void {

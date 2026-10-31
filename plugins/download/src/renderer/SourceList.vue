@@ -68,7 +68,7 @@ const emit = defineEmits<{
         :class="{
           'settings-source--dragging': index === dragIndex,
           'settings-source--over': index === overIndex && index !== dragIndex,
-          'settings-source--disabled': !item.enabled,
+          'settings-source--disabled': !item.enabled
         }"
         @dragover="emit('dragOver', index, $event)"
         @drop="emit('drop', index)"
@@ -82,7 +82,15 @@ const emit = defineEmits<{
           @dragstart="emit('dragStart', index, $event)"
           @dragend="emit('dragEnd')"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+          >
             <line x1="8" y1="6" x2="16" y2="6" />
             <line x1="8" y1="12" x2="16" y2="12" />
             <line x1="8" y1="18" x2="16" y2="18" />
@@ -107,7 +115,16 @@ const emit = defineEmits<{
             aria-label="编辑"
             @click="emit('edit', index)"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
               <path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
             </svg>
           </button>
@@ -119,7 +136,16 @@ const emit = defineEmits<{
             aria-label="删除"
             @click="emit('delete', index)"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
               <path d="M3 6h18" />
               <path d="M8 6V4h8v2" />
               <path d="M19 6l-1 14H6L5 6" />
@@ -173,7 +199,9 @@ const emit = defineEmits<{
   gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--mics-border);
-  transition: box-shadow .12s ease, opacity .12s ease;
+  transition:
+    box-shadow 0.12s ease,
+    opacity 0.12s ease;
 }
 
 .settings-source:last-child {
@@ -181,7 +209,7 @@ const emit = defineEmits<{
 }
 
 .settings-source--dragging {
-  opacity: .45;
+  opacity: 0.45;
 }
 
 .settings-source--over {
@@ -200,7 +228,10 @@ const emit = defineEmits<{
   border-radius: 7px;
   background: transparent;
   color: var(--mics-fg-muted);
-  transition: border-color .12s ease, background .12s ease, color .12s ease;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .settings-source__handle {

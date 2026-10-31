@@ -1,10 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import {
-  MOD_LOADER_LABELS,
-  MOD_LOADERS,
-  MOD_OPEN_INTENT_KEY,
-} from '@mics/sdk'
+import { MOD_LOADER_LABELS, MOD_LOADERS, MOD_OPEN_INTENT_KEY } from '@mics/sdk'
 import type {
   ModLoader,
   ModOpenIntent,
@@ -15,7 +11,7 @@ import type {
   ModVersionRequest,
   ModCategory,
   GameVersion,
-  NotificationsServiceApi,
+  NotificationsServiceApi
 } from '@mics/sdk'
 import { usePluginContext } from '@mics/sdk/renderer'
 import { CatalogBrowser } from '@mics/ui'
@@ -27,7 +23,7 @@ import type {
   CatalogSearchRequest,
   CatalogSearchResult,
   CatalogSourceInfo,
-  CatalogVersion,
+  CatalogVersion
 } from '@mics/ui'
 import ModInstallDialog from './ModInstallDialog.vue'
 
@@ -36,12 +32,12 @@ const ctx = usePluginContext()
 const CHANNEL_LABELS = {
   release: '正式版',
   beta: '测试版',
-  alpha: '早期版',
+  alpha: '早期版'
 }
 
 const loaders = MOD_LOADERS.map((value) => ({
   value,
-  label: MOD_LOADER_LABELS[value],
+  label: MOD_LOADER_LABELS[value]
 }))
 
 const browser = ref<InstanceType<typeof CatalogBrowser> | null>(null)
@@ -56,22 +52,21 @@ function takeOpenIntent(): CatalogIntent | null {
   const intent = value as Partial<ModOpenIntent>
   if (typeof intent.query !== 'string' || !intent.query.trim()) return null
   const project = intent.project
-  const validProject = project
-    && typeof project.projectId === 'string'
-    && typeof project.name === 'string'
-    && (project.source === 'modrinth' || project.source === 'curseforge')
-    ? project
-    : undefined
-  const loader = typeof intent.loader === 'string'
-    && MOD_LOADERS.includes(intent.loader as ModLoader)
-    ? intent.loader
-    : 'all'
+  const validProject =
+    project &&
+    typeof project.projectId === 'string' &&
+    typeof project.name === 'string' &&
+    (project.source === 'modrinth' || project.source === 'curseforge')
+      ? project
+      : undefined
+  const loader =
+    typeof intent.loader === 'string' && MOD_LOADERS.includes(intent.loader as ModLoader)
+      ? intent.loader
+      : 'all'
   return {
     query: intent.query.trim(),
     ...(validProject ? { project: validProject as CatalogItem } : {}),
-    ...(typeof intent.name === 'string' && intent.name.trim()
-      ? { name: intent.name.trim() }
-      : {}),
+    ...(typeof intent.name === 'string' && intent.name.trim() ? { name: intent.name.trim() } : {}),
     ...(typeof intent.fileName === 'string' ? { fileName: intent.fileName } : {}),
     ...(typeof intent.gameVersion === 'string' && intent.gameVersion
       ? { gameVersion: intent.gameVersion }
@@ -79,7 +74,7 @@ function takeOpenIntent(): CatalogIntent | null {
     ...(loader !== 'all' ? { loader } : {}),
     ...(typeof intent.versionId === 'string' && intent.versionId
       ? { versionId: intent.versionId }
-      : {}),
+      : {})
   }
 }
 
@@ -105,7 +100,7 @@ async function search(request: CatalogSearchRequest): Promise<CatalogSearchResul
     loader: request.loader as ModLoader | 'all',
     category: request.category,
     page: request.page,
-    pageSize: request.pageSize,
+    pageSize: request.pageSize
   })
 }
 
@@ -115,7 +110,7 @@ async function fetchVersions(item: CatalogItem): Promise<CatalogVersion[]> {
     ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
     projectId: item.projectId,
     gameVersion: '',
-    loader: 'all',
+    loader: 'all'
   }
   return ctx.ipc.invoke<ModVersion[]>('mics.download.manager', 'mods/versions', request)
 }
@@ -124,7 +119,7 @@ async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
   return ctx.ipc.invoke<ModSummary>('mics.download.manager', 'mods/project', {
     source: item.source as ModSourceKind,
     ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
-    projectId: item.projectId,
+    projectId: item.projectId
   })
 }
 
@@ -145,10 +140,12 @@ function openDownloadSettings(): void {
 function onInstallStarted(_jobId: string, instanceCount: number): void {
   const version = installVersion.value
   closeInstall()
-  void ctx.ipc.invoke('mics.logger', 'log/write', {
-    level: 'debug',
-    args: ['[notifications] 显示安装通知：%s', version?.name ?? ''],
-  }).catch(() => undefined)
+  void ctx.ipc
+    .invoke('mics.logger', 'log/write', {
+      level: 'debug',
+      args: ['[notifications] 显示安装通知：%s', version?.name ?? '']
+    })
+    .catch(() => undefined)
   const options = {
     level: 'info' as const,
     title: '已开始安装',
@@ -156,13 +153,15 @@ function onInstallStarted(_jobId: string, instanceCount: number): void {
       ? `${version.name} 已加入下载队列（${instanceCount} 个实例），可在「下载进度」查看。`
       : `Mod 已加入下载队列（${instanceCount} 个实例），可在「下载进度」查看。`,
     // 安装通知不自动消失，避免用户切回窗口时已经错过
-    duration: 0,
+    duration: 0
   }
 
   // 优先走通知插件暴露的全局入口；它不受插件 fiber 之间服务可见性的影响。
-  const globalApi = (globalThis as typeof globalThis & {
-    __MICS_NOTIFICATIONS__?: NotificationsServiceApi
-  }).__MICS_NOTIFICATIONS__
+  const globalApi = (
+    globalThis as typeof globalThis & {
+      __MICS_NOTIFICATIONS__?: NotificationsServiceApi
+    }
+  ).__MICS_NOTIFICATIONS__
   if (globalApi) {
     globalApi.show(options)
     return
@@ -195,12 +194,17 @@ function onInstallStarted(_jobId: string, instanceCount: number): void {
   >
     <template #version-extra="{ version, selected }">
       <div
-        v-if="selected && (version?.dependencies ?? []).some((item) => item.kind === 'required' && item.name)"
+        v-if="
+          selected &&
+          (version?.dependencies ?? []).some((item) => item.kind === 'required' && item.name)
+        "
         class="version-deps"
       >
         <span class="version-deps__label">前置</span>
         <button
-          v-for="dependency in (version?.dependencies ?? []).filter((item) => item.kind === 'required' && item.name)"
+          v-for="dependency in (version?.dependencies ?? []).filter(
+            (item) => item.kind === 'required' && item.name
+          )"
           :key="`${dependency.projectId}:${dependency.name}`"
           class="version-deps__chip"
           type="button"
@@ -246,7 +250,9 @@ function onInstallStarted(_jobId: string, instanceCount: number): void {
   background: var(--mics-bg-hover);
   color: var(--mics-fg);
   font-size: 10.5px;
-  transition: border-color 0.12s ease, color 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .version-deps__chip:hover:not(:disabled) {

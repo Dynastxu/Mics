@@ -87,6 +87,6 @@ export function resolveInstanceLayout(userDataDir: string, instanceDir: string):
     librariesDir: sharedLibrariesDir(userDataDir),
     assetsDir: sharedAssetsDir(userDataDir),
     nativesDir: path.join(instanceDir, NATIVES_DIR),
-    logConfigsDir: path.join(instanceDir, LOG_CONFIGS_DIR),
+    logConfigsDir: path.join(instanceDir, LOG_CONFIGS_DIR)
   }
 }

@@ -1,12 +1,6 @@
 import type { Context } from 'cordis'
 import { Service } from 'cordis'
-import type {
-  Disposable,
-  IpcMeta,
-  MaybePromise,
-  PluginId,
-  RuntimeEventEnvelope,
-} from '@mics/sdk'
+import type { Disposable, IpcMeta, MaybePromise, PluginId, RuntimeEventEnvelope } from '@mics/sdk'
 import { pluginIdOf } from '@mics/sdk'
 
 type LocalHandler = (params: unknown, meta: IpcMeta) => MaybePromise<unknown>
@@ -41,7 +35,7 @@ export class IpcService extends Service {
 
   handle<T = unknown>(
     method: string,
-    handler: (params: T, meta: IpcMeta) => MaybePromise<unknown>,
+    handler: (params: T, meta: IpcMeta) => MaybePromise<unknown>
   ): Disposable {
     const target = pluginIdOf(this.ctx)
     if (!target) throw new Error('[mics] ipc.handle() 必须从插件上下文中调用')
@@ -61,7 +55,7 @@ export class IpcService extends Service {
 
   on(
     topic: string,
-    listener: (payload: unknown, envelope: RuntimeEventEnvelope) => void,
+    listener: (payload: unknown, envelope: RuntimeEventEnvelope) => void
   ): Disposable {
     const off = this.owner.bridge.on(topic, (envelope) => listener(envelope.payload, envelope))
     // 订阅的生命周期跟随调用方插件

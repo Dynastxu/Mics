@@ -9,7 +9,7 @@ withDefaults(
     /** 对话框宽度上限 */
     width?: string
   }>(),
-  { subtitle: '', width: '560px' },
+  { subtitle: '', width: '560px' }
 )
 
 const emit = defineEmits<{ close: [] }>()

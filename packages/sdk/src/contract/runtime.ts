@@ -2,13 +2,7 @@ import type { PluginId, PluginManifest } from './manifest'
 import type { PluginFailure, PluginSource, PluginStatus, ProfileLock } from './plugins'
 
 export type PluginState =
-  | 'discovered'
-  | 'activating'
-  | 'active'
-  | 'waiting'
-  | 'failed'
-  | 'stopped'
-  | 'disabled'
+  'discovered' | 'activating' | 'active' | 'waiting' | 'failed' | 'stopped' | 'disabled'
 
 export interface AppInfo {
   name: string
@@ -110,8 +104,7 @@ export interface RpcRequest {
 }
 
 export type RpcResponse =
-  | { ok: true; value: unknown }
-  | { ok: false; error: { message: string; stack?: string } }
+  { ok: true; value: unknown } | { ok: false; error: { message: string; stack?: string } }
 
 export interface RuntimeEventEnvelope {
   topic: string

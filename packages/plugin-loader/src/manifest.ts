@@ -31,7 +31,7 @@ export function isSafeRelativePath(value: string): boolean {
 function validateContributions(
   raw: unknown,
   errors: string[],
-  warnings: string[],
+  warnings: string[]
 ): PluginContributions | undefined {
   if (raw === undefined) return undefined
   if (!isRecord(raw)) {
@@ -56,7 +56,7 @@ function validateContributions(
           title: item.title,
           icon: typeof item.icon === 'string' ? item.icon : undefined,
           order: typeof item.order === 'number' ? item.order : undefined,
-          group: typeof item.group === 'string' ? item.group : undefined,
+          group: typeof item.group === 'string' ? item.group : undefined
         })
       }
       contributions.nav = nav
@@ -77,7 +77,7 @@ function validateContributions(
           id: group.id,
           title: group.title,
           icon: typeof group.icon === 'string' ? group.icon : undefined,
-          order: typeof group.order === 'number' ? group.order : undefined,
+          order: typeof group.order === 'number' ? group.order : undefined
         })
       }
       contributions.navGroups = navGroups
@@ -90,7 +90,11 @@ function validateContributions(
     } else {
       const commands: NonNullable<PluginContributions['commands']> = []
       for (const command of raw.commands) {
-        if (!isRecord(command) || typeof command.id !== 'string' || typeof command.title !== 'string') {
+        if (
+          !isRecord(command) ||
+          typeof command.id !== 'string' ||
+          typeof command.title !== 'string'
+        ) {
           errors.push('contributes.commands 条目需要 id 与 title 字符串')
           continue
         }
@@ -99,7 +103,7 @@ function validateContributions(
           title: command.title,
           category: typeof command.category === 'string' ? command.category : undefined,
           keybinding: typeof command.keybinding === 'string' ? command.keybinding : undefined,
-          icon: typeof command.icon === 'string' ? command.icon : undefined,
+          icon: typeof command.icon === 'string' ? command.icon : undefined
         })
       }
       contributions.commands = commands
@@ -127,7 +131,7 @@ function validateContributions(
           alignment: alignment as 'left' | 'right' | undefined,
           order: typeof item.order === 'number' ? item.order : undefined,
           tooltip: typeof item.tooltip === 'string' ? item.tooltip : undefined,
-          command: typeof item.command === 'string' ? item.command : undefined,
+          command: typeof item.command === 'string' ? item.command : undefined
         })
       }
       contributions.statusBar = items
@@ -161,7 +165,12 @@ function validateContributions(
           errors.push(`主题 ${theme.id} 的 type 必须是 dark/light`)
           continue
         }
-        themes.push({ id: theme.id, label: theme.label, type: type as 'dark' | 'light' | undefined, variables })
+        themes.push({
+          id: theme.id,
+          label: theme.label,
+          type: type as 'dark' | 'light' | undefined,
+          variables
+        })
       }
       contributions.themes = themes
     }
@@ -183,11 +192,11 @@ function validateContributions(
                     defaultView:
                       typeof regions.nav.defaultView === 'string'
                         ? regions.nav.defaultView
-                        : undefined,
+                        : undefined
                   }
-                : undefined,
+                : undefined
             }
-          : undefined,
+          : undefined
       }
     }
   }
@@ -227,7 +236,7 @@ export function validateManifest(raw: unknown): ValidationResult {
   const manifest: PluginManifest = {
     id: raw.id as string,
     name: raw.name as string,
-    version: raw.version as string,
+    version: raw.version as string
   }
 
   if (typeof raw.description === 'string') manifest.description = raw.description
@@ -261,7 +270,10 @@ export function validateManifest(raw: unknown): ValidationResult {
   }
 
   if (raw.activation !== undefined) {
-    if (!isStringArray(raw.activation) || !raw.activation.every((item) => ACTIVATION_PATTERN.test(item))) {
+    if (
+      !isStringArray(raw.activation) ||
+      !raw.activation.every((item) => ACTIVATION_PATTERN.test(item))
+    ) {
       errors.push('activation 必须是 * / onStartup / onView:<id> / onCommand:<id> 组成的数组')
     } else {
       manifest.activation = raw.activation as NonNullable<PluginManifest['activation']>
@@ -269,7 +281,10 @@ export function validateManifest(raw: unknown): ValidationResult {
   }
 
   if (raw.dependencies !== undefined) {
-    if (!isStringArray(raw.dependencies) || !raw.dependencies.every((item) => ID_PATTERN.test(item))) {
+    if (
+      !isStringArray(raw.dependencies) ||
+      !raw.dependencies.every((item) => ID_PATTERN.test(item))
+    ) {
       errors.push('dependencies 必须是插件 id 组成的数组')
     } else {
       manifest.dependencies = raw.dependencies

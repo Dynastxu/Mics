@@ -53,8 +53,8 @@ const props = withDefaults(
     actionLabel: '',
     emptyText: '没有匹配的数据',
     filterLabel: '筛选',
-    mono: true,
-  },
+    mono: true
+  }
 )
 
 const emit = defineEmits<{
@@ -74,14 +74,14 @@ watch(
   () => props.query,
   (value) => {
     if (value !== undefined) localQuery.value = value
-  },
+  }
 )
 
 watch(
   () => props.filter,
   (value) => {
     if (value !== undefined) localFilter.value = value
-  },
+  }
 )
 
 const selected = computed<FilterSelection>({
@@ -89,7 +89,7 @@ const selected = computed<FilterSelection>({
   set: (value) => {
     localFilter.value = value
     emit('update:filter', value)
-  },
+  }
 })
 
 const rows = computed(() =>
@@ -99,8 +99,8 @@ const rows = computed(() =>
     query: localQuery.value,
     searchText: props.searchText,
     match: props.match,
-    sort: props.sort,
-  }),
+    sort: props.sort
+  })
 )
 
 const count = computed(() => rows.value.length)
@@ -134,7 +134,12 @@ function onQueryInput(event: Event): void {
     />
   </div>
 
-  <FilterPanel v-if="panelOpen && groups.length" :id="panelId" v-model="selected" :groups="groups" />
+  <FilterPanel
+    v-if="panelOpen && groups.length"
+    :id="panelId"
+    v-model="selected"
+    :groups="groups"
+  />
 
   <section class="mics-section">
     <slot name="heading" :count="count">

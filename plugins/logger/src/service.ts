@@ -80,7 +80,7 @@ export class LogsService extends Service {
       debug: (message, ...args) => this.write('debug', label, [message, ...args]),
       info: (message, ...args) => this.write('info', label, [message, ...args]),
       warn: (message, ...args) => this.write('warn', label, [message, ...args]),
-      error: (message, ...args) => this.write('error', label, [message, ...args]),
+      error: (message, ...args) => this.write('error', label, [message, ...args])
     }
   }
 

@@ -31,7 +31,7 @@ export class BridgeService extends Service {
     target: PluginId,
     method: string,
     params?: unknown,
-    callerId?: PluginId,
+    callerId?: PluginId
   ): Promise<T> {
     return this.api.rpc.invoke<T>(target, method, params, callerId)
   }

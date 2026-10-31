@@ -33,7 +33,7 @@ const watch = process.argv.includes('--watch')
 const SDK_ENTRIES = new Map([
   ['@mics/sdk', path.join(sdkDir, 'index.ts')],
   ['@mics/sdk/main', path.join(sdkDir, 'main.ts')],
-  ['@mics/sdk/renderer', path.join(sdkDir, 'renderer.ts')],
+  ['@mics/sdk/renderer', path.join(sdkDir, 'renderer.ts')]
 ])
 
 function resolveSdkSpecifier(specifier) {
@@ -54,22 +54,24 @@ function makeViteAliases() {
     { find: /^@mics\/ui$/, replacement: uiEntry },
     { find: /^@mics\/java$/, replacement: path.join(root, 'packages', 'java', 'src', 'index.ts') },
     { find: /^vue$/, replacement: path.join(shimDir, 'vue-shim.js') },
-    { find: /^cordis$/, replacement: path.join(shimDir, 'cordis-shim.js') },
+    { find: /^cordis$/, replacement: path.join(shimDir, 'cordis-shim.js') }
   ]
   for (const [specifier, file] of SDK_ENTRIES) {
-    alias.push({ find: new RegExp(`^${specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`), replacement: file })
+    alias.push({
+      find: new RegExp(`^${specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+      replacement: file
+    })
   }
   alias.push({
     find: /^@mics\/sdk\/contract\/(.*)$/,
-    replacement: path.join(sdkDir, 'contract', '$1.ts'),
+    replacement: path.join(sdkDir, 'contract', '$1.ts')
   })
   return alias
 }
 
 function generateShim(globalName, label, module) {
   const names = Object.keys(module).filter(
-    (name) =>
-      name !== 'default' && /^[A-Za-z_$][\w$]*$/.test(name) && module[name] !== undefined,
+    (name) => name !== 'default' && /^[A-Za-z_$][\w$]*$/.test(name) && module[name] !== undefined
   )
   const lines = [
     `// 由 scripts/build-plugins.mjs 生成：插件复用 shell 的 ${label} 运行时`,
@@ -80,7 +82,7 @@ function generateShim(globalName, label, module) {
     ...names.map((name) => `export const ${name} = runtime.${name}`),
     '',
     'export default runtime',
-    '',
+    ''
   ]
   return lines.join('\n')
 }
@@ -92,7 +94,7 @@ async function writeShims() {
   await writeFile(path.join(shimDir, 'vue-shim.js'), generateShim('__MICS_VUE__', 'Vue', vue))
   await writeFile(
     path.join(shimDir, 'cordis-shim.js'),
-    generateShim('__MICS_CORDIS__', 'Cordis', cordis),
+    generateShim('__MICS_CORDIS__', 'Cordis', cordis)
   )
 }
 
@@ -130,9 +132,9 @@ async function buildMainEntry(dir, entry, fileName, watchMode) {
         // 只留 electron（Electron 内建模块）；cordis 走 shim，必须打进产物，
         // 否则外部插件会按自己的目录去找 node_modules 并直接报模块找不到
         external: ['electron'],
-        output: { format: 'es', entryFileNames: fileName },
-      },
-    },
+        output: { format: 'es', entryFileNames: fileName }
+      }
+    }
   })
 }
 
@@ -158,7 +160,7 @@ async function buildUninstall(dir, manifest, watchMode) {
     dir,
     entry,
     path.basename(manifest.uninstall ?? 'dist/uninstall.mjs'),
-    watchMode,
+    watchMode
   )
   return true
 }
@@ -166,7 +168,8 @@ async function buildUninstall(dir, manifest, watchMode) {
 async function buildRenderer(dir, manifest, watchMode) {
   const entry = path.join(dir, 'src/renderer/index.ts')
   if (!existsSync(entry)) {
-    if (manifest.renderer) console.warn(`[plugins] ${manifest.id}: 声明了 renderer 但缺少 src/renderer/index.ts`)
+    if (manifest.renderer)
+      console.warn(`[plugins] ${manifest.id}: 声明了 renderer 但缺少 src/renderer/index.ts`)
     return false
   }
   const fileName = path.basename(manifest.renderer ?? 'dist/renderer.mjs')
@@ -189,17 +192,20 @@ async function buildRenderer(dir, manifest, watchMode) {
         entry,
         formats: ['es'],
         fileName: () => fileName,
-        cssFileName: 'style',
-      },
-    },
+        cssFileName: 'style'
+      }
+    }
   })
   return true
 }
 
 function checkDeclaredFiles(dir, manifest) {
-  const declared = [manifest.main, manifest.renderer, manifest.uninstall, ...(manifest.styles ?? [])].filter(
-    Boolean,
-  )
+  const declared = [
+    manifest.main,
+    manifest.renderer,
+    manifest.uninstall,
+    ...(manifest.styles ?? [])
+  ].filter(Boolean)
   for (const relative of declared) {
     if (!existsSync(path.join(dir, relative))) {
       console.warn(`[plugins] ${manifest.id}: 清单声明的 ${relative} 不存在`)
@@ -220,7 +226,11 @@ async function buildDirectory(baseDir, dirName) {
   if (!hasMain && !hasRenderer) return false
   if (!watch) checkDeclaredFiles(dir, manifest)
 
-  const parts = [hasMain ? 'main' : '', hasRenderer ? 'renderer' : '', hasUninstall ? 'uninstall' : '']
+  const parts = [
+    hasMain ? 'main' : '',
+    hasRenderer ? 'renderer' : '',
+    hasUninstall ? 'uninstall' : ''
+  ]
     .filter(Boolean)
     .join(' ')
   console.log(`[plugins] ${manifest.id} ✓ ${parts}`)
@@ -248,7 +258,7 @@ async function main() {
   console.log(
     watch
       ? `[plugins] 监听中（${plugins + examples} 个）…`
-      : `[plugins] 完成：${plugins} 个插件 + ${examples} 个示例 → out 就绪，可以 pnpm dev`,
+      : `[plugins] 完成：${plugins} 个插件 + ${examples} 个示例 → out 就绪，可以 pnpm dev`
   )
   if (watch) await new Promise(() => {})
 }

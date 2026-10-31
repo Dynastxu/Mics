@@ -5,7 +5,7 @@ import type {
   PluginGraphReport,
   PluginId,
   PluginInfo,
-  RuntimeSnapshot,
+  RuntimeSnapshot
 } from '@mics/sdk'
 import { FIBER_ACTIVE, PLUGIN_ID, PluginFailureError } from '@mics/sdk'
 import { reportCleanup, snapshotCleanup, type CleanupSnapshot } from '../cleanupAudit'
@@ -79,7 +79,10 @@ export class PluginsService extends Service {
     let lastError: unknown
     for (let attempt = 0; attempt < 50; attempt += 1) {
       try {
-        const snapshot = await this.owner.ipc.invoke<RuntimeSnapshot>('mics.kernel', 'runtime/snapshot')
+        const snapshot = await this.owner.ipc.invoke<RuntimeSnapshot>(
+          'mics.kernel',
+          'runtime/snapshot'
+        )
         applySnapshot(snapshot)
         return
       } catch (error) {
@@ -111,7 +114,7 @@ export class PluginsService extends Service {
         logWarn(
           '启动插件 %s 失败：%s',
           plugin.id,
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.message : String(error)
         )
       }
     }
@@ -192,9 +195,7 @@ export class PluginsService extends Service {
     const info = this.get(id)
     if (!info) throw new Error(`未知插件 ${id}`)
     if (!info.canDisable) {
-      throw new Error(
-        info.core ? `内核插件 ${id} 不可禁用` : `插件 ${id} 是必需插件，不可禁用`,
-      )
+      throw new Error(info.core ? `内核插件 ${id} 不可禁用` : `插件 ${id} 是必需插件，不可禁用`)
     }
 
     // 先让内核落地状态；失败时渲染端仍保持原样
@@ -244,9 +245,7 @@ export class PluginsService extends Service {
     } finally {
       if (audit) {
         const current = snapshotCleanup()
-        reportCleanup(id, this.auditBaselines.get(id), current, (message) =>
-          logWarn('%s', message),
-        )
+        reportCleanup(id, this.auditBaselines.get(id), current, (message) => logWarn('%s', message))
         this.auditBaselines.set(id, current)
       }
     }
@@ -280,7 +279,7 @@ export class PluginsService extends Service {
         } catch (error) {
           throw new PluginFailureError(
             'import',
-            `导入插件 ${info.id} 的页面产物失败：${error instanceof Error ? error.message : String(error)}`,
+            `导入插件 ${info.id} 的页面产物失败：${error instanceof Error ? error.message : String(error)}`
           )
         }
         const candidate = (module.default ?? module) as unknown as Plugin | undefined
@@ -293,24 +292,24 @@ export class PluginsService extends Service {
           try {
             fiber = await scope.plugin(candidate as unknown as Plugin.Object<unknown>, {
               pluginId: info.id,
-              manifest: info.manifest,
+              manifest: info.manifest
             })
           } catch (error) {
             throw new PluginFailureError(
               'apply',
-              `插件 ${info.id} 的页面启动失败：${error instanceof Error ? error.message : String(error)}`,
+              `插件 ${info.id} 的页面启动失败：${error instanceof Error ? error.message : String(error)}`
             )
           }
           // 服务缺失时 cordis 只会让插件停在 pending：页面什么都不注册，
           // 用户看到的是「已启用但空白」。这里显式失败，错误信息能指到具体服务。
           const unmet = Object.keys(fiber.inject).filter(
-            (name) => fiber.ctx.get(name) === undefined,
+            (name) => fiber.ctx.get(name) === undefined
           )
           if (fiber.state !== FIBER_ACTIVE || unmet.length > 0) {
             await fiber.dispose()
             throw new PluginFailureError(
               unmet.length > 0 ? 'dependency' : 'apply',
-              `插件 ${info.id} 声明的服务尚未提供：${unmet.join('、') || '未知'}`,
+              `插件 ${info.id} 声明的服务尚未提供：${unmet.join('、') || '未知'}`
             )
           }
           this.fibers.set(info.id, fiber)
@@ -345,7 +344,7 @@ export class PluginsService extends Service {
       await this.owner.ipc.invoke('mics.kernel', 'plugins/fail', {
         id,
         message,
-        stage: error.stage,
+        stage: error.stage
       })
       await this.refresh()
     } catch {

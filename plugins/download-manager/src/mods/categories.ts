@@ -37,14 +37,15 @@ const DEFINITIONS: readonly ModCategoryDefinition[] = [
   { id: 'economy', label: '经济', modrinth: 'economy' },
   { id: 'minigame', label: '小游戏', modrinth: 'minigame' },
   { id: 'game-mechanics', label: '机制', modrinth: 'game-mechanics' },
-  { id: 'bugfix', label: '修复', curseforge: [6821] },
+  { id: 'bugfix', label: '修复', curseforge: [6821] }
 ]
 
 const BY_ID = new Map(DEFINITIONS.map((definition) => [definition.id, definition]))
 const BY_MODRINTH = new Map(
-  DEFINITIONS
-    .filter((definition) => definition.modrinth)
-    .map((definition) => [definition.modrinth!, definition]),
+  DEFINITIONS.filter((definition) => definition.modrinth).map((definition) => [
+    definition.modrinth!,
+    definition
+  ])
 )
 
 /** 加载器在 Modrinth 搜索里也是分类值；展示标签时要去掉 */
@@ -84,7 +85,7 @@ const CURSEFORGE_LABELS: Record<string, string> = {
   'API and Library': '前置库',
   Redstone: '红石',
   'Player Transport': '交通',
-  'Bug Fixes': '修复',
+  'Bug Fixes': '修复'
 }
 
 /** Modrinth 搜索结果里的分类 slug -> 页面展示名 */

@@ -49,23 +49,29 @@ export function parseMetaLoaderVersions(value: unknown, gameVersion: string): Lo
       gameVersion,
       channel: stable ? 'stable' : 'beta',
       // meta 列表不带发布日期；渲染端留空，不伪造时间
-      date: '',
+      date: ''
     })
   }
   return versions
 }
 
-function parseProfile(value: unknown, gameVersion: string, kind: LoaderSourceKind): LoaderInstallPlan {
+function parseProfile(
+  value: unknown,
+  gameVersion: string,
+  kind: LoaderSourceKind
+): LoaderInstallPlan {
   const record = recordOf(value)
   const versionId = stringOf(record?.id)
   if (!record || !versionId) throw new Error('加载器版本档案缺少版本 id')
 
-  const libraries = Array.isArray(record.libraries) ? (record.libraries as VersionDetail['libraries']) : []
+  const libraries = Array.isArray(record.libraries)
+    ? (record.libraries as VersionDetail['libraries'])
+    : []
   const version: VersionDetail = {
     ...(record as unknown as VersionDetail),
     id: versionId,
     inheritsFrom: stringOf(record.inheritsFrom) || gameVersion,
-    libraries: normalizeLoaderLibraries(libraries ?? [], OFFICIAL_LOADER_BASES[kind].maven),
+    libraries: normalizeLoaderLibraries(libraries ?? [], OFFICIAL_LOADER_BASES[kind].maven)
   }
   return { versionId, version, mode: 'profile' }
 }
@@ -76,20 +82,20 @@ function createMetaProvider(kind: LoaderSourceKind, { api }: MetaApi): LoaderPro
 
     async listVersions(gameVersion, env) {
       const raw = await env.fetchJson<unknown>(
-        `/${api}/versions/loader/${encodeURIComponent(gameVersion)}`,
+        `/${api}/versions/loader/${encodeURIComponent(gameVersion)}`
       )
       return parseMetaLoaderVersions(raw, gameVersion)
     },
 
     async install(input, env) {
       const raw = await env.fetchJson<unknown>(
-        `/${api}/versions/loader/${encodeURIComponent(input.gameVersion)}`
-        + `/${encodeURIComponent(input.loaderVersion)}/profile/json`,
+        `/${api}/versions/loader/${encodeURIComponent(input.gameVersion)}` +
+          `/${encodeURIComponent(input.loaderVersion)}/profile/json`
       )
       const plan = parseProfile(raw, input.gameVersion, kind)
       env.log('info', `加载器档案已就绪：${plan.versionId}`)
       return plan
-    },
+    }
   }
 }
 

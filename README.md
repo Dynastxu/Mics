@@ -117,9 +117,7 @@ plugins/my-plugin/
   "version": "0.1.0",
   "renderer": "dist/renderer.mjs",
   "contributes": {
-    "nav": [
-      { "id": "my.view", "group": "download", "title": "我的分类", "order": 70 }
-    ]
+    "nav": [{ "id": "my.view", "group": "download", "title": "我的分类", "order": 70 }]
   }
 }
 ```
@@ -138,7 +136,7 @@ export default defineRendererPlugin({
   inject,
   apply(ctx) {
     ctx.ui.registerView('my.view', MyView)
-  },
+  }
 })
 ```
 
@@ -155,7 +153,7 @@ export default defineMainPlugin({
   inject,
   apply(ctx) {
     ctx.ipc.handle('ping', () => 'pong')
-  },
+  }
 })
 ```
 
@@ -234,7 +232,7 @@ export default defineMainPlugin({
 
     // 需要固定标签时显式指定
     ctx.logs.scope('download').warn('镜像不可用，回退到官方源')
-  },
+  }
 })
 ```
 
@@ -268,7 +266,7 @@ import {
   InstanceInstallDialog,
   InstanceNameField,
   ListPager,
-  ToggleSwitch,
+  ToggleSwitch
 } from '@mics/ui'
 import type { CatalogVersion, FilterGroup, FilterSelection, ListRow } from '@mics/ui'
 ```

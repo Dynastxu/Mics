@@ -8,7 +8,7 @@ import type {
   ConfigurationSource,
   ConfigurationValue,
   KernelConfig,
-  PluginId,
+  PluginId
 } from '@mics/sdk'
 import { normalizeConfigurationValue, pluginIdOf } from '@mics/sdk'
 
@@ -20,7 +20,7 @@ export interface ResolvedConfiguration {
 }
 
 export type ConfigurationSchemaResolver = (
-  pluginId: PluginId,
+  pluginId: PluginId
 ) => ConfigurationContribution | undefined
 
 /**

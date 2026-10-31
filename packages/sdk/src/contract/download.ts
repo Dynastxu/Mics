@@ -31,7 +31,7 @@ export const LOADER_LABELS: Record<LoaderKind, string> = {
   vanilla: '原版',
   fabric: 'Fabric',
   forge: 'Forge',
-  neoforge: 'NeoForge',
+  neoforge: 'NeoForge'
 }
 
 export function isLoaderSourceKind(value: unknown): value is LoaderSourceKind {
@@ -59,12 +59,7 @@ export interface LoaderOption {
 
 /** 下载任务状态 */
 export type DownloadTaskState =
-  | 'pending'
-  | 'downloading'
-  | 'paused'
-  | 'verifying'
-  | 'done'
-  | 'failed'
+  'pending' | 'downloading' | 'paused' | 'verifying' | 'done' | 'failed'
 
 /** 下载任务进度 */
 export interface DownloadProgress {
@@ -285,12 +280,7 @@ export interface InstallRepairRequest {
  * 启动页据此显示「下载中 / 已暂停 / 不完整」。
  */
 export type InstallLiveState =
-  | 'preparing'
-  | 'downloading'
-  | 'paused'
-  | 'failed'
-  | 'done'
-  | 'cancelled'
+  'preparing' | 'downloading' | 'paused' | 'failed' | 'done' | 'cancelled'
 
 export interface InstanceInstallStatus {
   /** 实例目录名 */
@@ -332,15 +322,15 @@ export const DEFAULT_DOWNLOAD_SOURCES: ReadonlyArray<DownloadSource> = [
     launchermeta: 'launchermeta.mojang.com',
     libraries: 'libraries.minecraft.net',
     resources: 'resources.download.minecraft.net',
-    enabled: true,
+    enabled: true
   },
   {
     label: 'BMCLAPI 镜像',
     launchermeta: 'bmclapi2.bangbang93.com',
     libraries: 'bmclapi2.bangbang93.com/maven',
     resources: 'bmclapi2.bangbang93.com/assets',
-    enabled: true,
-  },
+    enabled: true
+  }
 ]
 
 /**
@@ -360,7 +350,7 @@ export function normalizeDownloadSources(value: unknown): DownloadSource[] {
       launchermeta: typeof record.launchermeta === 'string' ? record.launchermeta : '',
       libraries: typeof record.libraries === 'string' ? record.libraries : '',
       resources: typeof record.resources === 'string' ? record.resources : '',
-      enabled: record.enabled !== false,
+      enabled: record.enabled !== false
     })
   }
   return sources
@@ -391,14 +381,14 @@ export const DEFAULT_LOADER_SOURCES: ReadonlyArray<LoaderSource> = [
     kind: 'fabric',
     meta: 'meta.fabricmc.net',
     maven: 'maven.fabricmc.net',
-    enabled: true,
+    enabled: true
   },
   {
     label: 'Forge 官方',
     kind: 'forge',
     meta: 'files.minecraftforge.net',
     maven: 'maven.minecraftforge.net',
-    enabled: true,
+    enabled: true
   },
   {
     label: 'NeoForge 官方',
@@ -406,29 +396,29 @@ export const DEFAULT_LOADER_SOURCES: ReadonlyArray<LoaderSource> = [
     // 版本接口在站点根路径 /api 下；文件仍在 /releases
     meta: 'maven.neoforged.net',
     maven: 'maven.neoforged.net/releases',
-    enabled: true,
+    enabled: true
   },
   {
     label: 'Fabric BMCLAPI',
     kind: 'fabric',
     meta: 'bmclapi2.bangbang93.com/fabric-meta',
     maven: 'bmclapi2.bangbang93.com/maven',
-    enabled: true,
+    enabled: true
   },
   {
     label: 'Forge BMCLAPI',
     kind: 'forge',
     meta: 'bmclapi2.bangbang93.com/forge',
     maven: 'bmclapi2.bangbang93.com/maven',
-    enabled: true,
+    enabled: true
   },
   {
     label: 'NeoForge BMCLAPI',
     kind: 'neoforge',
     meta: 'bmclapi2.bangbang93.com',
     maven: 'bmclapi2.bangbang93.com/maven',
-    enabled: true,
-  },
+    enabled: true
+  }
 ]
 
 /**
@@ -452,7 +442,7 @@ export function normalizeLoaderSources(value: unknown): LoaderSource[] {
       kind: record.kind,
       meta: meta || official?.meta || '',
       maven: maven || official?.maven || '',
-      enabled: record.enabled !== false,
+      enabled: record.enabled !== false
     })
   }
   return sources
@@ -487,9 +477,7 @@ export function parseDownloadSegments(value: unknown): number {
   if (raw === 'auto') return 4
   if (raw === 'off') return MIN_DOWNLOAD_SEGMENTS
   const parsed = Number(raw)
-  const amount = raw === '' || !Number.isFinite(parsed)
-    ? Number(DEFAULT_DOWNLOAD_SEGMENTS)
-    : parsed
+  const amount = raw === '' || !Number.isFinite(parsed) ? Number(DEFAULT_DOWNLOAD_SEGMENTS) : parsed
   return Math.max(MIN_DOWNLOAD_SEGMENTS, Math.min(MAX_DOWNLOAD_SEGMENTS, Math.round(amount)))
 }
 
@@ -547,9 +535,10 @@ export function parseDownloadCacheLimit(value: unknown): DownloadCacheLimit {
   if (raw === DOWNLOAD_CACHE_LIMIT_UNLIMITED) return { mode: 'unlimited', megabytes: 0 }
   if (raw === DOWNLOAD_CACHE_LIMIT_OFF || raw === '0') return { mode: 'off', megabytes: 0 }
   const parsed = Number(raw)
-  const megabytes = Number.isFinite(parsed) && parsed > 0
-    ? Math.min(MAX_DOWNLOAD_CACHE_MB, Math.max(1, Math.round(parsed)))
-    : DEFAULT_DOWNLOAD_CACHE_LIMIT_MB
+  const megabytes =
+    Number.isFinite(parsed) && parsed > 0
+      ? Math.min(MAX_DOWNLOAD_CACHE_MB, Math.max(1, Math.round(parsed)))
+      : DEFAULT_DOWNLOAD_CACHE_LIMIT_MB
   return { mode: 'limit', megabytes }
 }
 

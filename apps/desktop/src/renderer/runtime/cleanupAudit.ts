@@ -37,7 +37,7 @@ function captureStack(): string {
 function trackListener(
   map: Map<string, ListenerTracked[]>,
   type: string,
-  listener: EventListenerOrEventListenerObject,
+  listener: EventListenerOrEventListenerObject
 ): void {
   const entries = map.get(type) ?? []
   if (entries.some((entry) => entry.listener === listener)) return
@@ -48,7 +48,7 @@ function trackListener(
 function untrackListener(
   map: Map<string, ListenerTracked[]>,
   type: string,
-  listener: EventListenerOrEventListenerObject,
+  listener: EventListenerOrEventListenerObject
 ): void {
   const entries = map.get(type)
   if (!entries) return
@@ -60,13 +60,13 @@ function untrackListener(
 type AddListener = (
   type: string,
   listener: EventListenerOrEventListenerObject,
-  options?: boolean | AddEventListenerOptions,
+  options?: boolean | AddEventListenerOptions
 ) => void
 
 type RemoveListener = (
   type: string,
   listener: EventListenerOrEventListenerObject,
-  options?: boolean | EventListenerOptions,
+  options?: boolean | EventListenerOptions
 ) => void
 
 /** 安装审计；重复调用是幂等的 */
@@ -87,7 +87,7 @@ function wrapGlobals(): void {
   window.addEventListener = ((
     type: string,
     listener: EventListenerOrEventListenerObject,
-    options?: boolean | AddEventListenerOptions,
+    options?: boolean | AddEventListenerOptions
   ) => {
     trackListener(windowListeners, type, listener)
     addWindow(type, listener, options)
@@ -97,7 +97,7 @@ function wrapGlobals(): void {
   window.removeEventListener = ((
     type: string,
     listener: EventListenerOrEventListenerObject,
-    options?: boolean | EventListenerOptions,
+    options?: boolean | EventListenerOptions
   ) => {
     untrackListener(windowListeners, type, listener)
     removeWindow(type, listener, options)
@@ -107,7 +107,7 @@ function wrapGlobals(): void {
   document.addEventListener = ((
     type: string,
     listener: EventListenerOrEventListenerObject,
-    options?: boolean | AddEventListenerOptions,
+    options?: boolean | AddEventListenerOptions
   ) => {
     trackListener(documentListeners, type, listener)
     addDocument(type, listener, options)
@@ -117,7 +117,7 @@ function wrapGlobals(): void {
   document.removeEventListener = ((
     type: string,
     listener: EventListenerOrEventListenerObject,
-    options?: boolean | EventListenerOptions,
+    options?: boolean | EventListenerOptions
   ) => {
     untrackListener(documentListeners, type, listener)
     removeDocument(type, listener, options)
@@ -150,7 +150,7 @@ export function snapshotCleanup(): CleanupSnapshot {
     statusBar: store.runtimeStatus.length,
     styles: document.querySelectorAll('link[data-mics-style]').length,
     commands: store.commands.length,
-    intervals: intervals.size,
+    intervals: intervals.size
   }
   for (const [type, count] of Object.entries(listenerCounts(windowListeners))) {
     counts[`window:${type}`] = count
@@ -182,7 +182,7 @@ export function reportCleanup(
   pluginId: string,
   previous: CleanupSnapshot | undefined,
   current: CleanupSnapshot,
-  warn: (message: string) => void,
+  warn: (message: string) => void
 ): void {
   if (!previous) return
 
@@ -195,8 +195,11 @@ export function reportCleanup(
     warn(
       `渲染端插件 ${pluginId} 重载后 ${label} 从 ${before} 增加到 ${count}` +
         (recent.length
-          ? `\n${recent.map((track) => track.stack).filter(Boolean).join('\n---\n')}`
-          : ''),
+          ? `\n${recent
+              .map((track) => track.stack)
+              .filter(Boolean)
+              .join('\n---\n')}`
+          : '')
     )
   }
 }

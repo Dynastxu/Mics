@@ -35,7 +35,7 @@ const binary = path.join(
     ? 'electron.exe'
     : process.platform === 'darwin'
       ? path.join('Electron.app', 'Contents', 'MacOS', 'Electron')
-      : 'electron',
+      : 'electron'
 )
 
 if (existsSync(binary) && !process.argv.includes('--force')) {
@@ -51,8 +51,8 @@ const result = spawnSync(process.execPath, [installPath], {
   cwd: electronDir,
   env: {
     ...process.env,
-    ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || 'https://npmmirror.com/mirrors/electron/',
-  },
+    ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || 'https://npmmirror.com/mirrors/electron/'
+  }
 })
 
 if (result.status !== 0) {

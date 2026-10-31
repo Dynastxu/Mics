@@ -22,11 +22,7 @@ export function useSourceDrag() {
     overIndex.value = index
   }
 
-  function onDrop<T>(
-    items: Ref<T[]>,
-    index: number,
-    onChanged: () => void,
-  ): void {
+  function onDrop<T>(items: Ref<T[]>, index: number, onChanged: () => void): void {
     const from = dragIndex.value
     resetDrag()
     if (from < 0 || from === index) return

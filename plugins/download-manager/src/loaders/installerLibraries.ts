@@ -66,10 +66,9 @@ function parseLibraries(text: string | null, kind: LoaderSourceKind): InstallerL
   const record = recordOf(parsed)
   // 1.13+：install_profile 顶层 libraries 是安装器/处理器依赖；
   // 更老的安装器把版本信息塞在 install_profile.versionInfo 里。
-  const lists = [
-    record?.libraries,
-    recordOf(record?.versionInfo)?.libraries,
-  ].filter(Array.isArray) as unknown[][]
+  const lists = [record?.libraries, recordOf(record?.versionInfo)?.libraries].filter(
+    Array.isArray
+  ) as unknown[][]
 
   const base = OFFICIAL_LOADER_BASES[kind].maven
   const libraries: InstallerLibrary[] = []
@@ -94,7 +93,7 @@ function parseLibraries(text: string | null, kind: LoaderSourceKind): InstallerL
         path: relative,
         url,
         sha1: stringOf(artifact?.sha1),
-        size: numberOf(artifact?.size),
+        size: numberOf(artifact?.size)
       })
     }
   }
@@ -120,20 +119,26 @@ function mergeLibraries(lists: InstallerLibrary[][]): InstallerLibrary[] {
 
 async function sha1Of(file: string): Promise<string | null> {
   try {
-    return createHash('sha1').update(await readFile(file)).digest('hex')
+    return createHash('sha1')
+      .update(await readFile(file))
+      .digest('hex')
   } catch {
     return null
   }
 }
 
 /** 共享库目录里已有同内容文件时，硬链接到安装器目录，省掉一次下载 */
-async function reuseFromShared(spec: InstallerLibrary, target: string, sharedRoot: string): Promise<boolean> {
+async function reuseFromShared(
+  spec: InstallerLibrary,
+  target: string,
+  sharedRoot: string
+): Promise<boolean> {
   const source = path.join(sharedRoot, spec.path)
   try {
     const info = await stat(source)
     if (!info.isFile()) return false
     if (spec.size > 0 && info.size !== spec.size) return false
-    if (spec.sha1 && await sha1Of(source) !== spec.sha1) return false
+    if (spec.sha1 && (await sha1Of(source)) !== spec.sha1) return false
   } catch {
     return false
   }
@@ -158,7 +163,11 @@ async function reuseFromShared(spec: InstallerLibrary, target: string, sharedRoo
  * 任何一个失败就停止派发新任务，但**等在途任务结束**再抛出：安装器马上要跑，
  * 不能让后台下载继续往它的 libraries 目录里写。
  */
-async function eachLimit<T>(items: readonly T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+async function eachLimit<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
   let cursor = 0
   let failure: unknown = null
 
@@ -184,12 +193,12 @@ async function eachLimit<T>(items: readonly T[], limit: number, worker: (item: T
 export async function prefetchInstallerLibraries(
   installerPath: string,
   kind: LoaderSourceKind,
-  options: InstallerPrefetchOptions,
+  options: InstallerPrefetchOptions
 ): Promise<void> {
   const libraries = mergeLibraries([
     parseLibraries(readZipTextEntry(installerPath, 'install_profile.json'), kind),
     // 安装器自己也会逐个下载 version.json 里的运行库（日志里的 "Considering library"）
-    parseLibraries(readZipTextEntry(installerPath, 'version.json'), kind),
+    parseLibraries(readZipTextEntry(installerPath, 'version.json'), kind)
   ])
   if (libraries.length === 0) return
 

@@ -68,7 +68,7 @@ function installStateOf(instanceDir: string): InstanceInstallState {
  */
 function resolveVersion(
   instanceDir: string,
-  preferredVersion?: string,
+  preferredVersion?: string
 ): { file: string; version: VersionJson } | null {
   let entries: string[]
   try {
@@ -86,7 +86,9 @@ function resolveVersion(
     let mtime = 0
     try {
       mtime = statSync(file).mtimeMs
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     candidates.push({ file, mtime, version })
   }
 
@@ -130,7 +132,7 @@ function toSummary(instance: ResolvedInstance): InstanceSummary {
     mods: countMods(instance.dir),
     lastPlayed: instance.metadata.lastPlayed ?? null,
     versionId: instance.version.id,
-    installState: instance.installState,
+    installState: instance.installState
   }
 }
 
@@ -152,7 +154,7 @@ export function resolveInstance(userDataDir: string, id: string): ResolvedInstan
     layout: resolveInstanceLayout(userDataDir, instanceDir),
     metadataPath,
     metadata,
-    installState: installStateOf(instanceDir),
+    installState: installStateOf(instanceDir)
   }
 }
 
@@ -178,7 +180,7 @@ export function markInstanceLaunched(instance: ResolvedInstance, username: strin
     ...instance.metadata,
     lastPlayed: Date.now(),
     lastVersion: instance.version.id,
-    username,
+    username
   }
   writeFileSync(instance.metadataPath, JSON.stringify(metadata, null, 2), 'utf8')
 }

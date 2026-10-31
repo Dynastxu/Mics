@@ -6,7 +6,7 @@ import type {
   MicsWindowState,
   PluginId,
   RpcResponse,
-  RuntimeEventEnvelope,
+  RuntimeEventEnvelope
 } from '@mics/sdk'
 
 type Listener = (envelope: RuntimeEventEnvelope) => void
@@ -35,7 +35,7 @@ const bridge: MicsBridge = {
     electron: process.versions.electron ?? '',
     chrome: process.versions.chrome ?? '',
     node: process.versions.node ?? '',
-    v8: process.versions.v8 ?? '',
+    v8: process.versions.v8 ?? ''
   },
   platform: process.platform,
   windowControls: {
@@ -50,26 +50,26 @@ const bridge: MicsBridge = {
       return () => {
         windowStateListeners.delete(listener)
       }
-    },
+    }
   },
   rpc: {
-    invoke: async <T,>(
+    invoke: async <T>(
       target: PluginId,
       method: string,
       params?: unknown,
-      callerId?: PluginId,
+      callerId?: PluginId
     ): Promise<T> => {
       const response = (await ipcRenderer.invoke('mics:rpc', {
         target,
         method,
         params,
-        callerId,
+        callerId
       })) as RpcResponse
       if (!response.ok) {
         throw new Error(response.error.message)
       }
       return response.value as T
-    },
+    }
   },
   events: {
     on(topic: string, listener: Listener): () => void {
@@ -86,8 +86,8 @@ const bridge: MicsBridge = {
     },
     emit(topic: string, payload?: unknown, callerId?: PluginId): void {
       ipcRenderer.send('mics:event:emit', { topic, payload, callerId })
-    },
-  },
+    }
+  }
 }
 
 contextBridge.exposeInMainWorld('mics', bridge)

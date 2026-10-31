@@ -14,7 +14,7 @@ import type {
   InstanceSummary,
   InstanceUsage,
   InstanceUsageEntry,
-  LaunchProcessInfo,
+  LaunchProcessInfo
 } from '../shared'
 import DeleteInstanceDialog from './DeleteInstanceDialog.vue'
 import DeleteModDialog from './DeleteModDialog.vue'
@@ -46,7 +46,7 @@ type DetailTab = 'overview' | 'logs' | 'mods'
 const TABS: Array<{ id: DetailTab; label: string }> = [
   { id: 'overview', label: '概览' },
   { id: 'logs', label: '日志' },
-  { id: 'mods', label: 'Mod' },
+  { id: 'mods', label: 'Mod' }
 ]
 
 const USAGE_LABELS: Record<string, string> = {
@@ -62,7 +62,7 @@ const USAGE_LABELS: Record<string, string> = {
   shaderpacks: '光影包',
   screenshots: '截图',
   'crash-reports': '崩溃报告',
-  defaultconfigs: '默认配置',
+  defaultconfigs: '默认配置'
 }
 
 const ACCENTS = ['', 'mics-avatar--amber', 'mics-avatar--teal', 'mics-avatar--rose']
@@ -121,12 +121,12 @@ const avatarClass = computed(() => {
 
 const usageRows = computed(() => usage.value?.entries.slice(0, 8) ?? [])
 const usageHiddenCount = computed(() =>
-  Math.max(0, (usage.value?.entries.length ?? 0) - usageRows.value.length),
+  Math.max(0, (usage.value?.entries.length ?? 0) - usageRows.value.length)
 )
 
 const modCount = computed(() => mods.value?.entries.length ?? 0)
 const enabledModCount = computed(
-  () => mods.value?.entries.filter((entry) => entry.enabled).length ?? 0,
+  () => mods.value?.entries.filter((entry) => entry.enabled).length ?? 0
 )
 const filteredMods = computed(() => {
   const entries = mods.value?.entries ?? []
@@ -168,7 +168,7 @@ function formatDate(timestamp: number | null): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hour12: false
   }).format(new Date(timestamp))
 }
 
@@ -212,7 +212,7 @@ async function loadDetail(): Promise<void> {
   error.value = ''
   try {
     detail.value = await ctx.ipc.invoke<InstanceDetail>('mics.launch', 'instances/detail', {
-      id: props.instance.id,
+      id: props.instance.id
     })
   } catch (cause) {
     error.value = `无法读取实例信息：${messageOf(cause)}`
@@ -227,7 +227,7 @@ async function loadUsage(): Promise<void> {
   notice.value = ''
   try {
     usage.value = await ctx.ipc.invoke<InstanceUsage>('mics.launch', 'instances/usage', {
-      id: props.instance.id,
+      id: props.instance.id
     })
   } catch (cause) {
     notice.value = `统计占用大小失败：${messageOf(cause)}`
@@ -282,7 +282,7 @@ async function reveal(area: InstanceArea): Promise<void> {
   try {
     await ctx.ipc.invoke('mics.launch', 'instances/reveal', {
       id: props.instance.id,
-      area,
+      area
     })
   } catch (cause) {
     notice.value = `打开文件夹失败：${messageOf(cause)}`
@@ -294,17 +294,18 @@ async function loadLogs(preferred?: string): Promise<void> {
   logsError.value = ''
   try {
     const files = await ctx.ipc.invoke<InstanceLogFile[]>('mics.launch', 'instances/logs', {
-      id: props.instance.id,
+      id: props.instance.id
     })
     logFiles.value = files
     logsLoaded = true
 
     const available = (name: string): boolean => files.some((file) => file.name === name)
-    const next = preferred && available(preferred)
-      ? preferred
-      : logName.value && available(logName.value)
-        ? logName.value
-        : files[0]?.name
+    const next =
+      preferred && available(preferred)
+        ? preferred
+        : logName.value && available(logName.value)
+          ? logName.value
+          : files[0]?.name
 
     if (next) {
       await openLog(next)
@@ -331,7 +332,7 @@ async function openLog(name: string): Promise<void> {
   try {
     const content = await ctx.ipc.invoke<InstanceLogContent>('mics.launch', 'instances/log', {
       id: props.instance.id,
-      name,
+      name
     })
     if (sequence !== logSequence) return
     logContent.value = content
@@ -354,7 +355,7 @@ async function identifyMods(entries: InstanceModEntry[]): Promise<void> {
     .map((entry) => ({
       key: entry.fileName,
       ...(entry.sha1 ? { sha1: entry.sha1 } : {}),
-      ...(entry.murmur2 !== undefined ? { murmur2: entry.murmur2 } : {}),
+      ...(entry.murmur2 !== undefined ? { murmur2: entry.murmur2 } : {})
     }))
   if (files.length === 0) return
 
@@ -362,7 +363,7 @@ async function identifyMods(entries: InstanceModEntry[]): Promise<void> {
     const identities = await ctx.ipc.invoke<ModIdentity[]>(
       'mics.download.manager',
       'mods/identify',
-      { files },
+      { files }
     )
     if (sequence !== identifySequence) return
     const currentEntries = mods.value?.entries
@@ -386,7 +387,7 @@ async function loadMods(): Promise<void> {
   modsError.value = ''
   try {
     const updated = await ctx.ipc.invoke<InstanceMods>('mics.launch', 'instances/mods', {
-      id: props.instance.id,
+      id: props.instance.id
     })
     mods.value = updated
     modsLoaded = true
@@ -407,7 +408,7 @@ async function toggleMod(entry: InstanceModEntry, enabled = !entry.enabled): Pro
     const updated = await ctx.ipc.invoke<InstanceMods>('mics.launch', 'instances/mods/toggle', {
       id: props.instance.id,
       fileName: entry.fileName,
-      enabled,
+      enabled
     })
     mods.value = updated
     emit('changed', updated.entries.filter((item) => item.enabled).length)
@@ -452,12 +453,12 @@ function openModDetail(entry: InstanceModEntry): void {
         fileName: entry.fileName,
         gameVersion: props.instance.minecraft,
         loader: instanceLoaderKind(),
-        versionId: identity.versionId,
+        versionId: identity.versionId
       }
     : {
         query: modSearchQuery(entry),
         ...(entry.modName ? { name: entry.modName } : {}),
-        fileName: entry.fileName,
+        fileName: entry.fileName
       }
   const globalStore = globalThis as typeof globalThis & Record<string, unknown>
   globalStore[MOD_OPEN_INTENT_KEY] = intent
@@ -484,7 +485,7 @@ async function confirmDeleteMod(): Promise<void> {
   try {
     const updated = await ctx.ipc.invoke<InstanceMods>('mics.launch', 'instances/mods/delete', {
       id: props.instance.id,
-      fileName: entry.fileName,
+      fileName: entry.fileName
     })
     mods.value = updated
     modDeleteTarget.value = null
@@ -744,7 +745,9 @@ onMounted(() => {
         <div v-else-if="!logFiles.length" class="mics-empty">
           还没有日志。启动一次游戏后，日志会出现在这里。
         </div>
-        <pre v-else ref="logView" class="detail__log">{{ logContent?.content || (logLoading ? '正在读取日志…' : '日志为空') }}</pre>
+        <pre v-else ref="logView" class="detail__log">{{
+          logContent?.content || (logLoading ? '正在读取日志…' : '日志为空')
+        }}</pre>
       </section>
 
       <section v-else class="detail__panel">
@@ -815,7 +818,17 @@ onMounted(() => {
               @click.stop="requestDeleteMod(entry)"
               @keydown.stop
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
                 <path d="M3 6h18" />
                 <path d="M8 6V4h8v2" />
                 <path d="M19 6l-1 14H6L5 6" />
@@ -877,7 +890,9 @@ onMounted(() => {
   color: var(--mics-fg-muted);
   font-size: 14px;
   line-height: 1;
-  transition: border-color 0.12s ease, color 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .detail__back:hover {
@@ -919,7 +934,9 @@ onMounted(() => {
   border-radius: 6px;
   color: var(--mics-fg-muted);
   font-size: 12px;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .detail__tab:hover {
@@ -1012,7 +1029,7 @@ onMounted(() => {
   border-radius: 7px;
   background: var(--mics-bg);
   color: var(--mics-fg-muted);
-  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: 'Cascadia Code', 'Consolas', ui-monospace, monospace;
   font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1091,7 +1108,7 @@ onMounted(() => {
   border-radius: 10px;
   background: var(--mics-bg-elevated);
   color: var(--mics-fg);
-  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: 'Cascadia Code', 'Consolas', ui-monospace, monospace;
   font-size: 11.5px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -1134,7 +1151,10 @@ onMounted(() => {
   border-radius: 7px;
   background: transparent;
   color: var(--mics-fg-muted);
-  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .detail__mod-delete:hover:not(:disabled) {

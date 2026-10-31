@@ -9,7 +9,12 @@ import type { VersionDetail } from '../version'
 import { moveTreeInto, tailText } from './fs'
 import { prefetchInstallerLibraries } from './installerLibraries'
 import { absoluteUrl, OFFICIAL_LOADER_BASES, originOf } from './sources'
-import type { LoaderEnvironment, LoaderInstallInput, LoaderInstallPlan, LoaderProvider } from './types'
+import type {
+  LoaderEnvironment,
+  LoaderInstallInput,
+  LoaderInstallPlan,
+  LoaderProvider
+} from './types'
 
 /**
  * Forge / NeoForge：官方只发布安装器（installer.jar）。
@@ -48,7 +53,7 @@ function parseForgePromotions(value: unknown, gameVersion: string): LoaderVersio
       gameVersion,
       // 没有 recommended 时，latest 就是唯一可用的版本
       channel: recommended ? 'beta' : 'stable',
-      date: '',
+      date: ''
     })
   }
   return versions
@@ -73,7 +78,7 @@ function parseBmclForgeVersions(value: unknown, gameVersion: string): LoaderVers
       id,
       gameVersion,
       channel: branch === 'latest' || isPrerelease(id) ? 'beta' : 'stable',
-      date: modified ? modified.slice(0, 10) : '',
+      date: modified ? modified.slice(0, 10) : ''
     })
   }
   return versions
@@ -89,13 +94,15 @@ async function settleWithin<T>(promises: Promise<T>[], graceMs: number): Promise
   const results: T[] = []
   const all = promises.map((promise) =>
     promise.then(
-      (value) => { results.push(value) },
-      () => undefined,
-    ),
+      (value) => {
+        results.push(value)
+      },
+      () => undefined
+    )
   )
   await Promise.race([
     Promise.all(all),
-    new Promise<void>((resolve) => setTimeout(resolve, graceMs)),
+    new Promise<void>((resolve) => setTimeout(resolve, graceMs))
   ])
   return results.slice()
 }
@@ -117,7 +124,10 @@ function mergeLoaderVersions(lists: LoaderVersion[][]): LoaderVersion[] {
 }
 
 /** Forge 的列表接口分散在官方与 BMCLAPI，按源类型分别请求后合并 */
-async function listForgeVersions(gameVersion: string, env: LoaderEnvironment): Promise<LoaderVersion[]> {
+async function listForgeVersions(
+  gameVersion: string,
+  env: LoaderEnvironment
+): Promise<LoaderVersion[]> {
   const requests: Array<Promise<LoaderVersion[]>> = []
   let hasFastSource = false
 
@@ -130,7 +140,7 @@ async function listForgeVersions(gameVersion: string, env: LoaderEnvironment): P
       requests.push(
         env
           .fetchJsonUrl<unknown>(`${origin}/forge/minecraft/${encodeURIComponent(gameVersion)}`)
-          .then((value) => parseBmclForgeVersions(value, gameVersion)),
+          .then((value) => parseBmclForgeVersions(value, gameVersion))
       )
       continue
     }
@@ -138,7 +148,7 @@ async function listForgeVersions(gameVersion: string, env: LoaderEnvironment): P
     requests.push(
       env
         .fetchJson<PromotionList>('/net/minecraftforge/forge/promotions_slim.json')
-        .then((value) => parseForgePromotions(value, gameVersion)),
+        .then((value) => parseForgePromotions(value, gameVersion))
     )
   }
 
@@ -146,8 +156,8 @@ async function listForgeVersions(gameVersion: string, env: LoaderEnvironment): P
   let lists = hasFastSource ? await settleWithin(requests, 1500) : []
   if (lists.length === 0) {
     lists = (await Promise.allSettled(requests))
-      .filter((result): result is PromiseFulfilledResult<LoaderVersion[]> =>
-        result.status === 'fulfilled',
+      .filter(
+        (result): result is PromiseFulfilledResult<LoaderVersion[]> => result.status === 'fulfilled'
       )
       .map((result) => result.value)
   }
@@ -165,7 +175,7 @@ async function listForgeVersions(gameVersion: string, env: LoaderEnvironment): P
       id: version.slice(prefix.length),
       gameVersion,
       channel: isPrerelease(version) ? 'beta' : 'stable',
-      date: '',
+      date: ''
     }))
 }
 
@@ -187,9 +197,10 @@ export function neoforgeGameVersion(version: string): string | null {
   if (major === 47) return '1.20.1'
   if (major >= 26) {
     const patch = parts[2]
-    const base = patch !== undefined && Number(patch) === 0
-      ? `${major}.${minor}`
-      : `${major}.${minor}${patch ? `.${patch}` : ''}`
+    const base =
+      patch !== undefined && Number(patch) === 0
+        ? `${major}.${minor}`
+        : `${major}.${minor}${patch ? `.${patch}` : ''}`
     const plus = version.indexOf('+')
     return plus >= 0 ? `${base}-${version.slice(plus + 1)}` : base
   }
@@ -276,7 +287,10 @@ function isBmclHost(origin: string): boolean {
  * BMCLAPI 则有专门的 `/neoforge/list/{game}` 接口；两者并行请求、结果合并，
  * 只镜像了 maven 文件的源再退回 maven-metadata.xml。
  */
-async function listNeoForgeVersions(gameVersion: string, env: LoaderEnvironment): Promise<LoaderVersion[]> {
+async function listNeoForgeVersions(
+  gameVersion: string,
+  env: LoaderEnvironment
+): Promise<LoaderVersion[]> {
   const legacy = gameVersion === '1.20.1'
   const requests: Array<Promise<string[]>> = []
   let hasFastSource = false
@@ -290,7 +304,7 @@ async function listNeoForgeVersions(gameVersion: string, env: LoaderEnvironment)
       requests.push(
         env
           .fetchJsonUrl<unknown>(`${origin}/neoforge/list/${encodeURIComponent(gameVersion)}`)
-          .then((value) => parseBmclNeoForgeVersions(value, gameVersion)),
+          .then((value) => parseBmclNeoForgeVersions(value, gameVersion))
       )
       continue
     }
@@ -298,18 +312,14 @@ async function listNeoForgeVersions(gameVersion: string, env: LoaderEnvironment)
     const api = legacy
       ? '/api/maven/versions/releases/net/neoforged/forge'
       : '/api/maven/versions/releases/net/neoforged/neoforge'
-    requests.push(
-      env.fetchJsonUrl<unknown>(`${origin}${api}`).then(parseOfficialNeoForgeVersions),
-    )
+    requests.push(env.fetchJsonUrl<unknown>(`${origin}${api}`).then(parseOfficialNeoForgeVersions))
   }
 
   // 有 BMCLAPI 速源时最多等 2.5 秒，官方接口慢也不会一直卡住
   let lists = hasFastSource ? await settleWithin(requests, 2500) : []
   if (lists.length === 0) {
     lists = (await Promise.allSettled(requests))
-      .filter((result): result is PromiseFulfilledResult<string[]> =>
-        result.status === 'fulfilled',
-      )
+      .filter((result): result is PromiseFulfilledResult<string[]> => result.status === 'fulfilled')
       .map((result) => result.value)
   }
 
@@ -320,7 +330,7 @@ async function listNeoForgeVersions(gameVersion: string, env: LoaderEnvironment)
         legacy
           ? '/net/neoforged/forge/maven-metadata.xml'
           : '/net/neoforged/neoforge/maven-metadata.xml',
-        'maven',
+        'maven'
       )
       versions.push(...parseMavenVersions(xml))
     } catch (cause) {
@@ -339,7 +349,7 @@ async function listNeoForgeVersions(gameVersion: string, env: LoaderEnvironment)
       id: version,
       gameVersion,
       channel: isPrerelease(version) ? 'beta' : 'stable',
-      date: '',
+      date: ''
     })
   }
   return result.sort((a, b) => compareSegments(b.id, a.id))
@@ -347,19 +357,21 @@ async function listNeoForgeVersions(gameVersion: string, env: LoaderEnvironment)
 
 function installerUrl(kind: LoaderSourceKind, gameVersion: string, loaderVersion: string): string {
   if (kind === 'forge') {
-    const relative = `/net/minecraftforge/forge/${gameVersion}-${loaderVersion}`
-      + `/forge-${gameVersion}-${loaderVersion}-installer.jar`
+    const relative =
+      `/net/minecraftforge/forge/${gameVersion}-${loaderVersion}` +
+      `/forge-${gameVersion}-${loaderVersion}-installer.jar`
     return absoluteUrl(OFFICIAL_LOADER_BASES.forge.maven, relative)
   }
   // NeoForge 1.20.1 沿用了 Forge 的 net.neoforged:forge 坐标
   if (gameVersion === '1.20.1' && loaderVersion.startsWith('47.')) {
-    const relative = `/net/neoforged/forge/${gameVersion}-${loaderVersion}`
-      + `/forge-${gameVersion}-${loaderVersion}-installer.jar`
+    const relative =
+      `/net/neoforged/forge/${gameVersion}-${loaderVersion}` +
+      `/forge-${gameVersion}-${loaderVersion}-installer.jar`
     return absoluteUrl(OFFICIAL_LOADER_BASES.neoforge.maven, relative)
   }
   return absoluteUrl(
     OFFICIAL_LOADER_BASES.neoforge.maven,
-    `/net/neoforged/neoforge/${loaderVersion}/neoforge-${loaderVersion}-installer.jar`,
+    `/net/neoforged/neoforge/${loaderVersion}/neoforge-${loaderVersion}-installer.jar`
   )
 }
 
@@ -400,7 +412,7 @@ async function moveFile(from: string, to: string): Promise<void> {
  */
 async function findInstalledVersion(
   stagingDir: string,
-  gameVersion: string,
+  gameVersion: string
 ): Promise<{ id: string; version: VersionDetail }> {
   const versionsDir = path.join(stagingDir, 'versions')
   let entries: Dirent[]
@@ -432,7 +444,7 @@ async function promoteInstallerOutput(
   versionId: string,
   gameVersion: string,
   stagingDir: string,
-  librariesDir: string,
+  librariesDir: string
 ): Promise<void> {
   const installedDir = path.join(stagingDir, 'versions', versionId)
   const versionJson = path.join(installedDir, `${versionId}.json`)
@@ -446,7 +458,7 @@ async function promoteInstallerOutput(
   const targetJar = instanceClientJar(instanceDir, versionId)
   for (const candidate of [
     path.join(installedDir, `${versionId}.jar`),
-    path.join(stagingDir, 'versions', gameVersion, `${gameVersion}.jar`),
+    path.join(stagingDir, 'versions', gameVersion, `${gameVersion}.jar`)
   ]) {
     if (!existsSync(candidate)) continue
     await moveFile(candidate, targetJar)
@@ -461,7 +473,7 @@ async function promoteInstallerOutput(
 async function installWithInstaller(
   input: LoaderInstallInput,
   env: LoaderEnvironment,
-  kind: LoaderSourceKind,
+  kind: LoaderSourceKind
 ): Promise<LoaderInstallPlan> {
   const { gameVersion, loaderVersion, instanceDir, parent } = input
   const stagingDir = path.join(instanceDir, STAGING_DIR)
@@ -474,7 +486,7 @@ async function installWithInstaller(
   await writeFile(
     path.join(parentDir, `${gameVersion}.json`),
     JSON.stringify(parent, null, 2),
-    'utf8',
+    'utf8'
   )
 
   const client = parent.downloads?.client
@@ -484,7 +496,7 @@ async function installWithInstaller(
     client.url,
     path.join(parentDir, `${gameVersion}.jar`),
     client.sha1 ?? '',
-    client.size ?? 0,
+    client.size ?? 0
   )
 
   // 官方安装器的 ClientInstall 会先检查启动器档案文件；暂存目录是新建的，
@@ -492,7 +504,7 @@ async function installWithInstaller(
   await writeFile(
     path.join(stagingDir, 'launcher_profiles.json'),
     JSON.stringify({ profiles: {} }, null, 2),
-    'utf8',
+    'utf8'
   )
 
   const installerPath = path.join(workDir, 'installer.jar')
@@ -509,7 +521,7 @@ async function installWithInstaller(
       download: (url, target, sha1 = '', size = 0) =>
         env.download(url, target, sha1, size, { reportProgress: false }),
       report: (note, percent) => env.report?.(note, percent),
-      log: (level, message) => env.log(level, message),
+      log: (level, message) => env.log(level, message)
     })
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause)
@@ -524,7 +536,7 @@ async function installWithInstaller(
       args: ['-jar', installerPath, '--installClient', stagingDir],
       cwd: stagingDir,
       logFile,
-      requiredMajor: parent.javaVersion?.majorVersion ?? 8,
+      requiredMajor: parent.javaVersion?.majorVersion ?? 8
     })
   } catch (cause) {
     const detail = await tailText(logFile)
@@ -533,7 +545,13 @@ async function installWithInstaller(
   }
 
   const installed = await findInstalledVersion(stagingDir, gameVersion)
-  await promoteInstallerOutput(instanceDir, installed.id, gameVersion, stagingDir, input.librariesDir)
+  await promoteInstallerOutput(
+    instanceDir,
+    installed.id,
+    gameVersion,
+    stagingDir,
+    input.librariesDir
+  )
   env.log('info', `${LOADER_LABELS[kind]} 安装器完成：${installed.id}`)
   return { versionId: installed.id, version: installed.version, mode: 'installer' }
 }
@@ -541,11 +559,11 @@ async function installWithInstaller(
 export const forgeProvider: LoaderProvider = {
   kind: 'forge',
   listVersions: listForgeVersions,
-  install: (input, env) => installWithInstaller(input, env, 'forge'),
+  install: (input, env) => installWithInstaller(input, env, 'forge')
 }
 
 export const neoforgeProvider: LoaderProvider = {
   kind: 'neoforge',
   listVersions: listNeoForgeVersions,
-  install: (input, env) => installWithInstaller(input, env, 'neoforge'),
+  install: (input, env) => installWithInstaller(input, env, 'neoforge')
 }

@@ -25,7 +25,10 @@ export function resolveEntry(dir: string, relative: string): string | undefined 
   const absolute = path.resolve(dir, relative)
   const normalizedDir = dir.toLowerCase()
   const normalizedFile = absolute.toLowerCase()
-  if (normalizedFile !== normalizedDir && !normalizedFile.startsWith(`${normalizedDir}${path.sep}`)) {
+  if (
+    normalizedFile !== normalizedDir &&
+    !normalizedFile.startsWith(`${normalizedDir}${path.sep}`)
+  ) {
     return undefined
   }
   return existsSync(absolute) ? absolute : undefined
@@ -40,7 +43,7 @@ export function resolveEntry(dir: string, relative: string): string | undefined 
 export async function readPluginDirectory(
   dir: string,
   source: PluginSource,
-  strict = false,
+  strict = false
 ): Promise<PluginDirectoryResult> {
   const manifestFile = path.join(dir, 'plugin.json')
   if (!existsSync(manifestFile)) return { errors: ['缺少 plugin.json'] }
@@ -63,12 +66,15 @@ export async function readPluginDirectory(
     manifest,
     source,
     entryStyles: [],
-    warnings: [...result.warnings],
+    warnings: [...result.warnings]
   }
   const errors: string[] = []
 
   /** 声明了入口就必须存在；strict 下缺失算错误，否则只警告 */
-  const resolve = (field: 'main' | 'renderer' | 'uninstall', relative: string): string | undefined => {
+  const resolve = (
+    field: 'main' | 'renderer' | 'uninstall',
+    relative: string
+  ): string | undefined => {
     const entry = resolveEntry(dir, relative)
     if (!entry) {
       const message = `${field} 入口不存在: ${relative}`
@@ -147,8 +153,8 @@ export async function scanPlugins(roots: Array<string | PluginRoot>): Promise<Sc
           errors: [
             previous.source === 'builtin'
               ? `插件 id ${record.manifest.id} 属于内置插件，第三方插件不能覆盖（${previous.dir}）`
-              : `插件 id ${record.manifest.id} 与 ${previous.dir} 重复`,
-          ],
+              : `插件 id ${record.manifest.id} 与 ${previous.dir} 重复`
+          ]
         })
         continue
       }

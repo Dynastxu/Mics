@@ -3,7 +3,6 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { AppInfo, ProfileConfig } from '@mics/sdk'
 
-
 export interface BootConfig {
   /** 内核插件 id；bootstrap 只认识它 */
   kernel: string
@@ -30,7 +29,7 @@ const consoleWarning: ConfigWarning = (message) => {
 const DEFAULT_CONFIG: BootConfig = {
   kernel: 'mics.kernel',
   pluginRoots: ['plugins'],
-  disabled: [],
+  disabled: []
 }
 
 /** 仓库根目录（开发态）：apps/desktop/out/main -> mics */
@@ -42,7 +41,7 @@ function configCandidates(): string[] {
   if (app.isPackaged) return [path.join(process.resourcesPath, 'boot.config.json')]
   return [
     path.join(projectRoot(), 'boot.config.json'),
-    path.join(process.cwd(), 'boot.config.json'),
+    path.join(process.cwd(), 'boot.config.json')
   ]
 }
 
@@ -60,7 +59,7 @@ export function loadBootConfig(onWarning: ConfigWarning = consoleWarning): BootC
         disabled: Array.isArray(raw.disabled)
           ? raw.disabled.filter((item): item is string => typeof item === 'string')
           : [],
-        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined,
+        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined
       }
     } catch (error) {
       onWarning(`读取 ${file} 失败：${(error as Error).message}`)
@@ -89,7 +88,10 @@ export function resolvePluginRoots(roots: string[]): string[] {
  * 这样一次手滑不会把整个界面锁死。`enable` / `disable` 只接受字符串数组，
  * `settings` 只接受 `{ [pluginId]: { [key]: value } }`。
  */
-export function loadProfile(name: string, onWarning: ConfigWarning = consoleWarning): ProfileConfig {
+export function loadProfile(
+  name: string,
+  onWarning: ConfigWarning = consoleWarning
+): ProfileConfig {
   const empty: ProfileConfig = { name, enable: [], disable: [], settings: {} }
   if (!/^[A-Za-z0-9._-]+$/.test(name)) {
     onWarning(`profile 名不合法：${name}`)
@@ -113,7 +115,11 @@ export function loadProfile(name: string, onWarning: ConfigWarning = consoleWarn
 
     const settings: Record<string, Record<string, unknown>> = {}
     if (record.settings !== undefined) {
-      if (!record.settings || typeof record.settings !== 'object' || Array.isArray(record.settings)) {
+      if (
+        !record.settings ||
+        typeof record.settings !== 'object' ||
+        Array.isArray(record.settings)
+      ) {
         onWarning(`profile ${name} 的 settings 必须是对象`)
       } else {
         for (const [pluginId, values] of Object.entries(record.settings)) {
@@ -130,7 +136,7 @@ export function loadProfile(name: string, onWarning: ConfigWarning = consoleWarn
       name,
       enable: ids(record.enable),
       disable: ids(record.disable),
-      settings,
+      settings
     }
   } catch (error) {
     onWarning(`读取 profile ${name} 失败：${(error as Error).message}`)
@@ -148,6 +154,6 @@ export function createAppInfo(profile?: string): AppInfo {
     platform: process.platform,
     isDev: !app.isPackaged,
     userDataPath: app.getPath('userData'),
-    profile,
+    profile
   }
 }

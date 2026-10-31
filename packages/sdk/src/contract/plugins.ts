@@ -68,13 +68,7 @@ export interface PluginInstallSummary {
  *   - `policy`     被策略插件拒绝激活 —— 调整策略或换插件。
  */
 export type PluginFailureStage =
-  | 'manifest'
-  | 'import'
-  | 'apply'
-  | 'dependency'
-  | 'timeout'
-  | 'renderer'
-  | 'policy'
+  'manifest' | 'import' | 'apply' | 'dependency' | 'timeout' | 'renderer' | 'policy'
 
 /** 一次失败的完整诊断；`PluginInfo.error` 保留为它的短消息。 */
 export interface PluginFailure {

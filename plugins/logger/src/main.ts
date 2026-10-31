@@ -55,7 +55,7 @@ function mirrorToConsole(level: LogLevel, scope: string, text: string): void {
 function writeRendererLog(
   logs: LogsService,
   request: LogWriteRequest | undefined,
-  callerId: string | undefined,
+  callerId: string | undefined
 ): void {
   const level = isLogLevel(request?.level) ? request.level : 'info'
   // 参数来自渲染进程：只接受有限数量，避免一次 RPC 把日志文件撑爆
@@ -78,7 +78,7 @@ export function apply(ctx: Context): void {
     sink: acquireSink(directory),
     maxFiles: readLogSettings(ctx.storage).maxFiles,
     // 控制台镜像只在开发构建启用：生产环境没有终端可看
-    mirror: app.isPackaged ? undefined : mirrorToConsole,
+    mirror: app.isPackaged ? undefined : mirrorToConsole
   })
 
   // 先回放历史，再安装导出器：这样启动阶段的日志不会被写第二次
@@ -88,15 +88,17 @@ export function apply(ctx: Context): void {
   const latest = pending.at(-1)
   if (latest) cursor.sn = latest.sn
 
-  logs.scope(name).info(
-    '日志服务就绪：MICS %s · Electron %s · Chrome %s · Node %s · %s/%s',
-    app.getVersion(),
-    process.versions.electron ?? '-',
-    process.versions.chrome ?? '-',
-    process.versions.node,
-    process.platform,
-    process.arch,
-  )
+  logs
+    .scope(name)
+    .info(
+      '日志服务就绪：MICS %s · Electron %s · Chrome %s · Node %s · %s/%s',
+      app.getVersion(),
+      process.versions.electron ?? '-',
+      process.versions.chrome ?? '-',
+      process.versions.node,
+      process.platform,
+      process.arch
+    )
   logs.scope(name).info('日志文件 %s（保留 %d 个）', logs.file, logs.maxFiles)
   if (replayed > 0) logs.scope(name).info('已补录启动阶段日志 %d 条', replayed)
 
@@ -108,7 +110,7 @@ export function apply(ctx: Context): void {
     export: (message) => {
       cursor.sn = message.sn
       logs.record(message.type, message.name, message.args, message.ts)
-    },
+    }
   })
 
   // 渲染进程没有文件系统权限：日志经这条 RPC 汇总到主进程写入同一文件；

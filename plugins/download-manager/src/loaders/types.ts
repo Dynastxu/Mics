@@ -18,7 +18,13 @@ export interface LoaderEnvironment {
   /** 直接请求一个绝对地址（加载器自有 API 用，例如 NeoForge 的 /api） */
   fetchJsonUrl<T>(url: string): Promise<T>
   /** 下载一个必需文件（多源回退），不进入任务队列 */
-  download(url: string, target: string, sha1?: string, size?: number, options?: DownloadOptions): Promise<void>
+  download(
+    url: string,
+    target: string,
+    sha1?: string,
+    size?: number,
+    options?: DownloadOptions
+  ): Promise<void>
   /** 运行 Java 进程（安装器）；取消时结束进程 */
   runJava(spec: {
     args: string[]

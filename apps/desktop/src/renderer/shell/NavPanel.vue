@@ -6,7 +6,7 @@ import {
   store,
   toggleGroup,
   type NavGroup,
-  type NavItem,
+  type NavItem
 } from '../runtime/store'
 import MicsIcon from './MicsIcon.vue'
 
@@ -40,7 +40,7 @@ function isGroupCurrent(group: NavGroup): boolean {
           <button
             class="mics-nav__item mics-nav__group-header"
             :class="{
-              'is-current': isGroupCurrent(root.group),
+              'is-current': isGroupCurrent(root.group)
             }"
             @click="toggleGroup(root.group.id)"
           >

@@ -25,7 +25,7 @@ const USER_AGENT = 'Mics'
 export function requestText(
   url: string,
   options: ModHttpOptions = {},
-  redirects = 0,
+  redirects = 0
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     if (redirects > MAX_REDIRECTS) {
@@ -60,8 +60,8 @@ export function requestText(
           'Accept-Encoding': 'identity',
           ...(options.body ? { 'Content-Type': 'application/json' } : {}),
           ...(options.body ? { 'Content-Length': String(Buffer.byteLength(options.body)) } : {}),
-          ...options.headers,
-        },
+          ...options.headers
+        }
       },
       (res) => {
         const status = res.statusCode ?? 0
@@ -82,11 +82,10 @@ export function requestText(
           }
           // 跨站重定向时不携带 API Key 等自定义头
           const sameOrigin = new URL(next).origin === parsed.origin
-          requestText(
-            next,
-            sameOrigin ? options : { ...options, headers: {} },
-            redirects + 1,
-          ).then(resolve, reject)
+          requestText(next, sameOrigin ? options : { ...options, headers: {} }, redirects + 1).then(
+            resolve,
+            reject
+          )
           return
         }
 
@@ -106,10 +105,12 @@ export function requestText(
 
         let data = ''
         res.setEncoding('utf-8')
-        res.on('data', (chunk: string) => { data += chunk })
+        res.on('data', (chunk: string) => {
+          data += chunk
+        })
         res.on('end', () => resolve(data))
         res.on('error', reject)
-      },
+      }
     )
 
     req.setTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT, () => {
@@ -121,10 +122,7 @@ export function requestText(
   })
 }
 
-export async function requestJson<T>(
-  url: string,
-  options: ModHttpOptions = {},
-): Promise<T> {
+export async function requestJson<T>(url: string, options: ModHttpOptions = {}): Promise<T> {
   const text = await requestText(url, options)
   try {
     return JSON.parse(text) as T

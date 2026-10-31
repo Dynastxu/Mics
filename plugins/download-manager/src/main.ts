@@ -13,7 +13,7 @@ import {
   instanceVersionJson,
   instancesRoot,
   resolveInstanceLayout,
-  sharedLibrariesDir,
+  sharedLibrariesDir
 } from '@mics/sdk/main'
 import type { InstanceLayout } from '@mics/sdk/main'
 import { findJava } from '@mics/java'
@@ -43,7 +43,7 @@ import {
   parseDownloadCacheLimit,
   parseDownloadSegmentThresholdMb,
   parseDownloadSegments,
-  validateInstanceName,
+  validateInstanceName
 } from '@mics/sdk'
 import type {
   DownloadSource,
@@ -82,7 +82,7 @@ import type {
   ShellExecuteCapability,
   ShellProcess,
   TransferOutcome,
-  TransferProgress,
+  TransferProgress
 } from '@mics/sdk'
 import {
   identifyMods,
@@ -91,16 +91,21 @@ import {
   loadModProject,
   modSourceReady,
   resolveModSource,
-  searchMods,
+  searchMods
 } from './mods'
 import { listModpackCategories } from './modpacks/categories'
 import {
   extractModpackOverrides,
   modpackArchiveName,
-  parseModpackArchive,
+  parseModpackArchive
 } from './modpacks/archive'
 import { resolveCurseforgeModpackFiles } from './modpacks/curseforgeFiles'
-import { createFileTransfer, transferStatePath, transferStateProgress, type FileTransferOptions } from './transfer'
+import {
+  createFileTransfer,
+  transferStatePath,
+  transferStateProgress,
+  type FileTransferOptions
+} from './transfer'
 import { listLoaderVersions, prepareLoaderInstall, safeLoaderKind } from './loaders'
 import { tailLastLine } from './loaders/fs'
 import {
@@ -108,7 +113,7 @@ import {
   enabledSourcesOf,
   matchLoaderUrl,
   metadataCandidates,
-  sourceLabel,
+  sourceLabel
 } from './loaders/sources'
 import type { LoaderEnvironment } from './loaders/types'
 import { mergeVersion, stripClientChecksum, joinBase, mavenPath } from './version'
@@ -141,7 +146,7 @@ const VERSION_TYPE_MAP: Record<string, GameVersion['type']> = {
   release: 'release',
   snapshot: 'snapshot',
   old_alpha: 'old_alpha',
-  old_beta: 'old_beta',
+  old_beta: 'old_beta'
 }
 
 function mapVersionType(value: string): GameVersion['type'] {
@@ -180,8 +185,7 @@ function isReadableJar(file: string): boolean {
   if (buffer.readUInt32LE(cdOffset) !== 0x02014b50) return false
 
   const localOffset = buffer.readUInt32LE(cdOffset + 42)
-  return localOffset + 4 <= buffer.length
-    && buffer.readUInt32LE(localOffset) === 0x04034b50
+  return localOffset + 4 <= buffer.length && buffer.readUInt32LE(localOffset) === 0x04034b50
 }
 
 interface AssetIndex {
@@ -206,13 +210,11 @@ interface MojangManifestSummary {
 /** 元数据请求的总时长上限；并行请求下它只兜底「所有源都挂住」的情况 */
 const METADATA_TIMEOUT = 20_000
 
-const OS_NAME = process.platform === 'win32'
-  ? 'windows'
-  : process.platform === 'darwin' ? 'osx' : 'linux'
+const OS_NAME =
+  process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
 /** 文件名里使用的平台名与 rules 里的 os.name 不完全一致（macos / osx） */
-const FILE_OS_NAME = process.platform === 'win32'
-  ? 'windows'
-  : process.platform === 'darwin' ? 'macos' : 'linux'
+const FILE_OS_NAME =
+  process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
 const ARCH_NAME = process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'arm64' : 'x86'
 
 /** 版本文件里的系统规则 */
@@ -229,7 +231,7 @@ const RULE_FEATURES: Record<string, boolean> = {
   has_quick_plays_support: false,
   is_quick_play_singleplayer: false,
   is_quick_play_multiplayer: false,
-  is_quick_play_realms: false,
+  is_quick_play_realms: false
 }
 
 /**
@@ -256,8 +258,9 @@ function rulesAllow(rules: unknown[] | undefined): boolean {
       }
     }
     if (rule.features) {
-      const matched = Object.entries(rule.features)
-        .every(([key, value]) => RULE_FEATURES[key] === value)
+      const matched = Object.entries(rule.features).every(
+        ([key, value]) => RULE_FEATURES[key] === value
+      )
       if (!matched) continue
     }
     allowed = rule.action === 'allow'
@@ -293,7 +296,7 @@ function artifactPlatformMatches(relative: string): boolean {
 function downloadHeaders(): Record<string, string> {
   return {
     'User-Agent': `Mics/${app.getVersion()}`,
-    Accept: '*/*',
+    Accept: '*/*'
   }
 }
 
@@ -382,7 +385,7 @@ export function apply(ctx: Context): void {
   // 更高的 priority 注册同名能力整体替换，下载管线不需要改。
   ctx.capabilities.provide<FileTransferCapability>(FILE_TRANSFER, {
     label: 'local',
-    create: (spec) => createFileTransfer(spec as FileTransferOptions),
+    create: (spec) => createFileTransfer(spec as FileTransferOptions)
   })
   log.info('file-transfer 能力已注册（provider=local）')
 
@@ -420,7 +423,7 @@ export function apply(ctx: Context): void {
    */
   async function writeInstallState(
     instanceDir: string,
-    record: InstanceInstallRecord,
+    record: InstanceInstallRecord
   ): Promise<void> {
     ensureDir(instanceDir)
     const target = path.join(instanceDir, INSTANCE_STATE_FILE)
@@ -434,12 +437,15 @@ export function apply(ctx: Context): void {
     }
   }
 
-  function installRecordOf(job: InstallJob, state: InstanceInstallRecord['state']): InstanceInstallRecord {
+  function installRecordOf(
+    job: InstallJob,
+    state: InstanceInstallRecord['state']
+  ): InstanceInstallRecord {
     return {
       state,
       jobId: job.id,
       gameVersion: job.gameVersion,
-      ...(state === 'ready' ? { completedAt: Date.now() } : {}),
+      ...(state === 'ready' ? { completedAt: Date.now() } : {})
     }
   }
 
@@ -456,7 +462,7 @@ export function apply(ctx: Context): void {
         ok: false,
         name: base.name,
         issue: 'duplicate',
-        message: `实例「${base.name}」已存在，请换一个名称`,
+        message: `实例「${base.name}」已存在，请换一个名称`
       }
     }
 
@@ -465,7 +471,7 @@ export function apply(ctx: Context): void {
         ok: false,
         name: base.name,
         issue: 'duplicate',
-        message: `实例「${base.name}」正在安装，请换一个名称`,
+        message: `实例「${base.name}」正在安装，请换一个名称`
       }
     }
 
@@ -525,7 +531,7 @@ export function apply(ctx: Context): void {
     key: string,
     category: SourceCategory,
     success: boolean,
-    label: string,
+    label: string
   ): void {
     const healthKeyOf = healthKey(key, category)
     if (success) {
@@ -544,7 +550,7 @@ export function apply(ctx: Context): void {
         label,
         category,
         SOURCE_FAILURE_LIMIT,
-        Math.round(SOURCE_COOLDOWN / 60_000),
+        Math.round(SOURCE_COOLDOWN / 60_000)
       )
     }
     sourceHealth.set(healthKeyOf, health)
@@ -554,7 +560,9 @@ export function apply(ctx: Context): void {
     try {
       const raw = ctx.storage.get<string>('sources', '')
       if (raw) return normalizeDownloadSources(JSON.parse(raw))
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
     return normalizeDownloadSources(DEFAULT_DOWNLOAD_SOURCES)
   }
 
@@ -562,7 +570,9 @@ export function apply(ctx: Context): void {
     try {
       const raw = ctx.storage.get<string>('loaderSources', '')
       if (raw) return normalizeLoaderSources(JSON.parse(raw))
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
     return normalizeLoaderSources(DEFAULT_LOADER_SOURCES)
   }
 
@@ -570,7 +580,9 @@ export function apply(ctx: Context): void {
     try {
       const raw = ctx.storage.get<string>('modSources', '')
       if (raw) return normalizeModSources(JSON.parse(raw))
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
     return normalizeModSources(DEFAULT_MOD_SOURCES)
   }
 
@@ -582,7 +594,7 @@ export function apply(ctx: Context): void {
         kind: source.kind,
         label: source.label.trim() || MOD_SOURCE_LABELS[source.kind],
         enabled: source.enabled,
-        ready,
+        ready
       }
       if (!ready && source.enabled && source.kind === 'curseforge') {
         info.hint = '缺少 API Key（下载设置 → Mod 下载源）'
@@ -624,7 +636,7 @@ export function apply(ctx: Context): void {
       key: string,
       label: string,
       candidateUrl: string,
-      category: SourceCategory,
+      category: SourceCategory
     ): void => {
       if (!candidateUrl || seen.has(candidateUrl)) return
       seen.add(candidateUrl)
@@ -640,7 +652,7 @@ export function apply(ctx: Context): void {
           `loader:${source.kind}:${index}`,
           sourceLabel(source, index),
           absoluteUrl(base, loaderMatch.suffix),
-          category,
+          category
         )
       })
       return candidates
@@ -655,7 +667,7 @@ export function apply(ctx: Context): void {
         `vanilla:${index}`,
         source.label.trim() || `源 ${index + 1}`,
         remapVanillaUrl(url, source),
-        category,
+        category
       )
     }
     return candidates
@@ -700,7 +712,7 @@ export function apply(ctx: Context): void {
 
   function loadCacheLimit(): string {
     return normalizeDownloadCacheLimit(
-      ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT),
+      ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT)
     )
   }
 
@@ -739,7 +751,9 @@ export function apply(ctx: Context): void {
     try {
       const now = new Date()
       await utimes(file, now, now)
-    } catch { /* 与清理流程竞争时忽略 */ }
+    } catch {
+      /* 与清理流程竞争时忽略 */
+    }
   }
 
   /** 统计下载缓存占用；缓存目录不存在时按 0 处理 */
@@ -764,7 +778,9 @@ export function apply(ctx: Context): void {
           try {
             bytes += (await stat(full)).size
             files += 1
-          } catch { /* 统计期间被删除 */ }
+          } catch {
+            /* 统计期间被删除 */
+          }
         }
       }
     }
@@ -805,7 +821,9 @@ export function apply(ctx: Context): void {
           const info = await stat(full)
           entries.push({ file: full, size: info.size, mtimeMs: info.mtimeMs })
           total += info.size
-        } catch { /* 扫描期间被删除 */ }
+        } catch {
+          /* 扫描期间被删除 */
+        }
       }
     }
 
@@ -824,7 +842,9 @@ export function apply(ctx: Context): void {
         total -= entry.size
         freed += entry.size
         removed += 1
-      } catch { /* 已被其它流程删除或仍被占用 */ }
+      } catch {
+        /* 已被其它流程删除或仍被占用 */
+      }
     }
     if (removed > 0) {
       log.info('下载缓存已清理 %d 个文件（%d 字节），当前上限 %d 字节', removed, freed, limit)
@@ -865,14 +885,15 @@ export function apply(ctx: Context): void {
   }
 
   /** 缓存里的文件能否直接复用：有摘要按摘要，没有摘要时至少要是完整的 jar */
-  async function cachedFileUsable(file: string, sha1: string, target: string): Promise<boolean> {    let info
+  async function cachedFileUsable(file: string, sha1: string, target: string): Promise<boolean> {
+    let info
     try {
       info = await stat(file)
     } catch {
       return false
     }
     if (!info.isFile() || info.size === 0) return false
-    if (sha1) return await hashFile(file) === sha1
+    if (sha1) return (await hashFile(file)) === sha1
     return !target.toLowerCase().endsWith('.jar') || isReadableJar(file)
   }
 
@@ -907,7 +928,7 @@ export function apply(ctx: Context): void {
   /** 分段阈值（字节）；设置页按 MB 存字符串，读取时兜底并收窄范围 */
   function segmentThresholdBytes(): number {
     const megabytes = parseDownloadSegmentThresholdMb(
-      ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD),
+      ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD)
     )
     return megabytes * 1024 * 1024
   }
@@ -931,7 +952,7 @@ export function apply(ctx: Context): void {
   function readModCache<T>(
     cache: Map<string, { at: number; value: T }>,
     key: string,
-    ttl: number,
+    ttl: number
   ): T | undefined {
     const cached = cache.get(key)
     if (!cached) return undefined
@@ -945,7 +966,7 @@ export function apply(ctx: Context): void {
   function writeModCache<T>(
     cache: Map<string, { at: number; value: T }>,
     key: string,
-    value: T,
+    value: T
   ): void {
     if (cache.size >= MOD_CACHE_LIMIT) {
       const oldest = cache.keys().next().value
@@ -959,9 +980,11 @@ export function apply(ctx: Context): void {
     try {
       ctx.storage.set('records', {
         jobs: [...jobs.values()],
-        tasks: [...tasks.values()],
+        tasks: [...tasks.values()]
       } satisfies StoredRecords)
-    } catch { /* 退出或存储不可用时忽略，避免阻塞关闭 */ }
+    } catch {
+      /* 退出或存储不可用时忽略，避免阻塞关闭 */
+    }
   }
 
   function persistRecords(immediate = false): void {
@@ -1089,11 +1112,8 @@ export function apply(ctx: Context): void {
       bytes += task.progress.total > 0 ? task.progress.total : Math.max(task.size, 0)
     }
 
-    const measured = bytes > 0
-      ? (loaded / bytes) * 100
-      : total > 0
-        ? ((done + failed) / total) * 100
-        : 0
+    const measured =
+      bytes > 0 ? (loaded / bytes) * 100 : total > 0 ? ((done + failed) / total) * 100 : 0
 
     return {
       total,
@@ -1106,7 +1126,7 @@ export function apply(ctx: Context): void {
       loaded,
       bytes,
       transferred: transferred + (job.prepareTransferred ?? 0),
-      percent: Math.min(100, Math.max(0, Math.round(measured))),
+      percent: Math.min(100, Math.max(0, Math.round(measured)))
     }
   }
 
@@ -1176,7 +1196,7 @@ export function apply(ctx: Context): void {
       prepareTransferAt: job.state === 'preparing' ? job.prepareTransferAt : undefined,
       createdAt: job.createdAt,
       finished: isFinishedJob(job, stats),
-      stats,
+      stats
     }
   }
 
@@ -1210,7 +1230,7 @@ export function apply(ctx: Context): void {
     source: string,
     target: string,
     reservedRoot: Set<string>,
-    depth = 0,
+    depth = 0
   ): Promise<void> {
     const entries = await readdir(source, { withFileTypes: true })
     for (const entry of entries) {
@@ -1238,10 +1258,7 @@ export function apply(ctx: Context): void {
       return
     }
 
-    const reserved = new Set([
-      ...RESERVED_INSTANCE_ROOT_FILES,
-      `${installedVersionId(job)}.json`,
-    ])
+    const reserved = new Set([...RESERVED_INSTANCE_ROOT_FILES, `${installedVersionId(job)}.json`])
     await mergeOverrides(staging, instanceDir, reserved)
     await rm(staging, { recursive: true, force: true }).catch(() => undefined)
     delete meta.overridesDir
@@ -1270,7 +1287,7 @@ export function apply(ctx: Context): void {
           'Mod 安装「%s」已完成：%d 个文件，job %s',
           job.title || job.instanceName,
           fileCount,
-          job.id,
+          job.id
         )
       } finally {
         completingJobs.delete(job.id)
@@ -1325,12 +1342,7 @@ export function apply(ctx: Context): void {
       const fileCount = job.taskIds.length
       archiveJob(job)
       persistRecords(true)
-      log.info(
-        '安装「%s」已完成：%d 个文件全部就绪，job %s',
-        job.instanceName,
-        fileCount,
-        job.id,
-      )
+      log.info('安装「%s」已完成：%d 个文件全部就绪，job %s', job.instanceName, fileCount, job.id)
     } finally {
       completingJobs.delete(job.id)
     }
@@ -1482,43 +1494,49 @@ export function apply(ctx: Context): void {
       }
       const secure = url.startsWith('https')
       const proto = secure ? https : http
-      const req = proto.get(url, {
-        signal,
-        headers: downloadHeaders(),
-        agent: secure ? httpsAgent : httpAgent,
-      }, (res) => {
-        const status = res.statusCode ?? 0
+      const req = proto.get(
+        url,
+        {
+          signal,
+          headers: downloadHeaders(),
+          agent: secure ? httpsAgent : httpAgent
+        },
+        (res) => {
+          const status = res.statusCode ?? 0
 
-        if (status >= 300 && status < 400) {
-          res.resume()
-          const location = res.headers.location
-          if (!location) {
-            reject(new Error(`HTTP ${status}`))
+          if (status >= 300 && status < 400) {
+            res.resume()
+            const location = res.headers.location
+            if (!location) {
+              reject(new Error(`HTTP ${status}`))
+              return
+            }
+            let next: string
+            try {
+              next = new URL(location, url).toString()
+            } catch {
+              reject(new Error(`无效的重定向地址：${location}`))
+              return
+            }
+            requestText(next, signal, redirects + 1).then(resolve, reject)
             return
           }
-          let next: string
-          try {
-            next = new URL(location, url).toString()
-          } catch {
-            reject(new Error(`无效的重定向地址：${location}`))
+
+          if (status >= 400) {
+            res.resume()
+            reject(new Error(`HTTP ${status} from ${url}`))
             return
           }
-          requestText(next, signal, redirects + 1).then(resolve, reject)
-          return
-        }
 
-        if (status >= 400) {
-          res.resume()
-          reject(new Error(`HTTP ${status} from ${url}`))
-          return
+          let data = ''
+          res.setEncoding('utf-8')
+          res.on('data', (chunk: string) => {
+            data += chunk
+          })
+          res.on('end', () => resolve(data))
+          res.on('error', reject)
         }
-
-        let data = ''
-        res.setEncoding('utf-8')
-        res.on('data', (chunk: string) => { data += chunk })
-        res.on('end', () => resolve(data))
-        res.on('error', reject)
-      })
+      )
 
       req.setTimeout(10_000, () => req.destroy(new Error('请求超时')))
       req.on('error', reject)
@@ -1535,7 +1553,7 @@ export function apply(ctx: Context): void {
     targets: string[],
     signal: AbortSignal | undefined,
     parse: (text: string) => T,
-    emptyMessage = '未启用任何下载源',
+    emptyMessage = '未启用任何下载源'
   ): Promise<T> {
     if (targets.length === 0) throw new Error(emptyMessage)
 
@@ -1559,9 +1577,11 @@ export function apply(ctx: Context): void {
     } catch (cause) {
       if (cause instanceof AggregateError) {
         const reasons = cause.errors.map(toError)
-        throw reasons.find((reason) => reason.name !== 'AbortError')
-          ?? reasons[0]
-          ?? new Error('所有下载源均不可用')
+        throw (
+          reasons.find((reason) => reason.name !== 'AbortError') ??
+          reasons[0] ??
+          new Error('所有下载源均不可用')
+        )
       }
       throw toError(cause)
     } finally {
@@ -1592,14 +1612,17 @@ export function apply(ctx: Context): void {
     }
     const data = (await fetchJsonFromSources(
       'https://launchermeta.mojang.com/mc/game/version_manifest.json',
-      signal,
+      signal
     )) as MojangManifestSummary
     cachedManifest = data
     cachedAt = Date.now()
     return data
   }
 
-  async function fetchVersionDetail(version: string, signal?: AbortSignal): Promise<MojangVersionDetail> {
+  async function fetchVersionDetail(
+    version: string,
+    signal?: AbortSignal
+  ): Promise<MojangVersionDetail> {
     const manifest = await fetchMojangManifest(signal)
     const entry = manifest.versions.find((v) => v.id === version)
     if (!entry) throw new Error(`未找到版本 ${version}`)
@@ -1612,13 +1635,13 @@ export function apply(ctx: Context): void {
     kind: LoaderSourceKind,
     path: string,
     role: 'meta' | 'maven' = 'meta',
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<string> {
     return firstSuccessful(
       metadataCandidates(sources, kind, path, role),
       signal,
       (text) => text,
-      `未启用任何 ${LOADER_LABELS[kind]} 下载源`,
+      `未启用任何 ${LOADER_LABELS[kind]} 下载源`
     )
   }
 
@@ -1642,7 +1665,7 @@ export function apply(ctx: Context): void {
       useCache?: boolean
       /** 本次调用真正从网络收到的字节增量；命中缓存直接返回时不会触发 */
       onBytes?: (delta: number) => void
-    } = {},
+    } = {}
   ): Promise<void> {
     const candidates: DownloadCandidate[] = options.direct
       ? [{ key: `direct:${url}`, label: '直链', url, category: 'other' }]
@@ -1653,8 +1676,7 @@ export function apply(ctx: Context): void {
     const useCache = options.useCache !== false && cacheEnabled()
     // 以前这里只写缓存不读缓存：取消一次重试就得把安装器、依赖库重新下一遍
     const cached = !useCache ? '' : sha1 ? cachePath(sha1) : urlCachePath(url)
-    const sameFile = Boolean(cached)
-      && path.resolve(cached) === path.resolve(target)
+    const sameFile = Boolean(cached) && path.resolve(cached) === path.resolve(target)
     if (cached) {
       const release = pinCacheFile(cached)
       try {
@@ -1707,7 +1729,7 @@ export function apply(ctx: Context): void {
           if (byteBaselineSet) options.onBytes?.(progress.loaded - previous)
           else byteBaselineSet = true
           onProgress?.(progress)
-        },
+        }
       })
       transfers.push(transfer)
 
@@ -1743,11 +1765,14 @@ export function apply(ctx: Context): void {
       // 单个文件本身就超过上限时不再写缓存：写了也会在下一轮清理里被淘汰
       const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
       const tooLargeToCache = cacheLimit !== null && size > 0 && size > cacheLimit
-      const cacheTarget = useCache && cacheEnabled() && !tooLargeToCache
-        ? sha1 ? cachePath(sha1) : urlCachePath(url)
-        : ''
-      const sameCacheTarget = Boolean(cacheTarget)
-        && path.resolve(cacheTarget) === path.resolve(target)
+      const cacheTarget =
+        useCache && cacheEnabled() && !tooLargeToCache
+          ? sha1
+            ? cachePath(sha1)
+            : urlCachePath(url)
+          : ''
+      const sameCacheTarget =
+        Boolean(cacheTarget) && path.resolve(cacheTarget) === path.resolve(target)
       if (cacheTarget && !sameCacheTarget && !existsSync(cacheTarget)) {
         const release = pinCacheFile(cacheTarget)
         try {
@@ -1755,7 +1780,9 @@ export function apply(ctx: Context): void {
           await copyFile(target, cacheTarget)
           await touchCacheFile(cacheTarget)
           scheduleCachePrune()
-        } catch { /* 缓存只是加速手段 */ } finally {
+        } catch {
+          /* 缓存只是加速手段 */
+        } finally {
           release()
         }
       }
@@ -1768,8 +1795,8 @@ export function apply(ctx: Context): void {
             const error = toError(cause)
             failures.push(error)
             throw error
-          }),
-        ),
+          })
+        )
       )
     } catch (cause) {
       if (signal?.aborted) throw new Error('已取消')
@@ -1788,7 +1815,7 @@ export function apply(ctx: Context): void {
   function runJavaProcess(
     spec: { args: string[]; cwd: string; logFile: string; requiredMajor: number },
     signal?: AbortSignal,
-    options: { stallMs?: number } = {},
+    options: { stallMs?: number } = {}
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
@@ -1840,7 +1867,9 @@ export function apply(ctx: Context): void {
           let size = 0
           try {
             size = statSync(spec.logFile).size
-          } catch { /* 还没写出日志 */ }
+          } catch {
+            /* 还没写出日志 */
+          }
           if (size !== lastSize) {
             lastSize = size
             lastGrowth = Date.now()
@@ -1848,9 +1877,11 @@ export function apply(ctx: Context): void {
           }
           if (Date.now() - lastGrowth < stallMs) return
           child?.kill()
-          settle(new Error(
-            `安装器 ${Math.round(stallMs / 1000)} 秒没有任何输出，已终止（日志：${spec.logFile}）`,
-          ))
+          settle(
+            new Error(
+              `安装器 ${Math.round(stallMs / 1000)} 秒没有任何输出，已终止（日志：${spec.logFile}）`
+            )
+          )
         }, 5000)
       }
 
@@ -1875,7 +1906,7 @@ export function apply(ctx: Context): void {
   function createLoaderEnvironment(
     kind: LoaderSourceKind,
     signal: AbortSignal,
-    progress?: PrepareProgress,
+    progress?: PrepareProgress
   ): LoaderEnvironment {
     const sources = enabledSourcesOf(loadLoaderSources(), kind)
     /** 加载器自己的日志文本就是「当前步骤」 */
@@ -1906,8 +1937,9 @@ export function apply(ctx: Context): void {
       },
       fetchText: (path, role = 'meta') => fetchLoaderText(sources, kind, path, role, signal),
       fetchJson: <T>(path: string, role: 'meta' | 'maven' = 'meta'): Promise<T> => {
-        return fetchLoaderText(sources, kind, path, role, signal)
-          .then((text) => JSON.parse(text) as T)
+        return fetchLoaderText(sources, kind, path, role, signal).then(
+          (text) => JSON.parse(text) as T
+        )
       },
       fetchJsonUrl: <T>(url: string): Promise<T> => {
         return firstSuccessful([url], signal, (text) => JSON.parse(text) as T)
@@ -1928,7 +1960,7 @@ export function apply(ctx: Context): void {
                 publish(loaded, total)
               },
           // 预取依赖库时关闭逐文件百分比（避免多个文件来回跳），但仍要统计网络字节
-          { onBytes: (delta) => progress?.bytes(delta) },
+          { onBytes: (delta) => progress?.bytes(delta) }
         )
       },
       runJava: async (spec) => {
@@ -1937,29 +1969,31 @@ export function apply(ctx: Context): void {
         const started = Date.now()
         let lastLine = ''
         const timer = setInterval(() => {
-          void tailLastLine(spec.logFile).then((line) => {
-            if (line) lastLine = line
-            const seconds = Math.floor((Date.now() - started) / 1000)
-            const detail = lastLine ? `：${lastLine}` : ''
-            progress?.report(`${step || '运行安装器'}（已 ${seconds} 秒）${detail}`)
-          }).catch(() => undefined)
+          void tailLastLine(spec.logFile)
+            .then((line) => {
+              if (line) lastLine = line
+              const seconds = Math.floor((Date.now() - started) / 1000)
+              const detail = lastLine ? `：${lastLine}` : ''
+              progress?.report(`${step || '运行安装器'}（已 ${seconds} 秒）${detail}`)
+            })
+            .catch(() => undefined)
         }, 1500)
         try {
           await runJavaProcess(spec, signal, { stallMs: 180_000 })
         } finally {
           clearInterval(timer)
         }
-      },
+      }
     }
   }
-
 
   function scheduleLoop(): void {
     const active = [...tasks.values()].filter((t) => t.state === 'downloading').length
     const slots = maxConcurrency() - active
     if (slots <= 0) return
-    const pending = [...tasks.values()]
-      .filter((task) => task.state === 'pending' && !pausedJobs.has(task.installId))
+    const pending = [...tasks.values()].filter(
+      (task) => task.state === 'pending' && !pausedJobs.has(task.installId)
+    )
     for (const task of pending.slice(0, slots)) {
       void startDownload(task)
     }
@@ -1980,11 +2014,7 @@ export function apply(ctx: Context): void {
   }
 
   async function startDownload(task: DownloadTask): Promise<void> {
-    if (
-      cancelledTasks.has(task.id)
-      || pausedJobs.has(task.installId)
-      || task.state !== 'pending'
-    ) {
+    if (cancelledTasks.has(task.id) || pausedJobs.has(task.installId) || task.state !== 'pending') {
       return
     }
 
@@ -2067,18 +2097,22 @@ export function apply(ctx: Context): void {
           void settleJob(task.installId)
           return
         }
-      } catch { /* 缓存不可用时退回网络下载 */ }
+      } catch {
+        /* 缓存不可用时退回网络下载 */
+      }
     }
     if (!current()) return
 
     // Mod 文件来自第三方 CDN，不受「原版下载源」开关影响
     const candidates: DownloadCandidate[] = task.direct
-      ? [{
-          key: `direct:${task.id}`,
-          label: '直链',
-          url: task.url,
-          category: 'other',
-        }]
+      ? [
+          {
+            key: `direct:${task.id}`,
+            label: '直链',
+            url: task.url,
+            category: 'other'
+          }
+        ]
       : downloadCandidates(task.url)
     if (candidates.length === 0) {
       task.state = 'failed'
@@ -2091,7 +2125,7 @@ export function apply(ctx: Context): void {
       return
     }
     const preferred = candidates.filter((candidate) =>
-      sourceAvailable(candidate.key, candidate.category),
+      sourceAvailable(candidate.key, candidate.category)
     )
     const order = preferred.length > 0 ? preferred : candidates
 
@@ -2133,7 +2167,8 @@ export function apply(ctx: Context): void {
           if (!current()) return
           // 只把前进的字节算作本次网络流量；缓存复制、共享库复用不会走到这里
           const previous = task.progress.loaded
-          task.transferred = (task.transferred ?? 0) + (loaded >= previous ? loaded - previous : loaded)
+          task.transferred =
+            (task.transferred ?? 0) + (loaded >= previous ? loaded - previous : loaded)
           task.progress.loaded = loaded
           if (total > 0) {
             task.progress.total = total
@@ -2142,7 +2177,7 @@ export function apply(ctx: Context): void {
         },
         onRestart: () => {
           if (current()) task.progress.loaded = 0
-        },
+        }
       })
       transfers.set(task.id, transfer)
 
@@ -2153,7 +2188,7 @@ export function apply(ctx: Context): void {
         // 传输层自身异常也要走「换源/失败」流程，不能让 Promise 无人处理
         result = {
           status: 'failed',
-          error: cause instanceof Error ? cause : new Error(String(cause)),
+          error: cause instanceof Error ? cause : new Error(String(cause))
         }
       } finally {
         // 恢复可能已经创建了新一轮传输，不能误删别人的句柄
@@ -2178,7 +2213,12 @@ export function apply(ctx: Context): void {
         if (ci < order.length - 1) continue
         task.state = 'failed'
         task.error = result.error?.message ?? '下载失败'
-        log.warn('下载失败 %s（已尝试 %d 个源）：%s', task.label ?? task.url, order.length, task.error)
+        log.warn(
+          '下载失败 %s（已尝试 %d 个源）：%s',
+          task.label ?? task.url,
+          order.length,
+          task.error
+        )
         persistRecords()
         scheduleLoop()
         void settleJob(task.installId)
@@ -2202,10 +2242,7 @@ export function apply(ctx: Context): void {
           void settleJob(task.installId)
           return
         }
-      } else if (
-        task.savePath.toLowerCase().endsWith('.jar')
-        && !isReadableJar(partPath)
-      ) {
+      } else if (task.savePath.toLowerCase().endsWith('.jar') && !isReadableJar(partPath)) {
         // 没有摘要的 jar 也要拒绝镜像的错误页 / 空文件
         await rm(partPath, { force: true }).catch(() => undefined)
         await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
@@ -2246,7 +2283,9 @@ export function apply(ctx: Context): void {
             await copyFile(task.savePath, cached)
             await touchCacheFile(cached)
             scheduleCachePrune()
-          } catch { /* 缓存只是加速手段，写不进去不影响本次安装 */ } finally {
+          } catch {
+            /* 缓存只是加速手段，写不进去不影响本次安装 */
+          } finally {
             release()
           }
         }
@@ -2320,7 +2359,7 @@ export function apply(ctx: Context): void {
       if (!existsSync(cached)) return false
       // 缓存可能来自旧版下载器，也可能是写坏的条目；复制前必须按文件名重新校验，
       // 否则坏内容会被当成「已下载」装进每个实例，补全也永远修不好。
-      if (await hashFile(cached) !== task.sha1) {
+      if ((await hashFile(cached)) !== task.sha1) {
         await rm(cached, { force: true }).catch(() => undefined)
         log.warn('下载缓存内容与摘要不符，已丢弃：%s', task.sha1)
         return false
@@ -2344,7 +2383,7 @@ export function apply(ctx: Context): void {
       // 只看大小会被判成「已下载」，补全永远修不好，启动又一直提示缺失。
       if (spec.sha1) {
         if (spec.size > 0 && info.size !== spec.size) return false
-        return await hashFile(spec.savePath) === spec.sha1
+        return (await hashFile(spec.savePath)) === spec.sha1
       }
 
       // 已知大小、没有摘要时按大小判断；未知大小至少要求非空
@@ -2365,15 +2404,17 @@ export function apply(ctx: Context): void {
     const workers = Math.min(32, specs.length)
     let cursor = 0
 
-    await Promise.all(Array.from({ length: workers }, async () => {
-      while (true) {
-        const index = cursor
-        cursor += 1
-        const spec = specs[index]
-        if (!spec) return
-        present[index] = await fileMatchesSpec(spec)
-      }
-    }))
+    await Promise.all(
+      Array.from({ length: workers }, async () => {
+        while (true) {
+          const index = cursor
+          cursor += 1
+          const spec = specs[index]
+          if (!spec) return
+          present[index] = await fileMatchesSpec(spec)
+        }
+      })
+    )
 
     return specs.filter((_, index) => !present[index])
   }
@@ -2389,13 +2430,15 @@ export function apply(ctx: Context): void {
   async function loadAssetIndex(
     detail: MojangVersionDetail,
     indexPath: string,
-    signal: AbortSignal,
+    signal: AbortSignal
   ): Promise<AssetIndex> {
     const expectedSha1 = detail.assetIndex?.sha1
     if (await assetIndexIsUsable(indexPath, expectedSha1)) {
       try {
         return JSON.parse(await readFile(indexPath, 'utf8')) as AssetIndex
-      } catch { /* 索引损坏，重新下载 */ }
+      } catch {
+        /* 索引损坏，重新下载 */
+      }
     }
 
     if (!detail.assetIndex?.url) throw new Error('版本缺少资源索引地址')
@@ -2405,14 +2448,17 @@ export function apply(ctx: Context): void {
     await writeFile(indexPath, text)
 
     // 镜像若重新编码过 JSON，摘要仍会不符；写下去也没用，至少要留下线索
-    if (expectedSha1 && await hashFile(indexPath) !== expectedSha1) {
+    if (expectedSha1 && (await hashFile(indexPath)) !== expectedSha1) {
       log.warn('资源索引与版本文件里的摘要不符（可能来自镜像）：%s', indexPath)
     }
     return raw
   }
 
   /** 已有索引是否可信：有摘要按摘要比对，没有摘要时只要求文件存在 */
-  async function assetIndexIsUsable(file: string, expectedSha1: string | undefined): Promise<boolean> {
+  async function assetIndexIsUsable(
+    file: string,
+    expectedSha1: string | undefined
+  ): Promise<boolean> {
     let info
     try {
       info = await stat(file)
@@ -2422,7 +2468,7 @@ export function apply(ctx: Context): void {
     if (!info.isFile()) return false
     if (!expectedSha1) return true
     try {
-      return await hashFile(file) === expectedSha1
+      return (await hashFile(file)) === expectedSha1
     } catch {
       return false
     }
@@ -2434,7 +2480,7 @@ export function apply(ctx: Context): void {
     layout: InstanceLayout,
     gameVersion: string,
     signal: AbortSignal,
-    options: { onlyMissing?: boolean } = {},
+    options: { onlyMissing?: boolean } = {}
   ): Promise<TaskSpec[]> {
     const taskSpecs: TaskSpec[] = []
 
@@ -2446,7 +2492,7 @@ export function apply(ctx: Context): void {
         url: clientArtifact.url,
         savePath: instanceClientJar(layout.instanceDir, gameVersion),
         sha1: clientArtifact.sha1 ?? '',
-        size: clientArtifact.size ?? 0,
+        size: clientArtifact.size ?? 0
       })
     }
 
@@ -2465,7 +2511,7 @@ export function apply(ctx: Context): void {
           url: joinBase(lib.url, relative),
           path: relative,
           sha1: lib.sha1,
-          size: lib.size,
+          size: lib.size
         })
       }
 
@@ -2482,12 +2528,14 @@ export function apply(ctx: Context): void {
         const artifactUrl = art.url ?? ''
         if (!artifactUrl) continue
         const libParts = lib.name.split(':')
-        const libFile = libParts.length >= 3
-          ? `${libParts[1]}-${libParts[2]}${artifactUrl.includes('natives') ? '-' + (artifactUrl.match(/natives-[^/]+/)?.[0] ?? '') : ''}.jar`
-          : `${lib.name.replace(/:/g, '/')}.jar`
-        const libDir = libParts.length >= 3
-          ? path.join(libParts[0]!.replace(/\./g, '/'), libParts[1]!, libParts[2]!)
-          : path.dirname(lib.name.replace(/:/g, '/'))
+        const libFile =
+          libParts.length >= 3
+            ? `${libParts[1]}-${libParts[2]}${artifactUrl.includes('natives') ? '-' + (artifactUrl.match(/natives-[^/]+/)?.[0] ?? '') : ''}.jar`
+            : `${lib.name.replace(/:/g, '/')}.jar`
+        const libDir =
+          libParts.length >= 3
+            ? path.join(libParts[0]!.replace(/\./g, '/'), libParts[1]!, libParts[2]!)
+            : path.dirname(lib.name.replace(/:/g, '/'))
         const relative = art.path ?? path.join(libDir, libFile)
         // rules 常常不写 arch，文件名里的 classifier 才是最终依据
         if (!artifactPlatformMatches(relative)) continue
@@ -2498,7 +2546,7 @@ export function apply(ctx: Context): void {
           savePath: path.join(layout.librariesDir, relative),
           // 老的合并文件把加载器库的摘要留在条目顶层
           sha1: art.sha1 || lib.sha1 || '',
-          size: art.size ?? lib.size ?? 0,
+          size: art.size ?? lib.size ?? 0
         })
       }
     }
@@ -2518,7 +2566,7 @@ export function apply(ctx: Context): void {
           url: `https://resources.download.minecraft.net/${hash2}/${obj.hash}`,
           savePath: path.join(assetDir, 'objects', hash2, obj.hash),
           sha1: obj.hash,
-          size: obj.size,
+          size: obj.size
         })
       }
     }
@@ -2532,7 +2580,7 @@ export function apply(ctx: Context): void {
           url: lf.url,
           savePath: path.join(layout.logConfigsDir, lf.id),
           sha1: lf.sha1 ?? '',
-          size: lf.size ?? 0,
+          size: lf.size ?? 0
         })
       }
     }
@@ -2545,9 +2593,7 @@ export function apply(ctx: Context): void {
     // 大文件优先：并发充足时先啃硬骨头，尾部的剩余任务更小，
     // 不会出现「最后几个大文件各自只有一条连接」的长尾。
     // 排序只做一次；之后调度按 Map 插入顺序取任务，避免每次完成都重排。
-    const ordered = [...specs].sort(
-      (a, b) => Math.max(b.size, 0) - Math.max(a.size, 0),
-    )
+    const ordered = [...specs].sort((a, b) => Math.max(b.size, 0) - Math.max(a.size, 0))
     for (const spec of ordered) {
       const task: DownloadTask = {
         id: nextTaskId(),
@@ -2563,9 +2609,9 @@ export function apply(ctx: Context): void {
           loaded: 0,
           total: spec.size > 0 ? spec.size : -1,
           speed: 0,
-          label: spec.label,
+          label: spec.label
         },
-        createdAt: Date.now(),
+        createdAt: Date.now()
       }
       tasks.set(task.id, task)
       job.taskIds.push(task.id)
@@ -2585,7 +2631,7 @@ export function apply(ctx: Context): void {
     instanceDir: string,
     signal: AbortSignal,
     progress: PrepareProgress,
-    isCancelled: () => boolean,
+    isCancelled: () => boolean
   ): Promise<{ versionId: string; versionDetail: MojangVersionDetail; onlyMissing: boolean }> {
     progress.report('获取版本信息')
     const parent = await fetchVersionDetail(gameVersion, signal)
@@ -2609,9 +2655,9 @@ export function apply(ctx: Context): void {
           loaderVersion,
           instanceDir,
           librariesDir: sharedLibrariesDir(dataDir),
-          parent,
+          parent
         },
-        createLoaderEnvironment(kind, signal, progress),
+        createLoaderEnvironment(kind, signal, progress)
       )
       if (isCancelled()) throw new Error('已取消')
 
@@ -2624,12 +2670,7 @@ export function apply(ctx: Context): void {
       // 版本文件与版本目录同名，启动时按 id 找 jar / 版本文件
       versionDetail = { ...versionDetail, id: versionId }
       job.loader = { kind, version: loaderVersion }
-      log.info(
-        '加载器 %s %s 已就绪：实例版本 %s',
-        LOADER_LABELS[kind],
-        loaderVersion,
-        versionId,
-      )
+      log.info('加载器 %s %s 已就绪：实例版本 %s', LOADER_LABELS[kind], loaderVersion, versionId)
     }
 
     job.versionId = versionId
@@ -2638,7 +2679,7 @@ export function apply(ctx: Context): void {
     await writeFile(
       instanceVersionJson(instanceDir, versionId),
       JSON.stringify(versionDetail, null, 2),
-      'utf8',
+      'utf8'
     )
     return { versionId, versionDetail, onlyMissing }
   }
@@ -2688,7 +2729,7 @@ export function apply(ctx: Context): void {
         if (delta <= 0) return
         job.prepareTransferred = (job.prepareTransferred ?? 0) + delta
         job.prepareTransferAt = Date.now()
-      },
+      }
     }
   }
 
@@ -2722,7 +2763,7 @@ export function apply(ctx: Context): void {
         instanceDir,
         abort.signal,
         progress,
-        isCancelled,
+        isCancelled
       )
       if (isCancelled()) return
 
@@ -2734,7 +2775,7 @@ export function apply(ctx: Context): void {
         layout,
         prepared.versionId,
         abort.signal,
-        { onlyMissing: prepared.onlyMissing },
+        { onlyMissing: prepared.onlyMissing }
       )
       if (isCancelled()) return
 
@@ -2758,7 +2799,7 @@ export function apply(ctx: Context): void {
         '安装「%s」的下载清单已就绪：%d 个文件，job %s',
         job.instanceName,
         taskSpecs.length,
-        job.id,
+        job.id
       )
       persistRecords(true)
       if (!paused) scheduleLoop()
@@ -2808,7 +2849,12 @@ export function apply(ctx: Context): void {
     let archive = ''
     let releaseArchive: (() => void) | null = null
     let removeArchiveAfterPrepare = false
-    log.info('开始准备整合包安装「%s」（实例 %s，job %s）', request.title || request.file.fileName, job.instanceName, job.id)
+    log.info(
+      '开始准备整合包安装「%s」（实例 %s，job %s）',
+      request.title || request.file.fileName,
+      job.instanceName,
+      job.id
+    )
 
     try {
       createdInstance = true
@@ -2818,12 +2864,17 @@ export function apply(ctx: Context): void {
       // 有摘要时直接以缓存为落点，避免同一个大归档在磁盘上存两份；
       // 关闭缓存或归档本身超过上限时改用 job 专属临时文件，准备完成后删除。
       const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
-      const caching = cacheEnabled()
-        && (cacheLimit === null || (request.file.size ?? 0) <= cacheLimit)
+      const caching =
+        cacheEnabled() && (cacheLimit === null || (request.file.size ?? 0) <= cacheLimit)
       const archiveName = modpackArchiveName('', request.file.url, request.file.fileName)
-      archive = caching && request.file.sha1
-        ? cachePath(request.file.sha1)
-        : path.join(cacheRoot, 'modpacks', caching ? archiveName : `work-${job.id}-${archiveName}`)
+      archive =
+        caching && request.file.sha1
+          ? cachePath(request.file.sha1)
+          : path.join(
+              cacheRoot,
+              'modpacks',
+              caching ? archiveName : `work-${job.id}-${archiveName}`
+            )
       removeArchiveAfterPrepare = !caching
       // 解析与解压期间不能被上限清理删掉
       releaseArchive = pinCacheFile(archive)
@@ -2840,8 +2891,8 @@ export function apply(ctx: Context): void {
         {
           direct: true,
           useCache: Boolean(request.file.sha1),
-          onBytes: progress.bytes,
-        },
+          onBytes: progress.bytes
+        }
       )
       if (isCancelled()) return
 
@@ -2855,7 +2906,8 @@ export function apply(ctx: Context): void {
       job.gameVersion = pack.gameVersion
       job.title = [pack.name, pack.version].filter(Boolean).join(' ').trim()
       job.detail = `实例：${job.instanceName}`
-      if (pack.loader) job.loader = { kind: pack.loader.kind as LoaderKind, version: pack.loader.version }
+      if (pack.loader)
+        job.loader = { kind: pack.loader.kind as LoaderKind, version: pack.loader.version }
 
       // 先落 installing，启动页从解析归档开始就把它显示为「下载中」
       await writeInstallState(instanceDir, installRecordOf(job, 'installing'))
@@ -2870,7 +2922,7 @@ export function apply(ctx: Context): void {
         instanceDir,
         abort.signal,
         progress,
-        isCancelled,
+        isCancelled
       )
       if (isCancelled()) return
 
@@ -2881,7 +2933,7 @@ export function apply(ctx: Context): void {
         layout,
         prepared.versionId,
         abort.signal,
-        { onlyMissing: prepared.onlyMissing },
+        { onlyMissing: prepared.onlyMissing }
       )
       if (isCancelled()) return
 
@@ -2889,7 +2941,7 @@ export function apply(ctx: Context): void {
       const reservedRoot = new Set([
         ...RESERVED_INSTANCE_ROOT_FILES,
         `${prepared.versionId}.json`,
-        MODPACK_OVERRIDES_DIR,
+        MODPACK_OVERRIDES_DIR
       ])
       for (const file of pack.files) {
         if (file.kind !== 'direct') continue
@@ -2903,13 +2955,17 @@ export function apply(ctx: Context): void {
           savePath: path.join(instanceDir, file.path),
           sha1: file.sha1,
           size: file.size,
-          direct: true,
+          direct: true
         })
       }
 
       const curseforgeEntries = pack.files
         .filter((file) => file.kind === 'curseforge')
-        .map((file) => ({ projectId: file.projectId, fileId: file.fileId, required: file.required }))
+        .map((file) => ({
+          projectId: file.projectId,
+          fileId: file.fileId,
+          required: file.required
+        }))
       if (curseforgeEntries.length > 0) {
         progress.report('解析整合包文件', 0)
         let source: ModSource
@@ -2917,19 +2973,19 @@ export function apply(ctx: Context): void {
           source = resolveModSource(
             loadModSources(),
             'curseforge',
-            request.source === 'curseforge' ? request.sourceApi : undefined,
+            request.source === 'curseforge' ? request.sourceApi : undefined
           )
         } catch (cause) {
-          throw new Error(`整合包包含 CurseForge 文件，但无法使用 CurseForge 下载源：${toError(cause).message}`)
+          throw new Error(
+            `整合包包含 CurseForge 文件，但无法使用 CurseForge 下载源：${toError(cause).message}`
+          )
         }
         const resolved = await resolveCurseforgeModpackFiles(
           source,
           curseforgeEntries,
           abort.signal,
-          (done, total) => progress.report(
-            '解析整合包文件',
-            total > 0 ? (done / total) * 100 : undefined,
-          ),
+          (done, total) =>
+            progress.report('解析整合包文件', total > 0 ? (done / total) * 100 : undefined)
         )
         if (isCancelled()) return
         for (const { file } of resolved) {
@@ -2939,7 +2995,7 @@ export function apply(ctx: Context): void {
             savePath: path.join(instanceDir, 'mods', file.fileName),
             sha1: file.sha1 ?? '',
             size: file.size ?? 0,
-            direct: true,
+            direct: true
           })
         }
       }
@@ -2957,7 +3013,7 @@ export function apply(ctx: Context): void {
       job.modpack = {
         name: pack.name,
         version: pack.version,
-        ...(overridesDir ? { overridesDir } : {}),
+        ...(overridesDir ? { overridesDir } : {})
       }
 
       const taskSpecs = [...gameSpecs, ...packSpecs]
@@ -2978,7 +3034,7 @@ export function apply(ctx: Context): void {
         job.title || job.instanceName,
         taskSpecs.length,
         packSpecs.length,
-        job.id,
+        job.id
       )
       persistRecords(true)
       if (!paused) scheduleLoop()
@@ -3037,13 +3093,9 @@ export function apply(ctx: Context): void {
 
       job.note = '检查缺失文件'
       const layout = resolveInstanceLayout(dataDir, instanceDir)
-      const taskSpecs = await collectTaskSpecs(
-        detail,
-        layout,
-        job.gameVersion,
-        abort.signal,
-        { onlyMissing: true },
-      )
+      const taskSpecs = await collectTaskSpecs(detail, layout, job.gameVersion, abort.signal, {
+        onlyMissing: true
+      })
       if (isCancelled()) return
 
       if (taskSpecs.length === 0) {
@@ -3063,7 +3115,7 @@ export function apply(ctx: Context): void {
         '补全实例「%s」：需要下载 %d 个文件，job %s',
         job.instanceName,
         taskSpecs.length,
-        job.id,
+        job.id
       )
       persistRecords(true)
       if (!paused) scheduleLoop()
@@ -3110,33 +3162,38 @@ export function apply(ctx: Context): void {
       id: version.id,
       type: mapVersionType(version.type),
       releaseTime: version.releaseTime,
-      url: version.url,
+      url: version.url
     }))
   })
 
   ctx.ipc.handle('settings/get', () => ({
     concurrency: String(maxConcurrency()),
     segments: normalizeDownloadSegments(
-      ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS),
+      ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS)
     ),
     segmentThreshold: normalizeDownloadSegmentThreshold(
-      ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD),
+      ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD)
     ),
     cacheLimit: loadCacheLimit(),
     sources: loadSources(),
     loaderSources: loadLoaderSources(),
-    modSources: loadModSources(),
+    modSources: loadModSources()
   }))
 
   ctx.ipc.handle<{ key: string; value: string }>('settings/set', async ({ key, value }) => {
     if (key === 'sources' || key === 'loaderSources' || key === 'modSources') {
       let parsed: unknown
-      try { parsed = JSON.parse(value) } catch { parsed = null }
-      const normalized = key === 'sources'
-        ? normalizeDownloadSources(parsed)
-        : key === 'loaderSources'
-          ? normalizeLoaderSources(parsed)
-          : normalizeModSources(parsed)
+      try {
+        parsed = JSON.parse(value)
+      } catch {
+        parsed = null
+      }
+      const normalized =
+        key === 'sources'
+          ? normalizeDownloadSources(parsed)
+          : key === 'loaderSources'
+            ? normalizeLoaderSources(parsed)
+            : normalizeModSources(parsed)
       ctx.storage.set(key, JSON.stringify(normalized))
       sourceHealth.clear()
       loaderVersionCache.clear()
@@ -3146,9 +3203,7 @@ export function apply(ctx: Context): void {
       modIdentityCache.clear()
       log.info(
         '%s设置已更新',
-        key === 'sources'
-          ? '下载源'
-          : key === 'loaderSources' ? '模组加载器下载源' : 'Mod 下载源',
+        key === 'sources' ? '下载源' : key === 'loaderSources' ? '模组加载器下载源' : 'Mod 下载源'
       )
       return
     }
@@ -3185,9 +3240,9 @@ export function apply(ctx: Context): void {
    * 就落在缓存里，边下边删会让解析失败。
    */
   ctx.ipc.handle('cache/clear', async () => {
-    const busy = [...jobs.values()].some((job) => job.state === 'preparing')
-      || [...tasks.values()].some((task) =>
-        task.state === 'downloading' || task.state === 'verifying')
+    const busy =
+      [...jobs.values()].some((job) => job.state === 'preparing') ||
+      [...tasks.values()].some((task) => task.state === 'downloading' || task.state === 'verifying')
     if (busy) throw new Error('正在下载，暂时不能清空缓存')
     const before = await cacheUsage()
     try {
@@ -3221,7 +3276,7 @@ export function apply(ctx: Context): void {
       const versions = await listLoaderVersions(
         kind,
         gameVersion,
-        createLoaderEnvironment(kind, abort.signal),
+        createLoaderEnvironment(kind, abort.signal)
       )
       // 空结果（该游戏版本确实没有加载器）也缓存，避免反复打慢接口
       loaderVersionCache.set(cacheKey, { at: Date.now(), versions })
@@ -3254,15 +3309,17 @@ export function apply(ctx: Context): void {
       if (!entry || typeof entry.key !== 'string') continue
       const key = entry.key.trim().slice(0, 180)
       if (!key || seen.has(key)) continue
-      const sha1 = typeof entry.sha1 === 'string' && /^[0-9a-f]{40}$/i.test(entry.sha1.trim())
-        ? entry.sha1.trim().toLowerCase()
-        : undefined
-      const murmur2 = typeof entry.murmur2 === 'number'
-        && Number.isInteger(entry.murmur2)
-        && entry.murmur2 >= 0
-        && entry.murmur2 <= 0xffffffff
-        ? entry.murmur2
-        : undefined
+      const sha1 =
+        typeof entry.sha1 === 'string' && /^[0-9a-f]{40}$/i.test(entry.sha1.trim())
+          ? entry.sha1.trim().toLowerCase()
+          : undefined
+      const murmur2 =
+        typeof entry.murmur2 === 'number' &&
+        Number.isInteger(entry.murmur2) &&
+        entry.murmur2 >= 0 &&
+        entry.murmur2 <= 0xffffffff
+          ? entry.murmur2
+          : undefined
       if (!sha1 && murmur2 === undefined) continue
       seen.add(key)
       files.push({ key, ...(sha1 ? { sha1 } : {}), ...(murmur2 !== undefined ? { murmur2 } : {}) })
@@ -3294,9 +3351,8 @@ export function apply(ctx: Context): void {
     const page = Number.isInteger(request?.page) && request.page > 0 ? request.page : 1
     const rawSize = Number.isInteger(request?.pageSize) ? Number(request.pageSize) : 20
     const pageSize = Math.max(1, Math.min(50, rawSize))
-    const source = request?.source === 'curseforge' || request?.source === 'modrinth'
-      ? request.source
-      : 'all'
+    const source =
+      request?.source === 'curseforge' || request?.source === 'modrinth' ? request.source : 'all'
     const loader = isModLoader(request?.loader) ? request.loader : 'all'
     return {
       query: typeof request?.query === 'string' ? request.query.trim().slice(0, 120) : '',
@@ -3305,7 +3361,7 @@ export function apply(ctx: Context): void {
       loader,
       category: typeof request?.category === 'string' ? request.category.trim() : '',
       page,
-      pageSize,
+      pageSize
     }
   }
 
@@ -3329,9 +3385,12 @@ export function apply(ctx: Context): void {
   })
 
   ctx.ipc.handle<ModVersionRequest>('mods/versions', async (request): Promise<ModVersion[]> => {
-    const source = request?.source === 'curseforge'
-      ? 'curseforge'
-      : request?.source === 'modrinth' ? 'modrinth' : null
+    const source =
+      request?.source === 'curseforge'
+        ? 'curseforge'
+        : request?.source === 'modrinth'
+          ? 'modrinth'
+          : null
     if (!source) throw new Error('不支持的 Mod 下载源')
     const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的 Mod 项目 id')
@@ -3342,7 +3401,7 @@ export function apply(ctx: Context): void {
       ...(sourceApi ? { sourceApi } : {}),
       projectId,
       gameVersion: safeVersionId(request?.gameVersion) ?? '',
-      loader: isModLoader(request?.loader) ? request.loader : 'all',
+      loader: isModLoader(request?.loader) ? request.loader : 'all'
     }
     const cacheKey = `${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}:${normalized.gameVersion}:${normalized.loader}`
     const cached = readModCache(modVersionCache, cacheKey, MOD_VERSION_TTL)
@@ -3370,9 +3429,12 @@ export function apply(ctx: Context): void {
    * 前置跳转打开详情后调用这里补齐头部，不拖慢版本列表本身。
    */
   ctx.ipc.handle<ModProjectRequest>('mods/project', async (request): Promise<ModSummary> => {
-    const source = request?.source === 'curseforge'
-      ? 'curseforge'
-      : request?.source === 'modrinth' ? 'modrinth' : null
+    const source =
+      request?.source === 'curseforge'
+        ? 'curseforge'
+        : request?.source === 'modrinth'
+          ? 'modrinth'
+          : null
     if (!source) throw new Error('不支持的 Mod 下载源')
     const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的 Mod 项目 id')
@@ -3381,7 +3443,7 @@ export function apply(ctx: Context): void {
     const normalized: ModProjectRequest = {
       source,
       ...(sourceApi ? { sourceApi } : {}),
-      projectId,
+      projectId
     }
     const cacheKey = `${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}`
     const cached = readModCache(modProjectCache, cacheKey, MOD_VERSION_TTL)
@@ -3427,9 +3489,12 @@ export function apply(ctx: Context): void {
   })
 
   ctx.ipc.handle<ModVersionRequest>('modpacks/versions', async (request): Promise<ModVersion[]> => {
-    const source = request?.source === 'curseforge'
-      ? 'curseforge'
-      : request?.source === 'modrinth' ? 'modrinth' : null
+    const source =
+      request?.source === 'curseforge'
+        ? 'curseforge'
+        : request?.source === 'modrinth'
+          ? 'modrinth'
+          : null
     if (!source) throw new Error('不支持的整合包下载源')
     const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的整合包项目 id')
@@ -3440,7 +3505,7 @@ export function apply(ctx: Context): void {
       ...(sourceApi ? { sourceApi } : {}),
       projectId,
       gameVersion: safeVersionId(request?.gameVersion) ?? '',
-      loader: isModLoader(request?.loader) ? request.loader : 'all',
+      loader: isModLoader(request?.loader) ? request.loader : 'all'
     }
     const cacheKey = `modpack:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}:${normalized.gameVersion}:${normalized.loader}`
     const cached = readModCache(modVersionCache, cacheKey, MOD_VERSION_TTL)
@@ -3462,9 +3527,12 @@ export function apply(ctx: Context): void {
   })
 
   ctx.ipc.handle<ModProjectRequest>('modpacks/project', async (request): Promise<ModSummary> => {
-    const source = request?.source === 'curseforge'
-      ? 'curseforge'
-      : request?.source === 'modrinth' ? 'modrinth' : null
+    const source =
+      request?.source === 'curseforge'
+        ? 'curseforge'
+        : request?.source === 'modrinth'
+          ? 'modrinth'
+          : null
     if (!source) throw new Error('不支持的整合包下载源')
     const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的整合包项目 id')
@@ -3473,7 +3541,7 @@ export function apply(ctx: Context): void {
     const normalized: ModProjectRequest = {
       source,
       ...(sourceApi ? { sourceApi } : {}),
-      projectId,
+      projectId
     }
     const cacheKey = `modpack:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}`
     const cached = readModCache(modProjectCache, cacheKey, MOD_VERSION_TTL)
@@ -3518,19 +3586,18 @@ export function apply(ctx: Context): void {
     const rawName = typeof file.fileName === 'string' ? file.fileName : ''
     const fileName = path.basename(rawName)
     if (
-      !fileName
-      || fileName !== rawName
-      || !/\.jar$/i.test(fileName)
-      || /[\\/:*?"<>|\u0000-\u001f]/.test(fileName)
+      !fileName ||
+      fileName !== rawName ||
+      !/\.jar$/i.test(fileName) ||
+      /[\\/:*?"<>|\u0000-\u001f]/.test(fileName)
     ) {
       throw new Error('无效的 Mod 文件名')
     }
 
     const rawSha1 = typeof file.sha1 === 'string' ? file.sha1.trim().toLowerCase() : ''
     const sha1 = /^[0-9a-f]{40}$/.test(rawSha1) ? rawSha1 : ''
-    const size = typeof file.size === 'number' && Number.isFinite(file.size)
-      ? Math.max(0, file.size)
-      : 0
+    const size =
+      typeof file.size === 'number' && Number.isFinite(file.size) ? Math.max(0, file.size) : 0
 
     const requested = Array.isArray(request?.instanceNames) ? request.instanceNames : []
     const names = [...new Set(requested.filter((name): name is string => typeof name === 'string'))]
@@ -3548,16 +3615,18 @@ export function apply(ctx: Context): void {
       }
       targets.set(instanceKey(instanceName), {
         instanceName,
-        target: path.join(instanceDir, 'mods', fileName),
+        target: path.join(instanceDir, 'mods', fileName)
       })
     }
 
-    const title = typeof request?.title === 'string' && request.title.trim()
-      ? request.title.trim().slice(0, 120)
-      : fileName
-    const detail = typeof request?.detail === 'string' && request.detail.trim()
-      ? request.detail.trim().slice(0, 80)
-      : `${targets.size} 个实例`
+    const title =
+      typeof request?.title === 'string' && request.title.trim()
+        ? request.title.trim().slice(0, 120)
+        : fileName
+    const detail =
+      typeof request?.detail === 'string' && request.detail.trim()
+        ? request.detail.trim().slice(0, 80)
+        : `${targets.size} 个实例`
 
     const job: InstallJob = {
       id: nextJobId(),
@@ -3568,7 +3637,7 @@ export function apply(ctx: Context): void {
       gameVersion: '',
       taskIds: [],
       createdAt: Date.now(),
-      state: 'ready',
+      state: 'ready'
     }
     jobs.set(job.id, job)
 
@@ -3580,9 +3649,9 @@ export function apply(ctx: Context): void {
         savePath: target,
         sha1,
         size,
-        direct: true,
+        direct: true
       })),
-      false,
+      false
     )
 
     persistRecords(true)
@@ -3591,7 +3660,7 @@ export function apply(ctx: Context): void {
       title,
       fileName,
       job.taskIds.length,
-      job.id,
+      job.id
     )
     scheduleLoop()
     return { jobId: job.id }
@@ -3621,10 +3690,10 @@ export function apply(ctx: Context): void {
     const rawName = typeof file.fileName === 'string' ? file.fileName : ''
     const fileName = path.basename(rawName)
     if (
-      !fileName
-      || fileName !== rawName
-      || !/\.(mrpack|zip)$/i.test(fileName)
-      || /[\\/:*?"<>|\u0000-\u001f]/.test(fileName)
+      !fileName ||
+      fileName !== rawName ||
+      !/\.(mrpack|zip)$/i.test(fileName) ||
+      /[\\/:*?"<>|\u0000-\u001f]/.test(fileName)
     ) {
       return { jobId: '', error: '无效的整合包文件名' }
     }
@@ -3640,12 +3709,12 @@ export function apply(ctx: Context): void {
 
     const rawSha1 = typeof file.sha1 === 'string' ? file.sha1.trim().toLowerCase() : ''
     const sha1 = /^[0-9a-f]{40}$/.test(rawSha1) ? rawSha1 : ''
-    const size = typeof file.size === 'number' && Number.isFinite(file.size)
-      ? Math.max(0, file.size)
-      : 0
-    const title = typeof request.title === 'string' && request.title.trim()
-      ? request.title.trim().slice(0, 120)
-      : fileName
+    const size =
+      typeof file.size === 'number' && Number.isFinite(file.size) ? Math.max(0, file.size) : 0
+    const title =
+      typeof request.title === 'string' && request.title.trim()
+        ? request.title.trim().slice(0, 120)
+        : fileName
     const sourceApi = typeof request.sourceApi === 'string' ? request.sourceApi.trim() : ''
 
     const job: InstallJob = {
@@ -3658,7 +3727,7 @@ export function apply(ctx: Context): void {
       taskIds: [],
       createdAt: Date.now(),
       state: 'preparing',
-      mode: 'install',
+      mode: 'install'
     }
     jobs.set(job.id, job)
     archiveSupersededJobs(check.name, job.id)
@@ -3670,7 +3739,7 @@ export function apply(ctx: Context): void {
       ...request,
       instanceName: check.name,
       file: { url: parsedUrl.toString(), fileName, ...(sha1 ? { sha1 } : {}), size },
-      ...(sourceApi ? { sourceApi } : {}),
+      ...(sourceApi ? { sourceApi } : {})
     }).catch(() => undefined)
 
     return { jobId: job.id }
@@ -3695,9 +3764,7 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle('install/list', () => [...jobs.values()])
 
   // 下载页首屏只需要聚合结果；逐文件任务可能有几万条，全部传输会拖慢开页
-  ctx.ipc.handle('install/summary', (): InstallJobSummary[] =>
-    [...jobs.values()].map(toSummary),
-  )
+  ctx.ipc.handle('install/summary', (): InstallJobSummary[] => [...jobs.values()].map(toSummary))
 
   /** 汇总一次安装的实时阶段：准备 / 下载中 / 已暂停 / 失败 / 完成 */
   function liveStateOf(job: InstallJob): InstallLiveState {
@@ -3738,10 +3805,12 @@ export function apply(ctx: Context): void {
       instanceName: job.instanceName,
       jobId: job.id,
       state: liveStateOf(job),
-      retryable: job.state === 'failed' && job.taskIds.some((taskId) => {
-        const task = tasks.get(taskId)
-        return task !== undefined && task.state === 'failed' && task.error !== '已取消'
-      }),
+      retryable:
+        job.state === 'failed' &&
+        job.taskIds.some((taskId) => {
+          const task = tasks.get(taskId)
+          return task !== undefined && task.state === 'failed' && task.error !== '已取消'
+        })
     }))
   })
 
@@ -3749,10 +3818,12 @@ export function apply(ctx: Context): void {
     const job = jobs.get(jobId)
     if (!job) return
     // 已完成的安装不能被取消改写历史
-    const unfinished = job.state === 'preparing' || job.taskIds.some((taskId) => {
-      const task = tasks.get(taskId)
-      return task !== undefined && task.state !== 'done' && task.state !== 'failed'
-    })
+    const unfinished =
+      job.state === 'preparing' ||
+      job.taskIds.some((taskId) => {
+        const task = tasks.get(taskId)
+        return task !== undefined && task.state !== 'done' && task.state !== 'failed'
+      })
     if (!unfinished) return
     cancelledJobs.add(jobId)
     pausedJobs.delete(jobId)
@@ -3804,7 +3875,8 @@ export function apply(ctx: Context): void {
    */
   ctx.ipc.handle<{ jobId: string }>('install/retry', async ({ jobId }) => {
     const job = jobs.get(jobId)
-    if (!job || job.state === 'done' || job.state === 'cancelled' || job.state === 'preparing') return
+    if (!job || job.state === 'done' || job.state === 'cancelled' || job.state === 'preparing')
+      return
     if (!isCurrentJob(job)) throw new Error('该安装记录已被更新的安装取代，不能重试')
     if (job.taskIds.length === 0) throw new Error('该安装没有可续传的下载记录，请删除后重新安装')
     if (isGameJob(job) && !existsSync(versionJsonOf(job.instanceName, installedVersionId(job)))) {
@@ -3813,9 +3885,10 @@ export function apply(ctx: Context): void {
 
     const failed = job.taskIds
       .map((taskId) => tasks.get(taskId))
-      .filter((task): task is DownloadTask => (
-        task !== undefined && task.state === 'failed' && task.error !== '已取消'
-      ))
+      .filter(
+        (task): task is DownloadTask =>
+          task !== undefined && task.state === 'failed' && task.error !== '已取消'
+      )
     if (failed.length === 0) {
       // 整合包可能在合并覆盖文件时失败：文件都下完了，重试应重新收尾
       if (job.kind === 'modpack') {
@@ -3840,11 +3913,12 @@ export function apply(ctx: Context): void {
     }
 
     log.info(
-      isGameJob(job) ? '重试安装「%s」：%d 个失败任务重新排队，job %s'
+      isGameJob(job)
+        ? '重试安装「%s」：%d 个失败任务重新排队，job %s'
         : '重试 Mod 安装「%s」：%d 个失败任务重新排队，job %s',
       job.title || job.instanceName,
       failed.length,
-      job.id,
+      job.id
     )
     persistRecords(true)
     scheduleLoop()
@@ -3859,16 +3933,18 @@ export function apply(ctx: Context): void {
     const job = jobs.get(jobId)
     if (!job) return
     if (job.state === 'done') {
-      throw new Error(isGameJob(job)
-        ? '安装已完成，请到启动页删除实例'
-        : 'Mod 安装已完成，记录会保留在历史中')
+      throw new Error(
+        isGameJob(job) ? '安装已完成，请到启动页删除实例' : 'Mod 安装已完成，记录会保留在历史中'
+      )
     }
     if (!isCurrentJob(job)) throw new Error('该安装记录已被更新的安装取代，不能删除')
 
-    const active = job.state === 'preparing' || job.taskIds.some((taskId) => {
-      const task = tasks.get(taskId)
-      return task !== undefined && task.state !== 'done' && task.state !== 'failed'
-    })
+    const active =
+      job.state === 'preparing' ||
+      job.taskIds.some((taskId) => {
+        const task = tasks.get(taskId)
+        return task !== undefined && task.state !== 'done' && task.state !== 'failed'
+      })
     if (active) throw new Error('安装仍在进行，请先取消')
 
     // 补全任务只丢弃记录，实例目录留给启动页的「补全文件」继续处理；
@@ -3900,9 +3976,14 @@ export function apply(ctx: Context): void {
     }
 
     // 已有进行中的任务时直接复用，避免同一实例并发下载
-    const active = [...jobs.values()].find((job) => isGameJob(job)
-      && job.instanceName === instanceName
-      && job.state !== 'done' && job.state !== 'failed' && job.state !== 'cancelled')
+    const active = [...jobs.values()].find(
+      (job) =>
+        isGameJob(job) &&
+        job.instanceName === instanceName &&
+        job.state !== 'done' &&
+        job.state !== 'failed' &&
+        job.state !== 'cancelled'
+    )
     if (active) return { jobId: active.id }
 
     const job: InstallJob = {
@@ -3913,7 +3994,7 @@ export function apply(ctx: Context): void {
       taskIds: [],
       createdAt: Date.now(),
       state: 'preparing',
-      mode: 'repair',
+      mode: 'repair'
     }
     jobs.set(job.id, job)
     archiveSupersededJobs(instanceName, job.id)
@@ -3952,7 +4033,7 @@ export function apply(ctx: Context): void {
       taskIds: [],
       createdAt: Date.now(),
       state: 'preparing',
-      mode: 'install',
+      mode: 'install'
     }
     jobs.set(job.id, job)
     archiveSupersededJobs(instanceName, job.id)
@@ -3966,7 +4047,7 @@ export function apply(ctx: Context): void {
       instanceName,
       gameVersion,
       loader ? ` + ${LOADER_LABELS[loader.kind]} ${loader.version}` : '',
-      job.id,
+      job.id
     )
 
     // 立刻返回：下载清单在后台准备，调用方直接跳转到下载页

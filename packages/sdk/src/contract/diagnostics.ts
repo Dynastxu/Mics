@@ -49,14 +49,7 @@ export interface PluginConsumeRef {
 }
 
 export type PluginContributionKind =
-  | 'rpc'
-  | 'command'
-  | 'view'
-  | 'navGroup'
-  | 'statusBar'
-  | 'theme'
-  | 'layout'
-  | 'configuration'
+  'rpc' | 'command' | 'view' | 'navGroup' | 'statusBar' | 'theme' | 'layout' | 'configuration'
 
 /** 我注册的贡献点；`view` 对应清单里的 nav id */
 export interface PluginContributionRef {

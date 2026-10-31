@@ -3,11 +3,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { Transform } from 'node:stream'
 import { DownloaderHelper } from 'node-downloader-helper'
-import type {
-  FileTransferHandle,
-  TransferOutcome,
-  TransferProgress,
-} from '@mics/sdk'
+import type { FileTransferHandle, TransferOutcome, TransferProgress } from '@mics/sdk'
 import { fileSize, hashRange, toError, type FileTransferOptions } from './transferCommon'
 
 /**
@@ -35,7 +31,7 @@ export function createSingleFileTransfer(options: FileTransferOptions): FileTran
     transform(chunk, _encoding, callback) {
       hash?.update(chunk as Buffer)
       callback(null, chunk)
-    },
+    }
   })
 
   async function start(): Promise<TransferOutcome> {
@@ -78,7 +74,7 @@ export function createSingleFileTransfer(options: FileTransferOptions): FileTran
       // 镜像站（尤其是 BMCLAPI 重定向后的 CERNET 节点）会拒绝无 UA 的请求
       headers: options.headers ?? {},
       httpRequestOptions: { agent: options.agents.http },
-      httpsRequestOptions: { agent: options.agents.https },
+      httpsRequestOptions: { agent: options.agents.https }
     })
 
     // 停滞看门狗：建连成功但长时间收不到数据时，主动结束本轮传输
@@ -131,10 +127,10 @@ export function createSingleFileTransfer(options: FileTransferOptions): FileTran
     armStall()
     const running = resuming
       ? helper.resumeFromFile(options.partPath, {
-        downloaded: partSize,
-        fileName: path.basename(options.partPath),
-        ...(options.size > 0 ? { total: options.size } : {}),
-      })
+          downloaded: partSize,
+          fileName: path.basename(options.partPath),
+          ...(options.size > 0 ? { total: options.size } : {})
+        })
       : helper.start()
     // 停滞超时后不再等原来的 promise，但要消费掉它的拒绝，避免未处理异常
     running.catch(() => undefined)

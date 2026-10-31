@@ -6,7 +6,7 @@ import type {
   ModSource,
   ModSummary,
   ModVersion,
-  ModVersionRequest,
+  ModVersionRequest
 } from '@mics/sdk'
 import { MOD_LOADER_LABELS, modSourceNeedsKey } from '@mics/sdk'
 import { curseforgeCategoriesOf, curseforgeCategoryLabel } from './categories'
@@ -39,11 +39,11 @@ const LOADER_IDS: Record<ModLoader, number> = {
   forge: 1,
   fabric: 4,
   quilt: 5,
-  neoforge: 6,
+  neoforge: 6
 }
 
 const LOADER_NAMES = new Map<string, ModLoader>(
-  Object.entries(MOD_LOADER_LABELS).map(([id, label]) => [label.toLowerCase(), id as ModLoader]),
+  Object.entries(MOD_LOADER_LABELS).map(([id, label]) => [label.toLowerCase(), id as ModLoader])
 )
 
 const MAX_PAGE_SIZE = 50
@@ -155,18 +155,20 @@ export function curseforgeHeaders(source: ModSource): Record<string, string> {
 function modSummary(
   source: ModSource,
   mod: CurseforgeMod,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): ModSummary | null {
   const projectId = typeof mod.id === 'number' ? String(mod.id) : ''
   if (!projectId) return null
   const slug = mod.slug?.trim() || projectId
   const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : curseforgeCategoryLabel
-  const categories = [...new Set(
-    (mod.categories ?? [])
-      .map((category) => category.name?.trim() ?? '')
-      .filter(Boolean)
-      .map(labelOf),
-  )]
+  const categories = [
+    ...new Set(
+      (mod.categories ?? [])
+        .map((category) => category.name?.trim() ?? '')
+        .filter(Boolean)
+        .map(labelOf)
+    )
+  ]
 
   return {
     id: `curseforge:${projectId}`,
@@ -183,8 +185,9 @@ function modSummary(
     follows: 0,
     categories,
     updated: mod.dateModified ?? '',
-    url: mod.links?.websiteUrl?.trim()
-      || `https://www.curseforge.com/minecraft/${projectPathOf(kind)}/${encodeURIComponent(slug)}`,
+    url:
+      mod.links?.websiteUrl?.trim() ||
+      `https://www.curseforge.com/minecraft/${projectPathOf(kind)}/${encodeURIComponent(slug)}`
   }
 }
 
@@ -193,12 +196,11 @@ export async function searchCurseforge(
   request: ModSearchRequest,
   signal: AbortSignal,
   limit: number,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): Promise<{ items: ModSummary[]; total: number }> {
   const headers = curseforgeHeaders(source)
-  const categoryIds = kind === 'modpack' || !request.category
-    ? []
-    : curseforgeCategoriesOf(request.category)
+  const categoryIds =
+    kind === 'modpack' || !request.category ? [] : curseforgeCategoriesOf(request.category)
   // CurseForge 的整合包分类 id 与 Mod 分类不同，暂未维护映射：选择类型时
   // 该来源不参与，避免返回与筛选条件不符的包。
   if (request.category && categoryIds.length === 0) return { items: [], total: 0 }
@@ -209,7 +211,7 @@ export async function searchCurseforge(
     searchFilter: request.query,
     gameVersion: request.gameVersion,
     sortField: '6',
-    sortOrder: 'desc',
+    sortOrder: 'desc'
   }
   if (request.loader !== 'all') {
     baseParams.modLoaderType = String(LOADER_IDS[request.loader])
@@ -229,7 +231,7 @@ export async function searchCurseforge(
     const url = withParams(endpoint(source.api, 'mods/search'), {
       ...baseParams,
       index: String(offset),
-      pageSize: String(pageSize),
+      pageSize: String(pageSize)
     })
     const response = await requestJson<CurseforgeSearchResponse>(url, { headers, signal })
     const data = response.data ?? []
@@ -253,11 +255,11 @@ export async function projectCurseforge(
   source: ModSource,
   projectId: string,
   signal: AbortSignal,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): Promise<ModSummary> {
   const response = await requestJson<CurseforgeModResponse>(
     endpoint(source.api, `mods/${encodeURIComponent(projectId)}`),
-    { headers: curseforgeHeaders(source), signal },
+    { headers: curseforgeHeaders(source), signal }
   )
   const summary = response.data ? modSummary(source, response.data, kind) : null
   if (!summary) throw new Error('CurseForge 没有返回有效的项目信息')
@@ -290,10 +292,7 @@ function dependencyKind(relationType: number | undefined): ModDependency['kind']
   }
 }
 
-function dependenciesOf(
-  file: CurseforgeFile,
-  projects: Map<number, ModSummary>,
-): ModDependency[] {
+function dependenciesOf(file: CurseforgeFile, projects: Map<number, ModSummary>): ModDependency[] {
   const dependencies: ModDependency[] = []
   for (const dependency of file.dependencies ?? []) {
     const kind = dependencyKind(dependency.relationType)
@@ -305,7 +304,7 @@ function dependenciesOf(
       name: project?.name || `Mod #${dependency.modId}`,
       versionId: '',
       kind,
-      ...(project ? { project } : {}),
+      ...(project ? { project } : {})
     })
   }
   return dependencies
@@ -320,7 +319,7 @@ function dependenciesOf(
 async function dependencyProjects(
   source: ModSource,
   files: CurseforgeFile[],
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<Map<number, ModSummary>> {
   const ids = new Set<number>()
   for (const file of files) {
@@ -333,15 +332,12 @@ async function dependencyProjects(
   if (ids.size === 0) return new Map()
 
   try {
-    const response = await requestJson<CurseforgeModsResponse>(
-      endpoint(source.api, 'mods'),
-      {
-        method: 'POST',
-        body: JSON.stringify({ modIds: [...ids] }),
-        headers: curseforgeHeaders(source),
-        signal,
-      },
-    )
+    const response = await requestJson<CurseforgeModsResponse>(endpoint(source.api, 'mods'), {
+      method: 'POST',
+      body: JSON.stringify({ modIds: [...ids] }),
+      headers: curseforgeHeaders(source),
+      signal
+    })
     const summaries = new Map<number, ModSummary>()
     for (const mod of response.data ?? []) {
       if (typeof mod.id !== 'number') continue
@@ -359,7 +355,7 @@ function versionOf(
   source: ModSource,
   projectId: string,
   file: CurseforgeFile,
-  projects: Map<number, ModSummary>,
+  projects: Map<number, ModSummary>
 ): ModVersion | null {
   if (typeof file.id !== 'number' || !file.downloadUrl || !file.fileName) return null
   const downloadUrl = file.downloadUrl
@@ -374,9 +370,10 @@ function versionOf(
     else if (/^\d/.test(value)) gameVersions.push(value)
   }
 
-  const sha1 = (file.hashes ?? [])
-    .find((hash) => hash.algo === 1 && typeof hash.value === 'string')
-    ?.value?.toLowerCase() ?? ''
+  const sha1 =
+    (file.hashes ?? [])
+      .find((hash) => hash.algo === 1 && typeof hash.value === 'string')
+      ?.value?.toLowerCase() ?? ''
 
   return {
     id: `curseforge:${file.id}`,
@@ -393,7 +390,7 @@ function versionOf(
     sha1,
     size: file.fileLength ?? 0,
     downloads: file.downloadCount ?? 0,
-    dependencies: dependenciesOf(file, projects),
+    dependencies: dependenciesOf(file, projects)
   }
 }
 
@@ -405,14 +402,16 @@ function versionOf(
 export async function identifyCurseforge(
   source: ModSource,
   files: Array<{ key: string; murmur2?: number }>,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<Map<string, CurseforgeIdentified>> {
   const headers = curseforgeHeaders(source)
-  const fingerprints = [...new Set(
-    files
-      .map((file) => file.murmur2)
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value)),
-  )]
+  const fingerprints = [
+    ...new Set(
+      files
+        .map((file) => file.murmur2)
+        .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    )
+  ]
   const result = new Map<string, CurseforgeIdentified>()
   if (fingerprints.length === 0) return result
 
@@ -422,28 +421,25 @@ export async function identifyCurseforge(
       method: 'POST',
       body: JSON.stringify({ fingerprints }),
       headers,
-      signal,
-    },
+      signal
+    }
   )
   const matches = response.data?.exactMatches ?? []
   if (matches.length === 0) return result
 
-  const modIds = [...new Set(
-    matches
-      .map((match) => match.file?.modId)
-      .filter((id): id is number => typeof id === 'number'),
-  )]
+  const modIds = [
+    ...new Set(
+      matches.map((match) => match.file?.modId).filter((id): id is number => typeof id === 'number')
+    )
+  ]
   if (modIds.length === 0) return result
 
-  const modsResponse = await requestJson<CurseforgeModsResponse>(
-    endpoint(source.api, 'mods'),
-    {
-      method: 'POST',
-      body: JSON.stringify({ modIds }),
-      headers,
-      signal,
-    },
-  )
+  const modsResponse = await requestJson<CurseforgeModsResponse>(endpoint(source.api, 'mods'), {
+    method: 'POST',
+    body: JSON.stringify({ modIds }),
+    headers,
+    signal
+  })
   const mods = new Map<number, CurseforgeMod>()
   for (const mod of modsResponse.data ?? []) {
     if (typeof mod.id === 'number') mods.set(mod.id, mod)
@@ -467,7 +463,7 @@ export async function identifyCurseforge(
     result.set(file.key, {
       projectId: String(mod.id),
       versionId: String(modFile.id),
-      project,
+      project
     })
   }
   return result
@@ -476,7 +472,7 @@ export async function identifyCurseforge(
 export async function versionsCurseforge(
   source: ModSource,
   request: ModVersionRequest,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<ModVersion[]> {
   const headers = curseforgeHeaders(source)
   const params: Record<string, string> = { gameVersion: request.gameVersion }
@@ -496,8 +492,8 @@ export async function versionsCurseforge(
       {
         ...params,
         index: String(offset),
-        pageSize: String(MAX_PAGE_SIZE),
-      },
+        pageSize: String(MAX_PAGE_SIZE)
+      }
     )
     const response = await requestJson<CurseforgeFilesResponse>(url, { headers, signal })
     const data = response.data ?? []

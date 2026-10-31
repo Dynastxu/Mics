@@ -11,7 +11,7 @@ import {
   hashFile,
   toError,
   transferStatePath,
-  type FileTransferOptions,
+  type FileTransferOptions
 } from './transferCommon'
 
 /**
@@ -68,7 +68,7 @@ class RangeUnsupportedError extends Error {
 }
 
 function headerValue(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
+  return Array.isArray(value) ? (value[0] ?? '') : (value ?? '')
 }
 
 function parseContentRange(value: string): { start: number; end: number; total: number } | null {
@@ -78,7 +78,7 @@ function parseContentRange(value: string): { start: number; end: number; total: 
   return {
     start: Number(match[1]),
     end: Number(match[2]),
-    total: Number.isSafeInteger(total) && total > 0 ? total : 0,
+    total: Number.isSafeInteger(total) && total > 0 ? total : 0
   }
 }
 
@@ -121,7 +121,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
     lastProgressAt = now
     options.onProgress?.({
       loaded: Math.min(loadedBytes(), totalSize),
-      total: totalSize,
+      total: totalSize
     })
   }
 
@@ -166,7 +166,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
     url: string,
     headers: Record<string, string>,
     signal: AbortSignal,
-    redirects = 0,
+    redirects = 0
   ): Promise<IncomingMessage> {
     return new Promise((resolve, reject) => {
       if (redirects > MAX_REDIRECTS) {
@@ -192,7 +192,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
           method: 'GET',
           headers,
           signal,
-          agent: secure ? options.agents.https : options.agents.http,
+          agent: secure ? options.agents.https : options.agents.http
         },
         (response) => {
           const status = response.statusCode ?? 0
@@ -210,7 +210,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
             return
           }
           resolve(response)
-        },
+        }
       )
 
       request.setTimeout(REQUEST_TIMEOUT, () => request.destroy(new Error('请求超时')))
@@ -228,9 +228,9 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
         {
           ...(options.headers ?? {}),
           Range: 'bytes=0-0',
-          'Accept-Encoding': 'identity',
+          'Accept-Encoding': 'identity'
         },
-        controller.signal,
+        controller.signal
       )
       try {
         const status = response.statusCode ?? 0
@@ -241,7 +241,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
         return {
           total: range.total,
           etag: headerValue(response.headers.etag),
-          lastModified: headerValue(response.headers['last-modified']),
+          lastModified: headerValue(response.headers['last-modified'])
         }
       } finally {
         response.destroy()
@@ -258,7 +258,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
     const count = Math.min(
       MAX_DOWNLOAD_SEGMENTS,
       Math.max(2, Number.isFinite(requested) ? requested : 4),
-      Math.floor(probe.total / MIN_SEGMENT_BYTES),
+      Math.floor(probe.total / MIN_SEGMENT_BYTES)
     )
     if (count < 2) return null
 
@@ -268,7 +268,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
       segments.push({
         start: index * base,
         end: index === count - 1 ? probe.total - 1 : (index + 1) * base - 1,
-        loaded: 0,
+        loaded: 0
       })
     }
     return {
@@ -277,7 +277,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
       size: probe.total,
       etag: probe.etag,
       lastModified: probe.lastModified,
-      segments,
+      segments
     }
   }
 
@@ -285,14 +285,14 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
     let expected = 0
     for (const segment of segments) {
       if (
-        !Number.isInteger(segment.start)
-        || !Number.isInteger(segment.end)
-        || !Number.isInteger(segment.loaded)
-        || segment.start !== expected
-        || segment.end < segment.start
-        || segment.end >= total
-        || segment.loaded < 0
-        || segment.loaded > segmentLength(segment)
+        !Number.isInteger(segment.start) ||
+        !Number.isInteger(segment.end) ||
+        !Number.isInteger(segment.loaded) ||
+        segment.start !== expected ||
+        segment.end < segment.start ||
+        segment.end >= total ||
+        segment.loaded < 0 ||
+        segment.loaded > segmentLength(segment)
       ) {
         return false
       }
@@ -307,10 +307,10 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
       if (!raw || typeof raw !== 'object') return null
       const record = raw as Partial<PersistedSegmentState>
       if (
-        record.version !== 1
-        || record.url !== options.url
-        || record.size !== probe.total
-        || !Array.isArray(record.segments)
+        record.version !== 1 ||
+        record.url !== options.url ||
+        record.size !== probe.total ||
+        !Array.isArray(record.segments)
       ) {
         return null
       }
@@ -327,14 +327,8 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
         for (const segment of record.segments) segment.loaded = 0
       } else {
         for (const segment of record.segments) {
-          const available = Math.min(
-            segment.loaded,
-            Math.max(0, fileBytes - segment.start),
-          )
-          const overlap = Math.min(
-            RESUME_OVERLAP_MAX,
-            Math.floor(segmentLength(segment) / 4),
-          )
+          const available = Math.min(segment.loaded, Math.max(0, fileBytes - segment.start))
+          const overlap = Math.min(RESUME_OVERLAP_MAX, Math.floor(segmentLength(segment) / 4))
           segment.loaded = Math.max(0, available - (available > 0 ? overlap : 0))
         }
       }
@@ -344,7 +338,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
         size: record.size,
         etag: record.etag ?? '',
         lastModified: record.lastModified ?? '',
-        segments: record.segments,
+        segments: record.segments
       }
     } catch {
       return null
@@ -371,7 +365,9 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
   }
 
   function allDone(): boolean {
-    return Boolean(state) && state!.segments.every((segment) => segment.loaded >= segmentLength(segment))
+    return (
+      Boolean(state) && state!.segments.every((segment) => segment.loaded >= segmentLength(segment))
+    )
   }
 
   async function finish(): Promise<TransferOutcome> {
@@ -414,7 +410,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
       const headers: Record<string, string> = {
         ...(options.headers ?? {}),
         Range: `bytes=${start}-${segment.end}`,
-        'Accept-Encoding': 'identity',
+        'Accept-Encoding': 'identity'
       }
       if (state?.etag) headers['If-Range'] = state.etag
       else if (state?.lastModified) headers['If-Range'] = state.lastModified
@@ -445,7 +441,7 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
             if (stopRequested) throw new Error('已取消')
             const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
             await new Promise<void>((resolve, reject) => {
-              writer.write(buffer, (error) => error ? reject(error) : resolve())
+              writer.write(buffer, (error) => (error ? reject(error) : resolve()))
             })
             segment.loaded += buffer.length
             report()
@@ -512,15 +508,11 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
 
   async function runSegments(): Promise<void> {
     if (!state) return
-    const pending = state.segments.filter(
-      (segment) => segment.loaded < segmentLength(segment),
-    )
+    const pending = state.segments.filter((segment) => segment.loaded < segmentLength(segment))
     if (pending.length === 0) return
-    const results = await Promise.allSettled(
-      pending.map((segment) => downloadSegment(segment)),
-    )
+    const results = await Promise.allSettled(pending.map((segment) => downloadSegment(segment)))
     const rejected = results.find(
-      (result): result is PromiseRejectedResult => result.status === 'rejected',
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
     )
     if (fatalError) throw fatalError
     if (rejected) throw rejected.reason
@@ -530,16 +522,18 @@ export function createSegmentedFileTransfer(options: FileTransferOptions): FileT
     if (stopRequested) return { status: 'paused' }
     if (running) return { status: 'failed', error: new Error('传输已在进行中') }
     running = true
-    donePromise = new Promise<void>((resolve) => { doneResolve = resolve })
+    donePromise = new Promise<void>((resolve) => {
+      doneResolve = resolve
+    })
 
     try {
       // 上次已经完整落盘、只是没来得及改名：有 SHA1 时可以直接校验；
       // 没有 SHA1 时不能相信文件长度——分段实现会预分配 `.part` 到总长度，
       // 长度等于总大小并不代表所有字节都来自网络。
       if (
-        options.size > 0
-        && fileSize(options.partPath) === options.size
-        && !existsSync(statePath)
+        options.size > 0 &&
+        fileSize(options.partPath) === options.size &&
+        !existsSync(statePath)
       ) {
         if (options.sha1) {
           const digest = await hashFile(options.partPath)

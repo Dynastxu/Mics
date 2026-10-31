@@ -21,14 +21,16 @@ async function load(): Promise<void> {
     const settings = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/get')
     repeatBehavior.value = settings.repeatBehavior
     memory.value = String(settings.maxMemory)
-  } catch { /* 使用默认的「提示」与 4096 MB */ }
+  } catch {
+    /* 使用默认的「提示」与 4096 MB */
+  }
 }
 
 async function saveBehavior(): Promise<void> {
   error.value = ''
   try {
     const settings = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/set', {
-      repeatBehavior: repeatBehavior.value,
+      repeatBehavior: repeatBehavior.value
     })
     repeatBehavior.value = settings.repeatBehavior
     memory.value = String(settings.maxMemory)
@@ -41,7 +43,7 @@ async function saveMemory(): Promise<void> {
   error.value = ''
   try {
     const settings = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/set', {
-      maxMemory: Number(memory.value),
+      maxMemory: Number(memory.value)
     })
     memory.value = String(settings.maxMemory)
   } catch (cause) {

@@ -26,8 +26,7 @@ export interface MissingFile {
  * 原样返回，界面据此弹窗，确认后交给下载管线的补全任务。
  */
 export type LaunchOutcome =
-  | { status: 'launched'; pid: number }
-  | { status: 'missing-files'; files: MissingFile[] }
+  { status: 'launched'; pid: number } | { status: 'missing-files'; files: MissingFile[] }
 
 /** 一次启动所处的阶段：等待游戏窗口出现 / 已在运行 */
 export type LaunchPhase = 'starting' | 'running'

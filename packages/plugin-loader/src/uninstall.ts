@@ -55,7 +55,7 @@ async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Pr
       task,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(message)), ms)
-      }),
+      })
     ])
   } finally {
     if (timer) clearTimeout(timer)
@@ -69,7 +69,7 @@ async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Pr
  */
 export async function runUninstallScript(
   record: PluginRecord,
-  options: RunUninstallOptions,
+  options: RunUninstallOptions
 ): Promise<void> {
   if (!record.entryUninstall) return
   const { manifest } = record
@@ -87,10 +87,7 @@ export async function runUninstallScript(
     }
     script = candidate as UninstallScript
   } catch (error) {
-    throw new PluginUninstallError(
-      `卸载脚本加载失败: ${(error as Error).message}`,
-      'script',
-    )
+    throw new PluginUninstallError(`卸载脚本加载失败: ${(error as Error).message}`, 'script')
   }
 
   const storageFile = pluginStorageFile(options.userDataDir, manifest.id)
@@ -99,35 +96,26 @@ export async function runUninstallScript(
     dir: record.dir,
     storageFile,
     storage: await readStorage(storageFile),
-    log: (message) => log(`[uninstall] ${message}`),
+    log: (message) => log(`[uninstall] ${message}`)
   }
 
   try {
     await withTimeout(
       Promise.resolve().then(() => script(context)),
       timeoutMs,
-      `卸载脚本超时（${timeoutMs}ms）`,
+      `卸载脚本超时（${timeoutMs}ms）`
     )
   } catch (error) {
-    throw new PluginUninstallError(
-      `卸载脚本执行失败: ${(error as Error).message}`,
-      'script',
-    )
+    throw new PluginUninstallError(`卸载脚本执行失败: ${(error as Error).message}`, 'script')
   }
 }
 
 /** 删除插件本体与插件自己的存储；失败时提示用户（文件可能被占用） */
-export async function removePluginFiles(
-  record: PluginRecord,
-  userDataDir: string,
-): Promise<void> {
+export async function removePluginFiles(record: PluginRecord, userDataDir: string): Promise<void> {
   try {
     await rm(record.dir, { recursive: true, force: true })
   } catch (error) {
-    throw new PluginUninstallError(
-      `删除插件目录失败: ${(error as Error).message}`,
-      'files',
-    )
+    throw new PluginUninstallError(`删除插件目录失败: ${(error as Error).message}`, 'files')
   }
   try {
     await rm(pluginStorageFile(userDataDir, record.manifest.id), { force: true })

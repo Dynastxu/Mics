@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
-import type { AccountSnapshot, AccountSummary, InstallStartResult, InstanceInstallStatus } from '@mics/sdk'
+import type {
+  AccountSnapshot,
+  AccountSummary,
+  InstallStartResult,
+  InstanceInstallStatus
+} from '@mics/sdk'
 import { ACCOUNT_CHANGED_TOPIC, ACCOUNT_KIND_LABELS } from '@mics/sdk'
 import type {
   InstanceSummary,
@@ -10,7 +15,7 @@ import type {
   LaunchSettings,
   LaunchState,
   MissingFile,
-  RepeatLaunchBehavior,
+  RepeatLaunchBehavior
 } from '../shared'
 import { LAUNCH_STATE_TOPIC } from '../shared'
 import InstanceDetailView from './InstanceDetailView.vue'
@@ -37,7 +42,7 @@ const missing = ref<{ instance: InstanceSummary; files: MissingFile[] } | null>(
 const detailId = ref('')
 
 const detailInstance = computed(
-  () => instances.value.find((instance) => instance.id === detailId.value) ?? null,
+  () => instances.value.find((instance) => instance.id === detailId.value) ?? null
 )
 
 /** 下载管线报告的实时阶段；没有记录时说明没有下载任务 */
@@ -64,10 +69,14 @@ const phases = computed<Record<string, InstallPhase>>(() => {
 
 function phaseLabel(phase: InstallPhase): string {
   switch (phase) {
-    case 'downloading': return '下载中'
-    case 'paused': return '已暂停'
-    case 'incomplete': return '不完整'
-    default: return ''
+    case 'downloading':
+      return '下载中'
+    case 'paused':
+      return '已暂停'
+    case 'incomplete':
+      return '不完整'
+    default:
+      return ''
   }
 }
 
@@ -96,7 +105,7 @@ function formatPlayed(timestamp: number | null): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hour12: false
   }).format(new Date(timestamp))
 }
 
@@ -115,11 +124,7 @@ function isAlive(id: string): boolean {
 
 /** 「忽略」重复启动时，运行期间不再提供启动入口；进程结束后自动恢复 */
 function isLaunchHidden(instance: InstanceSummary): boolean {
-  return (
-    settings.value.repeatBehavior === 'ignore' &&
-    isAlive(instance.id) &&
-    !isStarting(instance)
-  )
+  return settings.value.repeatBehavior === 'ignore' && isAlive(instance.id) && !isStarting(instance)
 }
 
 async function load(silent = false): Promise<void> {
@@ -140,7 +145,7 @@ async function load(silent = false): Promise<void> {
 async function fetchStatuses(): Promise<Record<string, InstanceInstallStatus>> {
   const list = await ctx.ipc.invoke<InstanceInstallStatus[]>(
     'mics.download.manager',
-    'install/status',
+    'install/status'
   )
   const map: Record<string, InstanceInstallStatus> = {}
   for (const item of list) map[item.instanceName] = item
@@ -166,8 +171,8 @@ async function loadStatuses(): Promise<void> {
 async function refreshStatuses(): Promise<void> {
   await loadStatuses()
   const finished = instances.value.some(
-    (instance) => instance.installState === 'installing'
-      && statuses.value[instance.id]?.state === 'done',
+    (instance) =>
+      instance.installState === 'installing' && statuses.value[instance.id]?.state === 'done'
   )
   if (finished) await load(true)
 }
@@ -190,7 +195,7 @@ async function repair(instance: InstanceSummary): Promise<void> {
       const result = await ctx.ipc.invoke<InstallStartResult>(
         'mics.download.manager',
         'install/repair',
-        { instanceName: instance.id, versionId: instance.versionId },
+        { instanceName: instance.id, versionId: instance.versionId }
       )
       if (result.error) throw new Error(result.error)
     }
@@ -235,14 +240,18 @@ function terminateDetail(): void {
 async function refreshState(): Promise<void> {
   try {
     runtime.value = await ctx.ipc.invoke<LaunchState>('mics.launch', 'instances/state')
-  } catch { /* 保留上一份状态 */ }
+  } catch {
+    /* 保留上一份状态 */
+  }
 }
 
 async function loadSettings(): Promise<void> {
   try {
     const value = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/get')
     settings.value = value
-  } catch { /* 使用默认的「提示」 */ }
+  } catch {
+    /* 使用默认的「提示」 */
+  }
 }
 
 /** 账户快照：当前选择不在列表里时回退到账户插件记录的当前账户 */
@@ -265,9 +274,11 @@ async function loadAccounts(): Promise<void> {
 async function selectAccount(): Promise<void> {
   if (!accountId.value) return
   try {
-    applyAccounts(await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/setActive', {
-      id: accountId.value,
-    }))
+    applyAccounts(
+      await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/setActive', {
+        id: accountId.value
+      })
+    )
   } catch (cause) {
     notice.value = `切换账户失败：${messageOf(cause)}`
   }
@@ -281,10 +292,12 @@ async function rememberBehavior(behavior: RepeatLaunchBehavior): Promise<void> {
   settings.value = { ...settings.value, repeatBehavior: behavior }
   try {
     const saved = await ctx.ipc.invoke<LaunchSettings>('mics.launch', 'settings/set', {
-      repeatBehavior: behavior,
+      repeatBehavior: behavior
     })
     settings.value = saved
-  } catch { /* 保存失败时保留本次选择 */ }
+  } catch {
+    /* 保存失败时保留本次选择 */
+  }
 }
 
 async function startLaunch(instance: InstanceSummary): Promise<void> {
@@ -299,7 +312,7 @@ async function startLaunch(instance: InstanceSummary): Promise<void> {
   try {
     const result = await ctx.ipc.invoke<LaunchOutcome>('mics.launch', 'instances/launch', {
       id: instance.id,
-      accountId: accountId.value,
+      accountId: accountId.value
     })
     // 文件不完整不是失败：交给用户确认，补全由下载管线负责
     if (result.status === 'missing-files') {
@@ -332,7 +345,7 @@ async function confirmRepair(): Promise<void> {
     const result = await ctx.ipc.invoke<InstallStartResult>(
       'mics.download.manager',
       'install/repair',
-      { instanceName: instance.id, versionId: instance.versionId },
+      { instanceName: instance.id, versionId: instance.versionId }
     )
     if (result.error) throw new Error(result.error)
     await refreshStatuses()
@@ -399,7 +412,9 @@ onMounted(() => {
   void refreshState()
   void loadSettings()
   void loadAccounts()
-  statusTimer = setInterval(() => { void refreshStatuses() }, 3000)
+  statusTimer = setInterval(() => {
+    void refreshStatuses()
+  }, 3000)
 })
 
 onUnmounted(() => {
@@ -444,7 +459,8 @@ onUnmounted(() => {
             @change="selectAccount"
           >
             <option v-for="account in accounts" :key="account.id" :value="account.id">
-              {{ account.name }} · {{ ACCOUNT_KIND_LABELS[account.kind] }}{{ account.authorized ? '' : '（需重新登录）' }}
+              {{ account.name }} · {{ ACCOUNT_KIND_LABELS[account.kind]
+              }}{{ account.authorized ? '' : '（需重新登录）' }}
             </option>
           </select>
           <button class="mics-button mics-button--ghost mics-button--small" @click="openAccounts">
@@ -468,7 +484,9 @@ onUnmounted(() => {
 
       <div v-if="loading" class="mics-empty">正在读取实例…</div>
       <div v-else-if="error" class="mics-empty mics-empty--error">{{ error }}</div>
-      <div v-else-if="!instances.length" class="mics-empty">还没有实例，请先在下载页安装一个版本。</div>
+      <div v-else-if="!instances.length" class="mics-empty">
+        还没有实例，请先在下载页安装一个版本。
+      </div>
 
       <div v-else class="mics-list">
         <div
@@ -486,14 +504,12 @@ onUnmounted(() => {
               <span
                 v-if="phases[instance.id] !== 'ready'"
                 class="mics-badge"
-                :class="{ 'launch__pending': phases[instance.id] === 'incomplete' }"
+                :class="{ launch__pending: phases[instance.id] === 'incomplete' }"
               >
                 {{ phaseLabel(phases[instance.id] ?? 'incomplete') }}
               </span>
             </div>
-            <div class="mics-list__meta">
-              {{ instance.loader }} · {{ instance.mods }} 个 Mod
-            </div>
+            <div class="mics-list__meta">{{ instance.loader }} · {{ instance.mods }} 个 Mod</div>
           </div>
           <span class="launch__played">{{ formatPlayed(instance.lastPlayed) }}</span>
           <div class="launch__actions" @click.stop>

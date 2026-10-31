@@ -12,7 +12,7 @@ import type {
   CommandInfo,
   PluginInfo,
   RuntimeEventEnvelope,
-  RuntimeSnapshot,
+  RuntimeSnapshot
 } from './runtime'
 
 export type MaybePromise<T> = T | Promise<T>
@@ -59,10 +59,13 @@ export interface IpcServiceApi {
   /** 主进程：注册方法（渲染端也可用，用于渲染端插件之间互调） */
   handle<T = unknown>(
     method: string,
-    handler: (params: T, meta: IpcMeta) => MaybePromise<unknown>,
+    handler: (params: T, meta: IpcMeta) => MaybePromise<unknown>
   ): Disposable
   /** 订阅事件（两个进程都能用） */
-  on(topic: string, listener: (payload: unknown, envelope: RuntimeEventEnvelope) => void): Disposable
+  on(
+    topic: string,
+    listener: (payload: unknown, envelope: RuntimeEventEnvelope) => void
+  ): Disposable
   /** 广播事件 */
   emit(topic: string, payload?: unknown): void
   /** 主进程：广播事件并标注来源插件 */
@@ -205,7 +208,7 @@ export interface BridgeApi {
     target: PluginId,
     method: string,
     params?: unknown,
-    callerId?: PluginId,
+    callerId?: PluginId
   ): Promise<T>
   on(topic: string, listener: (envelope: RuntimeEventEnvelope) => void): Disposable
   emit(topic: string, payload?: unknown, callerId?: PluginId): void

@@ -9,7 +9,7 @@ import type {
   PluginInfo,
   RuntimeSnapshot,
   StatusBarContribution,
-  ThemeContribution,
+  ThemeContribution
 } from '@mics/sdk'
 
 /** 导航项：清单贡献 + 归属插件（用于按需激活与禁用态展示） */
@@ -24,9 +24,7 @@ export interface NavGroup extends NavGroupContribution {
 }
 
 /** 左侧渲染顺序：顶层页面与分组按 order 混排 */
-export type NavRoot =
-  | { kind: 'item'; item: NavItem }
-  | { kind: 'group'; group: NavGroup }
+export type NavRoot = { kind: 'item'; item: NavItem } | { kind: 'group'; group: NavGroup }
 
 export interface StatusItem extends StatusBarContribution {
   pluginId?: string
@@ -73,7 +71,7 @@ export const store = reactive<WorkbenchStore>({
   paletteOpen: false,
   expandedGroups: {},
   activating: {},
-  errors: {},
+  errors: {}
 })
 
 /** viewId -> Vue 组件；由插件通过 ctx.ui.registerView 写入 */
@@ -90,12 +88,12 @@ export function applySnapshot(snapshot: RuntimeSnapshot): void {
 
   // 禁用的插件视同未安装：不再贡献导航、命令、主题、布局与状态栏
   const disabled = new Set(
-    snapshot.plugins.filter((plugin) => plugin.state === 'disabled').map((plugin) => plugin.id),
+    snapshot.plugins.filter((plugin) => plugin.state === 'disabled').map((plugin) => plugin.id)
   )
   const visiblePlugins = snapshot.plugins.filter((plugin) => !disabled.has(plugin.id))
 
   store.commands = snapshot.commands.filter(
-    (command) => !command.pluginId || !disabled.has(command.pluginId),
+    (command) => !command.pluginId || !disabled.has(command.pluginId)
   )
 
   const nav: NavItem[] = []
@@ -122,13 +120,11 @@ export function applySnapshot(snapshot: RuntimeSnapshot): void {
   // 没有任何子项的分组不渲染（例如它的分类插件全被禁用/未安装）
   store.navGroups = groups.filter((group) => group.items.length > 0)
 
-  store.themes = visiblePlugins.flatMap(
-    (plugin) => plugin.manifest.contributes?.themes ?? [],
-  )
+  store.themes = visiblePlugins.flatMap((plugin) => plugin.manifest.contributes?.themes ?? [])
 
   store.layout = visiblePlugins
     .flatMap((plugin) =>
-      plugin.manifest.contributes?.layout ? [plugin.manifest.contributes.layout] : [],
+      plugin.manifest.contributes?.layout ? [plugin.manifest.contributes.layout] : []
     )
     .at(0)
 
@@ -173,7 +169,7 @@ export function navRoots(): NavRoot[] {
     ...store.nav
       .filter((item) => !item.group || !groupIds.has(item.group))
       .map((item): NavRoot => ({ kind: 'item', item })),
-    ...store.navGroups.map((group): NavRoot => ({ kind: 'group', group })),
+    ...store.navGroups.map((group): NavRoot => ({ kind: 'group', group }))
   ]
   return roots.sort((a, b) => {
     const left = a.kind === 'item' ? a.item : a.group
@@ -202,8 +198,8 @@ export function statusBarItems(): StatusItem[] {
       (plugin.manifest.contributes?.statusBar ?? []).map((item) => ({
         ...item,
         pluginId: plugin.id,
-        source: 'manifest' as const,
-      })),
+        source: 'manifest' as const
+      }))
     )
   return [...declared, ...store.runtimeStatus].sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
 }
@@ -225,6 +221,6 @@ export function isDeclaredCommand(id: string): boolean {
   return store.plugins.some(
     (plugin) =>
       plugin.state !== 'disabled' &&
-      plugin.manifest.contributes?.commands?.some((command) => command.id === id),
+      plugin.manifest.contributes?.commands?.some((command) => command.id === id)
   )
 }

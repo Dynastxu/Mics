@@ -39,8 +39,8 @@ export function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: false,
-      spellcheck: false,
-    },
+      spellcheck: false
+    }
   })
 
   window.once('ready-to-show', () => window.show())

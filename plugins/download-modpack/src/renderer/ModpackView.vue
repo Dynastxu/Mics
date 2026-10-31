@@ -5,7 +5,7 @@ import {
   MOD_LOADER_LABELS,
   MOD_LOADERS,
   sanitizeInstanceName,
-  validateInstanceName,
+  validateInstanceName
 } from '@mics/sdk'
 import type {
   GameVersion,
@@ -18,7 +18,7 @@ import type {
   ModSummary,
   ModVersion,
   ModVersionRequest,
-  NotificationsServiceApi,
+  NotificationsServiceApi
 } from '@mics/sdk'
 import { usePluginContext } from '@mics/sdk/renderer'
 import { CatalogBrowser, InstanceInstallDialog } from '@mics/ui'
@@ -29,7 +29,7 @@ import type {
   CatalogSearchRequest,
   CatalogSearchResult,
   CatalogSourceInfo,
-  CatalogVersion,
+  CatalogVersion
 } from '@mics/ui'
 
 const ctx = usePluginContext()
@@ -37,12 +37,12 @@ const ctx = usePluginContext()
 const CHANNEL_LABELS = {
   release: '正式版',
   beta: '测试版',
-  alpha: '早期版',
+  alpha: '早期版'
 }
 
 const loaders = MOD_LOADERS.map((value) => ({
   value,
-  label: MOD_LOADER_LABELS[value],
+  label: MOD_LOADER_LABELS[value]
 }))
 
 const SUPPORTED_LOADERS = new Set(['fabric', 'forge', 'neoforge'])
@@ -55,7 +55,9 @@ const installError = ref('')
 
 const defaultName = computed(() => {
   const raw = activePack.value?.name || installVersion.value?.name || '整合包'
-  const cleaned = sanitizeInstanceName(raw).trim().replace(/[. ]+$/, '')
+  const cleaned = sanitizeInstanceName(raw)
+    .trim()
+    .replace(/[. ]+$/, '')
   return [...cleaned].slice(0, INSTANCE_NAME_MAX_LENGTH).join('') || '整合包'
 })
 
@@ -84,10 +86,12 @@ const details = computed(() => {
     { label: '游戏版本', value: version.gameVersions.join(' / ') || '读取整合包清单' },
     {
       label: '加载器',
-      value: version.loaders.map((loader) => MOD_LOADER_LABELS[loader as ModLoader] ?? loader)
-        .join(' / ') || '原版',
+      value:
+        version.loaders
+          .map((loader) => MOD_LOADER_LABELS[loader as ModLoader] ?? loader)
+          .join(' / ') || '原版'
     },
-    { label: '包大小', value: formatBytes(version.size) },
+    { label: '包大小', value: formatBytes(version.size) }
   ]
 })
 
@@ -111,7 +115,7 @@ async function search(request: CatalogSearchRequest): Promise<CatalogSearchResul
     loader: request.loader as ModLoader | 'all',
     category: request.category,
     page: request.page,
-    pageSize: request.pageSize,
+    pageSize: request.pageSize
   })
 }
 
@@ -121,7 +125,7 @@ async function fetchVersions(item: CatalogItem): Promise<CatalogVersion[]> {
     ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
     projectId: item.projectId,
     gameVersion: '',
-    loader: 'all',
+    loader: 'all'
   }
   return ctx.ipc.invoke<ModVersion[]>('mics.download.manager', 'modpacks/versions', request)
 }
@@ -130,7 +134,7 @@ async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
   return ctx.ipc.invoke<ModSummary>('mics.download.manager', 'modpacks/project', {
     source: item.source as ModSourceKind,
     ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
-    projectId: item.projectId,
+    projectId: item.projectId
   })
 }
 
@@ -139,7 +143,7 @@ async function checkName(name: string): Promise<InstanceNameCheck> {
     return await ctx.ipc.invoke<InstanceNameCheck>(
       'mics.download.manager',
       'install/validate-name',
-      { name },
+      { name }
     )
   } catch {
     return validateInstanceName(name)
@@ -173,11 +177,13 @@ function notify(message: string): void {
     title: '已开始安装',
     message,
     // 安装通知不自动消失，避免用户切回窗口时已经错过
-    duration: 0,
+    duration: 0
   }
-  const globalApi = (globalThis as typeof globalThis & {
-    __MICS_NOTIFICATIONS__?: NotificationsServiceApi
-  }).__MICS_NOTIFICATIONS__
+  const globalApi = (
+    globalThis as typeof globalThis & {
+      __MICS_NOTIFICATIONS__?: NotificationsServiceApi
+    }
+  ).__MICS_NOTIFICATIONS__
   if (globalApi) {
     globalApi.show(options)
     return
@@ -202,11 +208,11 @@ async function install(name: string): Promise<void> {
           url: version.fileUrl,
           fileName: version.fileName,
           sha1: version.sha1,
-          size: version.size,
+          size: version.size
         },
         source: version.source as ModSourceKind,
-        ...(activePack.value?.sourceApi ? { sourceApi: activePack.value.sourceApi } : {}),
-      },
+        ...(activePack.value?.sourceApi ? { sourceApi: activePack.value.sourceApi } : {})
+      }
     )
     if (result.error) {
       installError.value = result.error

@@ -11,7 +11,6 @@ import { StorageService } from './services/storage'
 import { auditEventModes } from './eventModeAudit'
 import { installIpcAudit } from './cleanupAudit'
 
-
 export const name = 'mics.kernel'
 
 /**
@@ -29,7 +28,7 @@ export function apply(ctx: Context, config: KernelConfig): void {
     config.kernel,
     config.plugins.length,
     config.profile?.name ?? '无',
-    config.app.isDev,
+    config.app.isDev
   )
 
   // 开发期审计：事件派发模式 + 插件直接注册的 ipcMain 资源
@@ -46,7 +45,9 @@ export function apply(ctx: Context, config: KernelConfig): void {
   ctx.plugin(ConfigurationService)
   ctx.plugin(CommandsService)
   ctx.plugin(IpcService)
-  log.debug('内核服务已注册：storage / permissions / capabilities / plugins / configuration / commands / ipc')
+  log.debug(
+    '内核服务已注册：storage / permissions / capabilities / plugins / configuration / commands / ipc'
+  )
 
   // 等内核服务就绪后，再对外暴露系统 RPC 并启动开机插件
   ctx.inject(['ipc', 'plugins', 'commands', 'permissions', 'configuration'], (ctx) => {
@@ -55,7 +56,7 @@ export function apply(ctx: Context, config: KernelConfig): void {
     const snapshot = (): RuntimeSnapshot => ({
       app: config.app,
       plugins: ctx.plugins.list(),
-      commands: ctx.commands.list(),
+      commands: ctx.commands.list()
     })
 
     ctx.ipc.handle('runtime/snapshot', snapshot)
@@ -76,7 +77,7 @@ export function apply(ctx: Context, config: KernelConfig): void {
       'plugins/fail',
       async ({ id, message, stage }) => {
         await ctx.plugins.fail?.(id, message, stage)
-      },
+      }
     )
     // 只读诊断：依赖图、贡献点与未满足项，插件管理页与 agent 读同一份
     ctx.ipc.handle('plugins/diagnostics', () => ctx.plugins.diagnostics?.())
@@ -84,11 +85,11 @@ export function apply(ctx: Context, config: KernelConfig): void {
     ctx.ipc.handle('configuration/list', () => ctx.configuration.list())
     ctx.ipc.handle<{ pluginId: PluginId; key: string; value: unknown }>(
       'configuration/set',
-      ({ pluginId, key, value }) => ctx.configuration.set(pluginId, key, value),
+      ({ pluginId, key, value }) => ctx.configuration.set(pluginId, key, value)
     )
     ctx.ipc.handle<{ pluginId: PluginId; key: string }>(
       'configuration/reset',
-      ({ pluginId, key }) => ctx.configuration.reset(pluginId, key),
+      ({ pluginId, key }) => ctx.configuration.reset(pluginId, key)
     )
     ctx.ipc.handle('commands/list', () => ctx.commands.list())
     ctx.ipc.handle<{ id: string; args?: unknown[] }>('commands/execute', async ({ id, args }) => {
@@ -112,14 +113,14 @@ export function apply(ctx: Context, config: KernelConfig): void {
             return {
               ok: false,
               error: {
-                message: `插件 ${request.callerId ?? 'unknown'} 缺少 shell:openExternal 权限`,
-              },
+                message: `插件 ${request.callerId ?? 'unknown'} 缺少 shell:openExternal 权限`
+              }
             }
           }
         }
         return next()
       },
-      true,
+      true
     )
 
     // 插件状态变化 -> 广播给渲染进程

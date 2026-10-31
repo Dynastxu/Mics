@@ -29,33 +29,34 @@ const DEFINITIONS: readonly ModpackCategoryDefinition[] = [
   { id: 'skyblock', label: '空岛', modrinth: 'skyblock' },
   { id: 'small', label: '小型', modrinth: 'small' },
   { id: 'technology', label: '科技', modrinth: 'technology' },
-  { id: 'vanilla-like', label: '原版风', modrinth: 'vanilla-like' },
+  { id: 'vanilla-like', label: '原版风', modrinth: 'vanilla-like' }
 ]
 
 const BY_ID = new Map(DEFINITIONS.map((definition) => [definition.id, definition]))
 const BY_MODRINTH = new Map(
-  DEFINITIONS
-    .filter((definition) => definition.modrinth)
-    .map((definition) => [definition.modrinth!, definition]),
+  DEFINITIONS.filter((definition) => definition.modrinth).map((definition) => [
+    definition.modrinth!,
+    definition
+  ])
 )
 
 /** CurseForge 整合包分类显示名 -> 与 Modrinth 侧一致的中文标签 */
 const CURSEFORGE_LABELS: Record<string, string> = {
   'Adventure and RPG': '冒险',
   'Combat / PvP': '战斗',
-  'Exploration': '探索',
+  Exploration: '探索',
   'Extra Large': '大型',
-  'FTB': 'FTB',
-  'Hardcore': '硬核',
-  'Magic': '魔法',
-  'Multiplayer': '多人',
-  'Optimization': '优化',
-  'Quests': '任务',
+  FTB: 'FTB',
+  Hardcore: '硬核',
+  Magic: '魔法',
+  Multiplayer: '多人',
+  Optimization: '优化',
+  Quests: '任务',
   'Sci-Fi': '科幻',
-  'Skyblock': '空岛',
+  Skyblock: '空岛',
   'Small / Light': '小型',
-  'Technology': '科技',
-  'Vanilla+': '原版风',
+  Technology: '科技',
+  'Vanilla+': '原版风'
 }
 
 export function listModpackCategories(): ModCategory[] {

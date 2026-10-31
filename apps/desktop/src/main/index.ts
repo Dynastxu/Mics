@@ -71,13 +71,15 @@ async function start(): Promise<void> {
     process.versions.electron ?? '-',
     process.versions.node,
     process.platform,
-    process.arch,
+    process.arch
   )
   log.info('应用目录 %s', app.getAppPath())
   log.info('用户数据目录 %s', app.getPath('userData'))
 
   const boot = loadBootConfig((message) => log.warn(message))
-  const profile = boot.profile ? loadProfile(boot.profile, (message) => log.warn(message)) : undefined
+  const profile = boot.profile
+    ? loadProfile(boot.profile, (message) => log.warn(message))
+    : undefined
   const resolvedRoots = resolvePluginRoots(boot.pluginRoots)
 
   // 第三方插件落在用户数据目录：安装目录通常是只读的，不能往那里写
@@ -86,20 +88,20 @@ async function start(): Promise<void> {
 
   // MICS_PLUGIN_ROOTS 可能把用户目录也列进来；同一个目录只扫一次，否则会自报冲突
   const pluginRoots = resolvedRoots.filter(
-    (dir) => path.resolve(dir).toLowerCase() !== path.resolve(userPluginRoot).toLowerCase(),
+    (dir) => path.resolve(dir).toLowerCase() !== path.resolve(userPluginRoot).toLowerCase()
   )
 
   // 内置根在前：同 id 时内置胜出，第三方插件会被当成冲突跳过
   const roots: PluginRoot[] = [
     ...pluginRoots.map((dir) => ({ dir, source: 'builtin' as const })),
-    { dir: userPluginRoot, source: 'user' as const },
+    { dir: userPluginRoot, source: 'user' as const }
   ]
 
   log.info(
     '启动配置：内核 %s · profile %s · 禁用 %d 个插件',
     boot.kernel,
     boot.profile ?? '无',
-    boot.disabled.length,
+    boot.disabled.length
   )
   log.info('插件根目录：%s', roots.map((item) => item.dir).join('、'))
 
@@ -118,7 +120,7 @@ async function start(): Promise<void> {
     scan.plugins.length,
     scan.plugins.length - userPlugins,
     userPlugins,
-    scan.errors.length,
+    scan.errors.length
   )
 
   const protocol = registerPluginProtocol(scan.plugins)
@@ -128,7 +130,12 @@ async function start(): Promise<void> {
   if (!kernelRecord.entryMain) {
     throw new Error(`内核插件 ${boot.kernel} 缺少 main 入口（先执行 pnpm build:plugins）`)
   }
-  log.info('内核插件 %s v%s：%s', boot.kernel, kernelRecord.manifest.version, kernelRecord.entryMain)
+  log.info(
+    '内核插件 %s v%s：%s',
+    boot.kernel,
+    kernelRecord.manifest.version,
+    kernelRecord.entryMain
+  )
 
   const kernelModule = await importPluginEntry(kernelRecord.entryMain)
   const kernel = (kernelModule.default ?? kernelModule) as unknown as KernelModule | undefined
@@ -149,7 +156,7 @@ async function start(): Promise<void> {
     // 首次扫描失败的目录带进内核，诊断报告里能一并展示清单错误
     scanErrors: scan.errors,
     // 安装 / 卸载之后内核会回调这里，让 mics-plugin:// 立刻认识新目录
-    host: { syncPluginDirs: (dirs) => protocol.sync(dirs) },
+    host: { syncPluginDirs: (dirs) => protocol.sync(dirs) }
   }
 
   // 内核插件自己的作用域：pluginId 会向下继承给内核提供的所有服务
@@ -171,7 +178,7 @@ app.whenReady().then(async () => {
     console.error('[mics] 启动失败', error)
     dialog.showErrorBox(
       'Mics 启动失败',
-      error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error),
+      error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error)
     )
     app.quit()
   }

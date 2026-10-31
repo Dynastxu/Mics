@@ -6,14 +6,11 @@ import type {
   ModSource,
   ModSummary,
   ModVersion,
-  ModVersionRequest,
+  ModVersionRequest
 } from '@mics/sdk'
 import { isModLoader } from '@mics/sdk'
 import { categoryLabelOf, MOD_LOADER_CATEGORY_KEYS, modrinthCategoryOf } from './categories'
-import {
-  modpackCategoryLabelOf,
-  modpackModrinthCategoryOf,
-} from '../modpacks/categories'
+import { modpackCategoryLabelOf, modpackModrinthCategoryOf } from '../modpacks/categories'
 import { endpoint, requestJson, withParams } from './http'
 
 /**
@@ -106,17 +103,19 @@ const MAX_LIMIT = 100
 function hitSummary(
   source: ModSource,
   hit: ModrinthSearchHit,
-  kind: ModProjectKind,
+  kind: ModProjectKind
 ): ModSummary | null {
   const projectId = typeof hit.project_id === 'string' ? hit.project_id : ''
   if (!projectId) return null
   const slug = hit.slug || projectId
   const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : categoryLabelOf
-  const categories = [...new Set(
-    (hit.display_categories ?? hit.categories ?? [])
-      .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
-      .map(labelOf),
-  )]
+  const categories = [
+    ...new Set(
+      (hit.display_categories ?? hit.categories ?? [])
+        .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
+        .map(labelOf)
+    )
+  ]
 
   return {
     id: `modrinth:${projectId}`,
@@ -133,7 +132,7 @@ function hitSummary(
     follows: hit.follows ?? 0,
     categories,
     updated: hit.date_modified ?? '',
-    url: `https://modrinth.com/${kind}/${encodeURIComponent(slug)}`,
+    url: `https://modrinth.com/${kind}/${encodeURIComponent(slug)}`
   }
 }
 
@@ -142,15 +141,16 @@ export async function searchModrinth(
   request: ModSearchRequest,
   signal: AbortSignal,
   limit: number,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): Promise<{ items: ModSummary[]; total: number }> {
   const facets: string[][] = [[`project_type:${kind}`]]
   if (request.gameVersion) facets.push([`versions:${request.gameVersion}`])
   if (request.loader !== 'all') facets.push([`categories:${request.loader}`])
   if (request.category) {
-    const category = kind === 'modpack'
-      ? modpackModrinthCategoryOf(request.category)
-      : modrinthCategoryOf(request.category)
+    const category =
+      kind === 'modpack'
+        ? modpackModrinthCategoryOf(request.category)
+        : modrinthCategoryOf(request.category)
     if (!category) return { items: [], total: 0 }
     facets.push([`categories:${category}`])
   }
@@ -168,7 +168,7 @@ export async function searchModrinth(
       limit: String(pageSize),
       offset: String(offset),
       index: 'downloads',
-      facets: JSON.stringify(facets),
+      facets: JSON.stringify(facets)
     })
 
     const response = await requestJson<ModrinthSearchResponse>(url, { signal })
@@ -206,7 +206,7 @@ function dependencyKind(value: string | undefined): ModDependency['kind'] | null
 
 function dependenciesOf(
   version: ModrinthVersion,
-  projects: Map<string, ModSummary>,
+  projects: Map<string, ModSummary>
 ): ModDependency[] {
   const dependencies: ModDependency[] = []
   for (const dependency of version.dependencies ?? []) {
@@ -221,7 +221,7 @@ function dependenciesOf(
       name,
       versionId: dependency.version_id ?? '',
       kind,
-      ...(project ? { project } : {}),
+      ...(project ? { project } : {})
     })
   }
   return dependencies
@@ -237,7 +237,7 @@ function dependenciesOf(
 async function dependencyProjects(
   source: ModSource,
   versions: ModrinthVersion[],
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<Map<string, ModSummary>> {
   const ids = new Set<string>()
   for (const version of versions) {
@@ -250,7 +250,7 @@ async function dependencyProjects(
   try {
     const projects = await requestJson<ModrinthProject[]>(
       withParams(endpoint(source.api, 'projects'), { ids: JSON.stringify([...ids]) }),
-      { signal },
+      { signal }
     )
     const summaries = new Map<string, ModSummary>()
     for (const project of projects) {
@@ -269,13 +269,15 @@ function versionOf(
   source: ModSource,
   projectId: string,
   version: ModrinthVersion,
-  projects: Map<string, ModSummary>,
+  projects: Map<string, ModSummary>
 ): ModVersion | null {
   const files = version.files ?? []
   const file =
-    files.find((candidate) => candidate.primary && candidate.url)
-    ?? files.find((candidate) => candidate.url && candidate.filename?.toLowerCase().endsWith('.jar'))
-    ?? files.find((candidate) => candidate.url)
+    files.find((candidate) => candidate.primary && candidate.url) ??
+    files.find(
+      (candidate) => candidate.url && candidate.filename?.toLowerCase().endsWith('.jar')
+    ) ??
+    files.find((candidate) => candidate.url)
   if (!file?.url || !file.filename) return null
 
   const loaders = (version.loaders ?? []).filter(isModLoader) as ModLoader[]
@@ -294,24 +296,26 @@ function versionOf(
     sha1: file.hashes?.sha1 ?? '',
     size: file.size ?? 0,
     downloads: version.downloads ?? 0,
-    dependencies: dependenciesOf(version, projects),
+    dependencies: dependenciesOf(version, projects)
   }
 }
 
 function projectSummary(
   source: ModSource,
   project: ModrinthProject,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): ModSummary | null {
   const projectId = typeof project.id === 'string' ? project.id : ''
   if (!projectId) return null
   const slug = project.slug || projectId
   const labelOf = kind === 'modpack' ? modpackCategoryLabelOf : categoryLabelOf
-  const categories = [...new Set(
-    (project.categories ?? [])
-      .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
-      .map(labelOf),
-  )]
+  const categories = [
+    ...new Set(
+      (project.categories ?? [])
+        .filter((category) => !MOD_LOADER_CATEGORY_KEYS.has(category))
+        .map(labelOf)
+    )
+  ]
 
   return {
     id: `modrinth:${projectId}`,
@@ -328,7 +332,7 @@ function projectSummary(
     follows: project.follows ?? 0,
     categories,
     updated: project.date_modified ?? '',
-    url: `https://modrinth.com/${kind}/${encodeURIComponent(slug)}`,
+    url: `https://modrinth.com/${kind}/${encodeURIComponent(slug)}`
   }
 }
 
@@ -341,13 +345,13 @@ function projectSummary(
 async function projectAuthor(
   source: ModSource,
   teamId: string | undefined,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<string> {
   if (!teamId) return ''
   try {
     const members = await requestJson<ModrinthTeamMember[]>(
       endpoint(source.api, `team/${encodeURIComponent(teamId)}/members`),
-      { signal },
+      { signal }
     )
     const list = Array.isArray(members) ? members : []
     const owner = list.find((member) => member.role?.toLowerCase() === 'owner')
@@ -363,11 +367,11 @@ export async function projectModrinth(
   source: ModSource,
   projectId: string,
   signal: AbortSignal,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): Promise<ModSummary> {
   const project = await requestJson<ModrinthProject>(
     endpoint(source.api, `project/${encodeURIComponent(projectId)}`),
-    { signal },
+    { signal }
   )
   const summary = projectSummary(source, project, kind)
   if (!summary) throw new Error('Modrinth 没有返回有效的项目信息')
@@ -384,9 +388,11 @@ export async function projectModrinth(
 export async function identifyModrinth(
   source: ModSource,
   files: Array<{ key: string; sha1?: string }>,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<Map<string, ModrinthIdentified>> {
-  const hashes = [...new Set(files.map((file) => file.sha1).filter((sha1): sha1 is string => Boolean(sha1)))]
+  const hashes = [
+    ...new Set(files.map((file) => file.sha1).filter((sha1): sha1 is string => Boolean(sha1)))
+  ]
   const result = new Map<string, ModrinthIdentified>()
   if (hashes.length === 0) return result
 
@@ -395,25 +401,29 @@ export async function identifyModrinth(
     {
       method: 'POST',
       body: JSON.stringify({ hashes, algorithm: 'sha1' }),
-      signal,
-    },
+      signal
+    }
   )
 
-  const projectIds = [...new Set(
-    Object.values(versions)
-      .map((version) => version.project_id)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0),
-  )]
+  const projectIds = [
+    ...new Set(
+      Object.values(versions)
+        .map((version) => version.project_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+    )
+  ]
   if (projectIds.length === 0) return result
 
   const projects = await requestJson<ModrinthProject[]>(
     withParams(endpoint(source.api, 'projects'), { ids: JSON.stringify(projectIds) }),
-    { signal },
+    { signal }
   )
   const projectById = new Map(
     projects
-      .filter((project): project is ModrinthProject & { id: string } => typeof project.id === 'string')
-      .map((project) => [project.id, projectSummary(source, project)]),
+      .filter(
+        (project): project is ModrinthProject & { id: string } => typeof project.id === 'string'
+      )
+      .map((project) => [project.id, projectSummary(source, project)])
   )
 
   for (const file of files) {
@@ -425,7 +435,7 @@ export async function identifyModrinth(
     result.set(file.key, {
       projectId: version.project_id,
       versionId: version.id,
-      project,
+      project
     })
   }
   return result
@@ -434,7 +444,7 @@ export async function identifyModrinth(
 export async function versionsModrinth(
   source: ModSource,
   request: ModVersionRequest,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<ModVersion[]> {
   const params: Record<string, string> = {}
   if (request.gameVersion) params.game_versions = JSON.stringify([request.gameVersion])
@@ -442,7 +452,7 @@ export async function versionsModrinth(
 
   const url = withParams(
     endpoint(source.api, `project/${encodeURIComponent(request.projectId)}/version`),
-    params,
+    params
   )
   const response = await requestJson<ModrinthVersion[]>(url, { signal })
   const data = Array.isArray(response) ? response : []

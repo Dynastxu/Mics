@@ -51,7 +51,7 @@ const localShell: ShellExecuteCapability = {
           detached: spec.detached ?? false,
           stdio: (fd === undefined ? 'ignore' : ['ignore', fd, fd]) as StdioOptions,
           windowsHide: true,
-          env: spec.env ?? process.env,
+          env: spec.env ?? process.env
         })
       } catch (error) {
         closeLog()
@@ -76,7 +76,7 @@ const localShell: ShellExecuteCapability = {
         once(event, listener) {
           child.once(event, listener as (...args: unknown[]) => void)
           return () => child.off(event, listener as (...args: unknown[]) => void)
-        },
+        }
       }
 
       child.once('spawn', () => {
@@ -88,7 +88,7 @@ const localShell: ShellExecuteCapability = {
         reject(error)
       })
     })
-  },
+  }
 }
 
 export function apply(ctx: Context): void {

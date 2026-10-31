@@ -7,14 +7,18 @@ import { statusBarItems, store } from '../runtime/store'
 const items = computed(() => statusBarItems())
 const left = computed(() => items.value.filter((item) => (item.alignment ?? 'left') === 'left'))
 const right = computed(() => items.value.filter((item) => item.alignment === 'right'))
-const activeCount = computed(() => store.plugins.filter((plugin) => plugin.state === 'active').length)
+const activeCount = computed(
+  () => store.plugins.filter((plugin) => plugin.state === 'active').length
+)
 
 /** 拖动中才转发 move，避免鼠标掠过时产生无意义的 IPC */
 let resizing = false
 
 function run(command?: string): void {
   if (!command) return
-  void getContext().commands.execute(command).catch(() => {})
+  void getContext()
+    .commands.execute(command)
+    .catch(() => {})
 }
 
 function changeTheme(event: Event): void {

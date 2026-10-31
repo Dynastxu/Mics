@@ -13,7 +13,7 @@ import {
   measureInstanceUsage,
   readInstanceLog,
   resolveInstanceArea,
-  setInstanceModEnabled,
+  setInstanceModEnabled
 } from './instanceFiles'
 import { InstanceFilesMissingError, launchInstance } from './launch'
 import { waitForGameWindow } from './gameWindow'
@@ -30,7 +30,7 @@ import type {
   LaunchSettings,
   RepeatLaunchBehavior,
   TerminateRequest,
-  TerminateResult,
+  TerminateResult
 } from './shared'
 import { LAUNCH_STATE_TOPIC } from './shared'
 
@@ -80,7 +80,7 @@ export function apply(ctx: Context): void {
   const runtime = new LaunchRuntime({
     load: () => ctx.storage.get<PersistedProcess[]>(RUNNING_KEY, []),
     save: (records) => ctx.storage.set(RUNNING_KEY, records),
-    publish: (state) => ctx.ipc.broadcast(LAUNCH_STATE_TOPIC, state),
+    publish: (state) => ctx.ipc.broadcast(LAUNCH_STATE_TOPIC, state)
   })
   runtime.restore()
   const restored = runtime.snapshot().instances.length
@@ -190,74 +190,73 @@ export function apply(ctx: Context): void {
     return { id }
   })
 
-  ctx.ipc.handle<LaunchRequest>('instances/launch', async ({ id, accountId }): Promise<LaunchOutcome> => {
-    const instance = resolveInstance(dataDir, id)
-    if (!instance) throw new Error('实例不存在或缺少版本文件')
-    if (instance.installState !== 'ready') throw new Error('实例尚未下载完成，暂时无法启动')
-    if (preparing.has(id)) throw new Error('该实例正在启动中')
+  ctx.ipc.handle<LaunchRequest>(
+    'instances/launch',
+    async ({ id, accountId }): Promise<LaunchOutcome> => {
+      const instance = resolveInstance(dataDir, id)
+      if (!instance) throw new Error('实例不存在或缺少版本文件')
+      if (instance.installState !== 'ready') throw new Error('实例尚未下载完成，暂时无法启动')
+      if (preparing.has(id)) throw new Error('该实例正在启动中')
 
-    preparing.add(id)
-    try {
-      // 账户凭据由账户插件决定（正版 / 离线），启动管线只消费结果
-      const credentials = await ctx.capabilities
-        .require<AuthCredentialsCapability>(AUTH_CREDENTIALS)
-        .resolve(accountId)
+      preparing.add(id)
+      try {
+        // 账户凭据由账户插件决定（正版 / 离线），启动管线只消费结果
+        const credentials = await ctx.capabilities
+          .require<AuthCredentialsCapability>(AUTH_CREDENTIALS)
+          .resolve(accountId)
 
-      const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
-      const memoryMb = Number.isFinite(memory) ? memory : 4096
-      log.info(
-        '开始启动实例 %s（版本 %s，账户 %s，内存 %dMB）',
-        instance.id,
-        instance.version.id,
-        credentials.name,
-        memoryMb,
-      )
-
-      // 启动方式由 provider 决定：本机进程只是默认实现，沙箱插件可以整体替换
-      const shellCapability = ctx.capabilities.require<ShellExecuteCapability>(SHELL_EXECUTE)
-
-      const launched = await launchInstance(shellCapability, instance, {
-        credentials,
-        launcherVersion: app.getVersion(),
-        memoryMb,
-        onLog: (level, message) => {
-          if (level === 'warn') log.warn('%s', message)
-          else log.info('%s', message)
-        },
-      })
-      markInstanceLaunched(instance, credentials.name)
-
-      runtime.add(instance.id, launched.pid, launched.child)
-      // 游戏进程退出时记一条日志；监听只触发一次，不需要额外回收
-      launched.child.once('exit', (code, signal) => {
+        const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
+        const memoryMb = Number.isFinite(memory) ? memory : 4096
         log.info(
-          '实例 %s 的游戏进程 %d 已退出（code=%s，signal=%s）',
+          '开始启动实例 %s（版本 %s，账户 %s，内存 %dMB）',
           instance.id,
-          launched.pid,
-          String(code ?? '-'),
-          String(signal ?? '-'),
+          instance.version.id,
+          credentials.name,
+          memoryMb
         )
-      })
-      log.info('实例 %s 已启动：pid=%d', instance.id, launched.pid)
-      void followLaunch(instance.id, launched.pid)
 
-      return { status: 'launched', pid: launched.pid } satisfies LaunchOutcome
-    } catch (error) {
-      // 文件缺失是可预期结果：把清单交回界面，由用户决定是否交给下载管线补全
-      if (error instanceof InstanceFilesMissingError) {
-        log.warn(
-          '实例 %s 缺少 %d 个必要文件，等待用户确认补全',
-          instance.id,
-          error.files.length,
-        )
-        return { status: 'missing-files', files: error.files } satisfies LaunchOutcome
+        // 启动方式由 provider 决定：本机进程只是默认实现，沙箱插件可以整体替换
+        const shellCapability = ctx.capabilities.require<ShellExecuteCapability>(SHELL_EXECUTE)
+
+        const launched = await launchInstance(shellCapability, instance, {
+          credentials,
+          launcherVersion: app.getVersion(),
+          memoryMb,
+          onLog: (level, message) => {
+            if (level === 'warn') log.warn('%s', message)
+            else log.info('%s', message)
+          }
+        })
+        markInstanceLaunched(instance, credentials.name)
+
+        runtime.add(instance.id, launched.pid, launched.child)
+        // 游戏进程退出时记一条日志；监听只触发一次，不需要额外回收
+        launched.child.once('exit', (code, signal) => {
+          log.info(
+            '实例 %s 的游戏进程 %d 已退出（code=%s，signal=%s）',
+            instance.id,
+            launched.pid,
+            String(code ?? '-'),
+            String(signal ?? '-')
+          )
+        })
+        log.info('实例 %s 已启动：pid=%d', instance.id, launched.pid)
+        void followLaunch(instance.id, launched.pid)
+
+        return { status: 'launched', pid: launched.pid } satisfies LaunchOutcome
+      } catch (error) {
+        // 文件缺失是可预期结果：把清单交回界面，由用户决定是否交给下载管线补全
+        if (error instanceof InstanceFilesMissingError) {
+          log.warn('实例 %s 缺少 %d 个必要文件，等待用户确认补全', instance.id, error.files.length)
+          return { status: 'missing-files', files: error.files } satisfies LaunchOutcome
+        }
+        log.error('启动实例 %s 失败', id, error)
+        throw error
+      } finally {
+        preparing.delete(id)
       }
-      log.error('启动实例 %s 失败', id, error)
-      throw error
-    } finally {
-      preparing.delete(id)
     }
-  })
+  )
 
   ctx.ipc.handle<TerminateRequest>('instances/terminate', async ({ id }) => {
     const terminated = await runtime.terminate(id)
@@ -265,10 +264,14 @@ export function apply(ctx: Context): void {
     return { terminated } satisfies TerminateResult
   })
 
-  ctx.ipc.handle('settings/get', () => ({
-    repeatBehavior: readBehavior(),
-    maxMemory: readMemory(),
-  }) satisfies LaunchSettings)
+  ctx.ipc.handle(
+    'settings/get',
+    () =>
+      ({
+        repeatBehavior: readBehavior(),
+        maxMemory: readMemory()
+      }) satisfies LaunchSettings
+  )
 
   ctx.ipc.handle<Partial<LaunchSettings>>('settings/set', (params) => {
     if (params?.repeatBehavior !== undefined) {
@@ -283,7 +286,7 @@ export function apply(ctx: Context): void {
     log.info('启动设置已更新：重复启动=%s，最大内存=%dMB', readBehavior(), readMemory())
     return {
       repeatBehavior: readBehavior(),
-      maxMemory: readMemory(),
+      maxMemory: readMemory()
     } satisfies LaunchSettings
   })
 }

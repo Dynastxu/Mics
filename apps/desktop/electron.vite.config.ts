@@ -12,18 +12,18 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: { index: resolve(root, 'src/main/index.ts') },
-        output: { format: 'es', entryFileNames: 'index.mjs' },
-      },
-    },
+        output: { format: 'es', entryFileNames: 'index.mjs' }
+      }
+    }
   },
   preload: {
     // sandbox: true 的 preload 必须是 CJS
     build: {
       rollupOptions: {
         input: { index: resolve(root, 'src/preload/index.ts') },
-        output: { format: 'cjs', entryFileNames: 'index.cjs' },
-      },
-    },
+        output: { format: 'cjs', entryFileNames: 'index.cjs' }
+      }
+    }
   },
   renderer: {
     root: resolve(root, 'src/renderer'),
@@ -35,27 +35,27 @@ export default defineConfig({
     //    PLUGIN_CONTEXT_KEY 等符号身份错位），且不被 pre-bundle 出两套。
     server: {
       fs: {
-        allow: [resolve(root, '../..')],
-      },
+        allow: [resolve(root, '../..')]
+      }
     },
     resolve: {
       alias: [
         {
           find: /^@mics\/sdk\/renderer$/,
-          replacement: resolve(root, '../../packages/sdk/src/renderer.ts'),
+          replacement: resolve(root, '../../packages/sdk/src/renderer.ts')
         },
         {
           find: /^@mics\/sdk$/,
-          replacement: resolve(root, '../../packages/sdk/src/index.ts'),
+          replacement: resolve(root, '../../packages/sdk/src/index.ts')
         },
         {
           find: /^@mics\/ui$/,
-          replacement: resolve(root, '../../packages/ui/src/index.ts'),
-        },
-      ],
+          replacement: resolve(root, '../../packages/ui/src/index.ts')
+        }
+      ]
     },
     build: {
-      rollupOptions: { input: resolve(root, 'src/renderer/index.html') },
-    },
-  },
+      rollupOptions: { input: resolve(root, 'src/renderer/index.html') }
+    }
+  }
 })

@@ -32,7 +32,7 @@ function normalize(raw: unknown): StoredAccount[] {
       kind: entry.kind,
       name: entry.name,
       uuid,
-      createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : Date.now(),
+      createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : Date.now()
     }
     if (entry.authorized === false) account.authorized = false
     if (isRecord(entry.secrets)) {
@@ -60,12 +60,13 @@ export class AccountStore {
 
   constructor(
     private readonly storage: StorageServiceApi,
-    private readonly changed: () => void,
+    private readonly changed: () => void
   ) {
     this.accounts = normalize(storage.get<unknown>(ACCOUNTS_KEY))
     const storedActive = storage.get<unknown>(ACTIVE_KEY)
     this.active =
-      typeof storedActive === 'string' && this.accounts.some((account) => account.id === storedActive)
+      typeof storedActive === 'string' &&
+      this.accounts.some((account) => account.id === storedActive)
         ? storedActive
         : (this.accounts[0]?.id ?? null)
   }

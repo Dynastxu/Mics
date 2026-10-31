@@ -5,7 +5,7 @@ import {
   DEFAULT_LOG_MAX_FILES,
   MAX_LOG_MAX_FILES,
   MIN_LOG_MAX_FILES,
-  normalizeLogMaxFiles,
+  normalizeLogMaxFiles
 } from '@mics/sdk'
 import type { LogStatus } from '@mics/sdk'
 
@@ -46,8 +46,8 @@ async function save(): Promise<void> {
   try {
     applyStatus(
       await ctx.ipc.invoke<LogStatus>('mics.logger', 'settings/set', {
-        maxFiles: Number(maxFiles.value),
-      }),
+        maxFiles: Number(maxFiles.value)
+      })
     )
   } catch (cause) {
     error.value = messageOf(cause)
@@ -90,12 +90,7 @@ onMounted(load)
           </div>
         </div>
         <div class="mics-field__control">
-          <input
-            v-model="maxFiles"
-            class="mics-input"
-            inputmode="numeric"
-            @change="save"
-          />
+          <input v-model="maxFiles" class="mics-input" inputmode="numeric" @change="save" />
           <button
             class="mics-button mics-button--ghost mics-button--small"
             title="恢复默认值"

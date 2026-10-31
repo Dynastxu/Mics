@@ -58,28 +58,28 @@ const activeRows = computed<JobRow[]>(() =>
       speed: jobSpeeds.value[job.id] ?? 0,
       paused: jobPaused(job.stats),
       preparing: job.state === 'preparing',
-      preparePercent: job.preparePercent === undefined
-        ? undefined
-        : Math.max(0, Math.min(100, Math.round(job.preparePercent))),
-      prepareActive: job.prepareTransferAt !== undefined
-        && Date.now() - job.prepareTransferAt < PREPARE_TRANSFER_WINDOW_MS,
-    })),
+      preparePercent:
+        job.preparePercent === undefined
+          ? undefined
+          : Math.max(0, Math.min(100, Math.round(job.preparePercent))),
+      prepareActive:
+        job.prepareTransferAt !== undefined &&
+        Date.now() - job.prepareTransferAt < PREPARE_TRANSFER_WINDOW_MS
+    }))
 )
 
 const historyRows = computed(() =>
   [...historyJobs.value]
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
     .map((job) => {
-      const ok = job.state !== 'failed'
-        && job.state !== 'cancelled'
-        && job.stats.failed === 0
+      const ok = job.state !== 'failed' && job.state !== 'cancelled' && job.stats.failed === 0
       return {
         job,
         stats: job.stats,
         label: historyLabel(job, job.stats),
-        ok,
+        ok
       }
-    }),
+    })
 )
 
 function formatTime(timestamp: number | undefined): string {
@@ -90,7 +90,7 @@ function formatTime(timestamp: number | undefined): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hour12: false
   }).format(new Date(timestamp))
 }
 
@@ -174,8 +174,8 @@ function sampleSpeeds(): void {
     const preparing = job.state === 'preparing'
     const transferred = job.stats.transferred ?? 0
     const receiving = preparing
-      ? job.prepareTransferAt !== undefined
-        && now - job.prepareTransferAt < PREPARE_TRANSFER_WINDOW_MS
+      ? job.prepareTransferAt !== undefined &&
+        now - job.prepareTransferAt < PREPARE_TRANSFER_WINDOW_MS
       : job.stats.downloading > 0
     const previous = speedSamples.get(job.id)
 
@@ -202,12 +202,14 @@ async function poll(): Promise<void> {
   try {
     const list = await ctx.ipc.invoke<InstallJobSummary[]>(
       'mics.download.manager',
-      'install/summary',
+      'install/summary'
     )
     if (seq !== pollSeq) return
     jobs.value = list
     sampleSpeeds()
-  } catch { /* 管线未就绪 */ } finally {
+  } catch {
+    /* 管线未就绪 */
+  } finally {
     if (seq === pollSeq) loaded.value = true
   }
 }
@@ -290,7 +292,11 @@ onUnmounted(() => {
               >
                 <div
                   class="progress-job__bar-fill"
-                  :style="row.preparePercent === undefined ? undefined : { width: row.preparePercent + '%' }"
+                  :style="
+                    row.preparePercent === undefined
+                      ? undefined
+                      : { width: row.preparePercent + '%' }
+                  "
                 />
               </div>
               <span v-if="row.preparePercent !== undefined" class="progress-job__percent">
@@ -302,13 +308,12 @@ onUnmounted(() => {
               {{ row.job.note || '正在准备下载清单…' }}
             </div>
 
-            <div
-              v-if="row.prepareActive"
-              class="progress-job__stats"
-            >
+            <div v-if="row.prepareActive" class="progress-job__stats">
               <span v-if="row.job.prepareLoaded !== undefined" class="progress-stat">
                 已下载 <b>{{ fmtBytes(row.job.prepareLoaded) }}</b>
-                <template v-if="row.job.prepareTotal"> / {{ fmtBytes(row.job.prepareTotal) }}</template>
+                <template v-if="row.job.prepareTotal">
+                  / {{ fmtBytes(row.job.prepareTotal) }}</template
+                >
               </span>
               <span class="progress-stat progress-stat--speed">
                 下载速度 <b>{{ fmtSpeed(row.speed) }}</b>
@@ -331,12 +336,18 @@ onUnmounted(() => {
             </div>
 
             <div class="progress-job__stats">
-              <span class="progress-stat">待下载 <b>{{ row.stats.waiting }}</b></span>
+              <span class="progress-stat"
+                >待下载 <b>{{ row.stats.waiting }}</b></span
+              >
               <span v-if="row.stats.paused > 0" class="progress-stat">
                 已暂停 <b>{{ row.stats.paused }}</b>
               </span>
-              <span class="progress-stat">下载中 <b>{{ row.stats.downloading }}</b></span>
-              <span class="progress-stat">已完成 <b>{{ row.stats.done }}</b></span>
+              <span class="progress-stat"
+                >下载中 <b>{{ row.stats.downloading }}</b></span
+              >
+              <span class="progress-stat"
+                >已完成 <b>{{ row.stats.done }}</b></span
+              >
               <span v-if="row.stats.failed > 0" class="progress-stat progress-stat--danger">
                 失败 <b>{{ row.stats.failed }}</b>
               </span>
@@ -369,10 +380,7 @@ onUnmounted(() => {
                 <span v-if="row.job.gameVersion" class="mics-badge">{{ row.job.gameVersion }}</span>
                 <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
               </template>
-              <span
-                class="mics-badge"
-                :class="{ 'mics-badge--accent': row.ok }"
-              >
+              <span class="mics-badge" :class="{ 'mics-badge--accent': row.ok }">
                 {{ row.label }}
               </span>
               <span v-if="isSuperseded(row.job)" class="mics-badge">旧记录</span>
@@ -381,7 +389,9 @@ onUnmounted(() => {
               {{ formatTime(row.job.createdAt) }}
               <template v-if="row.stats.total > 0">
                 · 已完成 {{ row.stats.done }}
-                <template v-if="row.stats.cancelled > 0"> · 已取消 {{ row.stats.cancelled }}</template>
+                <template v-if="row.stats.cancelled > 0">
+                  · 已取消 {{ row.stats.cancelled }}</template
+                >
                 <template v-if="row.stats.failed - row.stats.cancelled > 0">
                   · 失败 {{ row.stats.failed - row.stats.cancelled }}
                 </template>
@@ -484,7 +494,7 @@ onUnmounted(() => {
   height: 100%;
   border-radius: 999px;
   background: var(--mics-accent);
-  transition: width .3s ease;
+  transition: width 0.3s ease;
 }
 
 /* 没有可度量进度的准备步骤（解析清单、解压覆盖文件）用不确定态，避免假装 100% */
@@ -494,8 +504,12 @@ onUnmounted(() => {
 }
 
 @keyframes progress-job-indeterminate {
-  from { transform: translateX(-110%); }
-  to { transform: translateX(320%); }
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(320%);
+  }
 }
 
 .progress-job__percent {

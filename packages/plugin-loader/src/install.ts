@@ -49,7 +49,7 @@ async function isDirectory(dir: string): Promise<boolean> {
  * 不会把用户已装的插件弄丢。
  */
 export async function installPluginFromDirectory(
-  options: InstallPluginOptions,
+  options: InstallPluginOptions
 ): Promise<InstallPluginResult> {
   const { sourceDir, pluginsDir } = options
   const reserved = new Set(options.reservedIds ?? [])

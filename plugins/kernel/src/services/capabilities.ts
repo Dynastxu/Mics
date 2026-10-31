@@ -5,7 +5,7 @@ import type {
   CapabilityProviderInfo,
   Disposable,
   PluginId,
-  ProvideCapabilityOptions,
+  ProvideCapabilityOptions
 } from '@mics/sdk'
 import { emitEvent, pluginIdOf } from '@mics/sdk'
 
@@ -49,7 +49,7 @@ export class CapabilitiesService extends Service {
       label: options.label ?? 'local',
       priority: options.priority ?? 0,
       seq: ++this.seq,
-      pluginId: pluginIdOf(this.ctx),
+      pluginId: pluginIdOf(this.ctx)
     }
 
     const list = this.table.get(name) ?? []
@@ -57,12 +57,7 @@ export class CapabilitiesService extends Service {
     this.table.set(name, list)
     this.baseCtx
       .logger('capabilities')
-      .debug(
-        '能力 %s 已注册（provider=%s，priority=%d）',
-        name,
-        record.label,
-        record.priority,
-      )
+      .debug('能力 %s 已注册（provider=%s，priority=%d）', name, record.label, record.priority)
     this.notify(name)
 
     return this.ctx.effect(() => () => {
@@ -92,14 +87,12 @@ export class CapabilitiesService extends Service {
   }
 
   providers(name: CapabilityName): CapabilityProviderInfo[] {
-    return [...(this.table.get(name) ?? [])]
-      .sort(compare)
-      .map((record) => ({
-        name,
-        label: record.label,
-        priority: record.priority,
-        pluginId: record.pluginId,
-      }))
+    return [...(this.table.get(name) ?? [])].sort(compare).map((record) => ({
+      name,
+      label: record.label,
+      priority: record.priority,
+      pluginId: record.pluginId
+    }))
   }
 
   names(): CapabilityName[] {

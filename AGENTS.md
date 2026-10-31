@@ -3,6 +3,7 @@
 Rules for working in this repository.
 
 ## Project Description
+
 This is a Minecraft Integrated Control Software (MICS) project.
 Everything is a plugin.
 
@@ -23,5 +24,6 @@ All code written in this project must also follow these design guidelines:
 - **For Plugins**: Any parameter that may need to take different values in different deployments must be defined as a setup field.
 
 ## User
+
 - When the user refuses to run tests, builds, or other commands with elevated privileges, stop trying, and do not use any method to attempt to run them without elevated privileges.
 - Without the user's permission, git commands may be executed only if they are read-only; all other git commands must not be executed.

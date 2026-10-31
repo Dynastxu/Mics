@@ -14,7 +14,7 @@ export type ModSourceKind = (typeof MOD_SOURCE_KINDS)[number]
 /** 来源显示名；设置页、搜索筛选与结果徽标共用 */
 export const MOD_SOURCE_LABELS: Record<ModSourceKind, string> = {
   modrinth: 'Modrinth',
-  curseforge: 'CurseForge',
+  curseforge: 'CurseForge'
 }
 
 export function isModSourceKind(value: unknown): value is ModSourceKind {
@@ -44,15 +44,15 @@ export const DEFAULT_MOD_SOURCES: ReadonlyArray<ModSource> = [
     kind: 'modrinth',
     api: 'https://api.modrinth.com/v2',
     key: '',
-    enabled: true,
+    enabled: true
   },
   {
     label: 'CurseForge',
     kind: 'curseforge',
     api: 'https://api.curseforge.com/v1',
     key: '',
-    enabled: true,
-  },
+    enabled: true
+  }
 ]
 
 /** 某个来源的官方接口根地址 */
@@ -96,7 +96,7 @@ export function normalizeModSources(value: unknown): ModSource[] {
       kind: record.kind,
       api: api || defaultModApi(record.kind),
       key: typeof record.key === 'string' ? record.key.trim() : '',
-      enabled: record.enabled !== false,
+      enabled: record.enabled !== false
     })
   }
   return sources
@@ -157,7 +157,7 @@ export const MOD_LOADER_LABELS: Record<ModLoader, string> = {
   fabric: 'Fabric',
   forge: 'Forge',
   neoforge: 'NeoForge',
-  quilt: 'Quilt',
+  quilt: 'Quilt'
 }
 
 export function isModLoader(value: unknown): value is ModLoader {

@@ -81,7 +81,7 @@ export const MAX_LOG_MAX_FILES = 50
  */
 export function normalizeLogMaxFiles(
   value: unknown,
-  fallback: number = DEFAULT_LOG_MAX_FILES,
+  fallback: number = DEFAULT_LOG_MAX_FILES
 ): number {
   if (value === null || value === undefined) return fallback
   const raw = typeof value === 'string' ? value.trim() : value

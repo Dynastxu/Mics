@@ -21,12 +21,15 @@ export function apply(ctx: Context): void {
     },
     show: (options) => service.show(options),
     dismiss: (id) => service.dismiss(id),
-    clear: () => service.clear(),
+    clear: () => service.clear()
   }
-  ;(globalThis as typeof globalThis & { __MICS_NOTIFICATIONS__?: NotificationsServiceApi })
-    .__MICS_NOTIFICATIONS__ = api
+  ;(
+    globalThis as typeof globalThis & { __MICS_NOTIFICATIONS__?: NotificationsServiceApi }
+  ).__MICS_NOTIFICATIONS__ = api
   ctx.effect(() => () => {
-    const host = globalThis as typeof globalThis & { __MICS_NOTIFICATIONS__?: NotificationsServiceApi }
+    const host = globalThis as typeof globalThis & {
+      __MICS_NOTIFICATIONS__?: NotificationsServiceApi
+    }
     if (host.__MICS_NOTIFICATIONS__ === api) delete host.__MICS_NOTIFICATIONS__
   })
 
@@ -37,10 +40,12 @@ export function apply(ctx: Context): void {
   document.body.appendChild(root)
   const app = createApp(NotificationHost)
   app.mount(root)
-  void ctx.ipc.invoke('mics.logger', 'log/write', {
-    level: 'debug',
-    args: ['[notifications] 通知宿主已挂载'],
-  }).catch(() => undefined)
+  void ctx.ipc
+    .invoke('mics.logger', 'log/write', {
+      level: 'debug',
+      args: ['[notifications] 通知宿主已挂载']
+    })
+    .catch(() => undefined)
 
   ctx.effect(() => () => {
     app.unmount()

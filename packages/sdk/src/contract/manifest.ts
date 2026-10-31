@@ -11,7 +11,8 @@ export type PluginId = string
 /** 激活事件：* / onStartup 随内核启动；onView:xxx、onCommand:xxx 由内核按需触发 */
 export type ActivationEvent = '*' | 'onStartup' | `onView:${string}` | `onCommand:${string}`
 
-export type Permission = 'shell:openExternal' | 'dialog:open' | 'clipboard:write' | 'notifications:show'
+export type Permission =
+  'shell:openExternal' | 'dialog:open' | 'clipboard:write' | 'notifications:show'
 
 /**
  * 左侧导航里的一个页面。

@@ -45,7 +45,9 @@ function majorFromHome(home: string): number | null {
         const major = parseVersionText(match[1] ?? '')
         if (major) return major
       }
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
   }
 
   const base = path.basename(home)
@@ -60,7 +62,7 @@ function majorFromHome(home: string): number | null {
   try {
     const result = spawnSync(java, ['-version'], {
       encoding: 'utf8',
-      windowsHide: true,
+      windowsHide: true
     })
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
     const match = /version "([^"]+)"/.exec(output)
@@ -81,10 +83,20 @@ function detectRuntimes(): JavaRuntime[] {
 
   const roots = new Set<string>()
   if (process.platform === 'win32') {
-    const programFiles = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.ProgramW6432]
-      .filter((value): value is string => Boolean(value))
+    const programFiles = [
+      process.env.ProgramFiles,
+      process.env['ProgramFiles(x86)'],
+      process.env.ProgramW6432
+    ].filter((value): value is string => Boolean(value))
     for (const base of programFiles) {
-      for (const vendor of ['Java', 'Eclipse Adoptium', 'Microsoft', 'Zulu', 'BellSoft', 'Amazon Corretto']) {
+      for (const vendor of [
+        'Java',
+        'Eclipse Adoptium',
+        'Microsoft',
+        'Zulu',
+        'BellSoft',
+        'Amazon Corretto'
+      ]) {
         roots.add(path.join(base, vendor))
       }
     }
@@ -111,7 +123,9 @@ function detectRuntimes(): JavaRuntime[] {
       const home = path.join(root, child)
       try {
         if (statSync(home).isDirectory()) addHome(homes, home)
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -165,8 +179,7 @@ export function findJava(requiredMajor: number): JavaRuntime {
     .sort((a, b) => a.major - b.major || runtimePreference(a) - runtimePreference(b))
   if (suitable.length > 0) return suitable[0]!
 
-  const detected = found.length > 0
-    ? found.map((runtime) => `Java ${runtime.major}`).join('、')
-    : '未检测到 Java'
+  const detected =
+    found.length > 0 ? found.map((runtime) => `Java ${runtime.major}`).join('、') : '未检测到 Java'
   throw new Error(`需要 Java ${requiredMajor} 或更高版本（检测到：${detected}）`)
 }

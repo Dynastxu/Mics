@@ -1,10 +1,6 @@
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
-import {
-  extractZipEntries,
-  readZipTextFromBuffer,
-  safeZipEntryPath,
-} from '@mics/sdk/main'
+import { extractZipEntries, readZipTextFromBuffer, safeZipEntryPath } from '@mics/sdk/main'
 import type { LoaderKind, ModLoader } from '@mics/sdk'
 
 /**
@@ -34,8 +30,7 @@ export interface ModpackCurseforgeFile {
 }
 
 export type ModpackFileEntry =
-  | ({ kind: 'direct' } & ModpackDirectFile)
-  | ({ kind: 'curseforge' } & ModpackCurseforgeFile)
+  ({ kind: 'direct' } & ModpackDirectFile) | ({ kind: 'curseforge' } & ModpackCurseforgeFile)
 
 export interface ParsedModpack {
   format: 'modrinth' | 'curseforge'
@@ -58,11 +53,11 @@ const MODRINTH_LOADER_KEYS: ReadonlyArray<[string, ModLoader]> = [
   ['fabric-loader', 'fabric'],
   ['forge', 'forge'],
   ['neoforge', 'neoforge'],
-  ['quilt-loader', 'quilt'],
+  ['quilt-loader', 'quilt']
 ]
 
 function recordOf(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : null
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
 }
 
 function stringOf(value: unknown): string {
@@ -84,7 +79,9 @@ function readJson(text: string, label: string): Record<string, unknown> {
     if (!record) throw new Error('顶层不是对象')
     return record
   } catch (cause) {
-    throw new Error(`${label} 不是有效的 JSON：${cause instanceof Error ? cause.message : String(cause)}`)
+    throw new Error(
+      `${label} 不是有效的 JSON：${cause instanceof Error ? cause.message : String(cause)}`
+    )
   }
 }
 
@@ -95,7 +92,9 @@ function loaderOf(kind: string, version: string): { kind: string; version: strin
   return { kind: normalized, version: version.trim() }
 }
 
-function unsupportedLoaderOf(loader: { kind: string; version: string } | undefined): string | undefined {
+function unsupportedLoaderOf(
+  loader: { kind: string; version: string } | undefined
+): string | undefined {
   if (!loader || SUPPORTED_LOADERS.has(loader.kind as LoaderKind)) return undefined
   return loader.kind
 }
@@ -108,7 +107,7 @@ function parseCurseforgeLoader(id: string): { kind: string; version: string } | 
   if (dash <= 0) return undefined
   return {
     kind: trimmed.slice(0, dash),
-    version: trimmed.slice(dash + 1),
+    version: trimmed.slice(dash + 1)
   }
 }
 
@@ -136,9 +135,7 @@ function parseModrinthIndex(record: Record<string, unknown>): ParsedModpack {
 
     const filePath = safeZipEntryPath(stringOf(file.path))
     const downloads = Array.isArray(file.downloads) ? file.downloads : []
-    const url = downloads
-      .map((item) => stringOf(item))
-      .find((item) => /^https?:\/\//i.test(item))
+    const url = downloads.map((item) => stringOf(item)).find((item) => /^https?:\/\//i.test(item))
     if (!filePath || !url) {
       throw new Error(`整合包文件缺少路径或下载地址：${stringOf(file.path) || '未知文件'}`)
     }
@@ -149,7 +146,7 @@ function parseModrinthIndex(record: Record<string, unknown>): ParsedModpack {
       path: filePath,
       url,
       sha1: stringOf(hashes?.sha1).toLowerCase(),
-      size: numberOf(file.fileSize),
+      size: numberOf(file.fileSize)
     })
   }
 
@@ -159,11 +156,9 @@ function parseModrinthIndex(record: Record<string, unknown>): ParsedModpack {
     version: stringOf(record.versionId),
     gameVersion,
     ...(loader ? { loader } : {}),
-    ...(unsupportedLoaderOf(loader)
-      ? { unsupportedLoader: unsupportedLoaderOf(loader) }
-      : {}),
+    ...(unsupportedLoaderOf(loader) ? { unsupportedLoader: unsupportedLoaderOf(loader) } : {}),
     files,
-    overridePrefixes: ['overrides/', 'client-overrides/'],
+    overridePrefixes: ['overrides/', 'client-overrides/']
   }
 }
 
@@ -183,9 +178,7 @@ function parseCurseforgeManifest(record: Record<string, unknown>): ParsedModpack
     .filter((entry): entry is Record<string, unknown> => entry !== null)
   const primary = loaderEntries.find((entry) => entry.primary === true) ?? loaderEntries[0]
   const parsedLoader = primary ? parseCurseforgeLoader(stringOf(primary.id)) : undefined
-  const loader = parsedLoader
-    ? loaderOf(parsedLoader.kind, parsedLoader.version)
-    : undefined
+  const loader = parsedLoader ? loaderOf(parsedLoader.kind, parsedLoader.version) : undefined
 
   const files: ModpackFileEntry[] = []
   const rawFiles = Array.isArray(record.files) ? record.files : []
@@ -208,11 +201,9 @@ function parseCurseforgeManifest(record: Record<string, unknown>): ParsedModpack
     version: stringOf(record.version),
     gameVersion,
     ...(loader ? { loader } : {}),
-    ...(unsupportedLoaderOf(loader)
-      ? { unsupportedLoader: unsupportedLoaderOf(loader) }
-      : {}),
+    ...(unsupportedLoaderOf(loader) ? { unsupportedLoader: unsupportedLoaderOf(loader) } : {}),
     files,
-    overridePrefixes: [`${safeOverrides}/`],
+    overridePrefixes: [`${safeOverrides}/`]
   }
 }
 
@@ -233,7 +224,7 @@ export async function parseModpackArchive(archive: string): Promise<ParsedModpac
 export async function extractModpackOverrides(
   archive: string,
   prefixes: string[],
-  dest: string,
+  dest: string
 ): Promise<number> {
   const normalized = prefixes
     .map((prefix) => prefix.replace(/\\/g, '/'))
@@ -247,7 +238,7 @@ export async function extractModpackOverrides(
       if (!prefix) return null
       const stripped = relative.slice(prefix.length)
       return stripped || null
-    },
+    }
   })
   return result.files
 }
@@ -257,6 +248,9 @@ export function modpackArchiveName(sha1: string, url: string, fileName: string):
   const extension = path.extname(fileName).toLowerCase()
   const safeExtension = /^\.[a-z0-9]{1,8}$/.test(extension) ? extension : '.zip'
   if (/^[0-9a-f]{40}$/.test(sha1)) return `${sha1}${safeExtension}`
-  const key = Buffer.from(url).toString('base64url').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80)
+  const key = Buffer.from(url)
+    .toString('base64url')
+    .replace(/[^A-Za-z0-9._-]/g, '')
+    .slice(0, 80)
   return `${key || 'modpack'}${safeExtension}`
 }

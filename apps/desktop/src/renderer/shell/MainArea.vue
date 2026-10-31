@@ -14,9 +14,7 @@ const page = computed(() => navItemById(store.activeView))
 const visited = ref<string[]>([])
 
 const pages = computed<NavItem[]>(() =>
-  visited.value
-    .map((id) => navItemById(id))
-    .filter((item): item is NavItem => item !== undefined),
+  visited.value.map((id) => navItemById(id)).filter((item): item is NavItem => item !== undefined)
 )
 
 watch(
@@ -25,7 +23,7 @@ watch(
     if (!id || visited.value.includes(id)) return
     visited.value = [...visited.value, id]
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 // 插件消失后导航项也消失：对应页面必须一起卸载，否则会留下失效组件与陈旧作用域
@@ -35,7 +33,7 @@ watch(
     const alive = new Set(store.nav.map((item) => item.id))
     if (visited.value.every((id) => alive.has(id))) return
     visited.value = visited.value.filter((id) => alive.has(id))
-  },
+  }
 )
 </script>
 

@@ -25,8 +25,8 @@ const props = withDefaults(
     fallbackName: '',
     disabled: false,
     label: '实例名称',
-    placeholder: '',
-  },
+    placeholder: ''
+  }
 )
 
 const emit = defineEmits<{
@@ -112,14 +112,14 @@ watch(
     if (value === draft.value) return
     draft.value = value
     schedule(0)
-  },
+  }
 )
 
 watch(
   () => props.fallbackName,
   () => {
     if (!draft.value.trim()) schedule(0)
-  },
+  }
 )
 
 onMounted(() => schedule(0))

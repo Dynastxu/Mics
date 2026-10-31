@@ -5,7 +5,7 @@ export {
   readPluginDirectory,
   resolveEntry,
   importPluginEntry,
-  STAGING_DIR,
+  STAGING_DIR
 } from './discovery'
 export type { PluginRoot, PluginDirectoryResult } from './discovery'
 export { installPluginFromDirectory, PluginInstallError } from './install'
@@ -14,6 +14,6 @@ export {
   runUninstallScript,
   removePluginFiles,
   pluginStorageFile,
-  UNINSTALL_TIMEOUT_MS,
+  UNINSTALL_TIMEOUT_MS
 } from './uninstall'
 export type { UninstallScriptContext, UninstallScript, RunUninstallOptions } from './uninstall'

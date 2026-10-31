@@ -35,7 +35,7 @@ export function initialWindowSize(): { width: number; height: number } {
     Math.max(min, Math.min(wanted, available))
   return {
     width: fit(DEFAULT_WINDOW_SIZE.width, work.width - SCREEN_MARGIN, MIN_WINDOW_SIZE.width),
-    height: fit(DEFAULT_WINDOW_SIZE.height, work.height - SCREEN_MARGIN, MIN_WINDOW_SIZE.height),
+    height: fit(DEFAULT_WINDOW_SIZE.height, work.height - SCREEN_MARGIN, MIN_WINDOW_SIZE.height)
   }
 }
 
@@ -67,7 +67,7 @@ export function moveResize(window: BrowserWindow, x: number, y: number): void {
     x: bounds.x,
     y: bounds.y,
     width: resized(bounds.width, x - startX, MIN_WINDOW_SIZE.width),
-    height: resized(bounds.height, y - startY, MIN_WINDOW_SIZE.height),
+    height: resized(bounds.height, y - startY, MIN_WINDOW_SIZE.height)
   })
 }
 

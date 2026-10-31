@@ -11,10 +11,10 @@ export default defineConfig({
   root: fileURLToPath(new URL('./demo', import.meta.url)),
   plugins: [vue(), vueDevTools()],
   resolve: {
-    alias: [{ find: /^@mics\/sdk$/, replacement: sdkEntry }],
+    alias: [{ find: /^@mics\/sdk$/, replacement: sdkEntry }]
   },
   server: {
     port: 5180,
-    fs: { allow: [workspaceRoot] },
-  },
+    fs: { allow: [workspaceRoot] }
+  }
 })

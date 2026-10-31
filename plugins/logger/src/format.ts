@@ -5,7 +5,7 @@ import type { LogLevel } from '@mics/sdk'
 /** 只用来复用 cordis 的格式化能力；日志文件不需要 ANSI 颜色 */
 const FORMATTER: Exporter = {
   colors: false,
-  export() {},
+  export() {}
 }
 
 /**
@@ -26,7 +26,7 @@ export function formatArgs(args: unknown[]): string {
     name: 'mics',
     type: 'info',
     level: 2,
-    args: normalized,
+    args: normalized
   }
   try {
     return Logger.format(FORMATTER, message)
@@ -54,7 +54,7 @@ function timestamp(ts: number): string {
   const pad = (value: number, length = 2): string => String(value).padStart(length, '0')
   const time = [
     `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`,
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`
   ].join('T')
   const offset = -date.getTimezoneOffset()
   const sign = offset >= 0 ? '+' : '-'

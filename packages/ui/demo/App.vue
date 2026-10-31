@@ -13,8 +13,8 @@ const GROUPS: FilterGroup[] = [
     affects: 'order',
     options: [
       { value: 'name', label: '按名称' },
-      { value: 'players', label: '按人数' },
-    ],
+      { value: 'players', label: '按人数' }
+    ]
   },
   {
     key: 'mode',
@@ -25,8 +25,8 @@ const GROUPS: FilterGroup[] = [
       { value: 'all', label: '全部' },
       { value: 'survival', label: '生存' },
       { value: 'creative', label: '创造' },
-      { value: 'minigame', label: '小游戏' },
-    ],
+      { value: 'minigame', label: '小游戏' }
+    ]
   },
   {
     key: 'version',
@@ -37,8 +37,8 @@ const GROUPS: FilterGroup[] = [
       { value: 'all', label: '全部' },
       { value: '1.21.5', label: '1.21.5' },
       { value: '1.21.4', label: '1.21.4' },
-      { value: '1.21.1', label: '1.21.1' },
-    ],
+      { value: '1.21.1', label: '1.21.1' }
+    ]
   },
   {
     key: 'feature',
@@ -50,23 +50,19 @@ const GROUPS: FilterGroup[] = [
       { value: 'pvp', label: 'PVP' },
       { value: 'pve', label: 'PVE' },
       { value: 'build', label: '建造' },
-      { value: 'timed', label: '限时' },
-    ],
-  },
+      { value: 'timed', label: '限时' }
+    ]
+  }
 ]
 
 const ITEMS: ListRow[] = [
   {
     id: 's1',
     label: '生存服 · 主城',
-    badges: [
-      { label: '冒险', accent: true },
-      { label: '生存' },
-      { label: 'PVE' },
-    ],
+    badges: [{ label: '冒险', accent: true }, { label: '生存' }, { label: 'PVE' }],
     meta: 'v1.21.5 · 12/20 人',
     img: 'https://placehold.co/64x64/4f8/white?text=S',
-    tags: { mode: 'survival', version: '1.21.5', feature: ['pve'] },
+    tags: { mode: 'survival', version: '1.21.5', feature: ['pve'] }
   },
   {
     id: 's2',
@@ -74,18 +70,15 @@ const ITEMS: ListRow[] = [
     badge: '空闲',
     meta: 'v1.21.4 · 3/20 人',
     img: 'https://placehold.co/64x64/48f/white?text=C',
-    tags: { mode: 'creative', version: '1.21.4', feature: ['build'] },
+    tags: { mode: 'creative', version: '1.21.4', feature: ['build'] }
   },
   {
     id: 's3',
     label: '小游戏 · 起床战争',
-    badges: [
-      { label: '小游戏' },
-      { label: 'PVP', accent: true },
-    ],
+    badges: [{ label: '小游戏' }, { label: 'PVP', accent: true }],
     meta: 'v1.21.1 · 10/20 人',
     img: 'https://placehold.co/64x64/f84/white?text=G',
-    tags: { mode: 'minigame', version: '1.21.1', feature: ['pvp'] },
+    tags: { mode: 'minigame', version: '1.21.1', feature: ['pvp'] }
   },
   {
     id: 's4',
@@ -94,19 +87,15 @@ const ITEMS: ListRow[] = [
     badgeAccent: true,
     meta: 'v1.21.5 · 8/20 人',
     img: 'https://placehold.co/64x64/8af/white?text=空',
-    tags: { mode: 'survival', version: '1.21.5', feature: ['pve'] },
+    tags: { mode: 'survival', version: '1.21.5', feature: ['pve'] }
   },
   {
     id: 's5',
     label: '小游戏 · 饥饿游戏',
-    badges: [
-      { label: '小游戏' },
-      { label: 'PVP', accent: true },
-      { label: '限时' },
-    ],
+    badges: [{ label: '小游戏' }, { label: 'PVP', accent: true }, { label: '限时' }],
     meta: 'v1.21.4 · 6/12 人',
-    tags: { mode: 'minigame', version: '1.21.4', feature: ['pvp', 'timed'] },
-  },
+    tags: { mode: 'minigame', version: '1.21.4', feature: ['pvp', 'timed'] }
+  }
 ]
 
 function playerCount(meta: string): number {
@@ -144,7 +133,7 @@ const serverEnabled = ref<Record<string, boolean>>({
   s2: true,
   s3: false,
   s4: true,
-  s5: false,
+  s5: false
 })
 
 function toggleCheck(id: string) {
@@ -175,9 +164,7 @@ const activeItems = computed(() => {
   return ITEMS.map(({ img, imgAlt, ...rest }) => rest as ListRow)
 })
 
-const activeGroups = computed(() =>
-  showFilter.value ? GROUPS : [],
-)
+const activeGroups = computed(() => (showFilter.value ? GROUPS : []))
 </script>
 
 <template>
@@ -187,11 +174,13 @@ const activeGroups = computed(() =>
 
       <div class="demo__seg">
         <button
-          v-for="r in (['button', 'radio', 'checkbox'] as ListRowRole[])"
+          v-for="r in ['button', 'radio', 'checkbox'] as ListRowRole[]"
           :key="r"
           :class="{ 'is-active': role === r }"
           @click="role = r"
-        >{{ r }}</button>
+        >
+          {{ r }}
+        </button>
       </div>
     </header>
 
@@ -203,11 +192,21 @@ const activeGroups = computed(() =>
     </div>
 
     <div class="demo__state">
-      <span>query <code>{{ JSON.stringify(query) }}</code></span>
-      <span>filter <code>{{ JSON.stringify(filter) }}</code></span>
-      <span v-if="isRadio">选中 <code>{{ selectedId || '—' }}</code></span>
-      <span v-if="isCheckbox">已选 <code>{{ checkedIds.length ? checkedIds.join(', ') : '—' }}</code></span>
-      <span v-if="role === 'button'">上次点击 <code>{{ selectedId || '—' }}</code></span>
+      <span
+        >query <code>{{ JSON.stringify(query) }}</code></span
+      >
+      <span
+        >filter <code>{{ JSON.stringify(filter) }}</code></span
+      >
+      <span v-if="isRadio"
+        >选中 <code>{{ selectedId || '—' }}</code></span
+      >
+      <span v-if="isCheckbox"
+        >已选 <code>{{ checkedIds.length ? checkedIds.join(', ') : '—' }}</code></span
+      >
+      <span v-if="role === 'button'"
+        >上次点击 <code>{{ selectedId || '—' }}</code></span
+      >
     </div>
 
     <div class="demo__page">
@@ -234,14 +233,10 @@ const activeGroups = computed(() =>
             />
             <span class="demo__toggle-knob" />
           </label>
-          <button
-            class="demo__btn"
-            @click.stop="onAction('编辑', item)"
-          >编辑</button>
-          <button
-            class="demo__btn demo__btn--danger"
-            @click.stop="onAction('删除', item)"
-          >删除</button>
+          <button class="demo__btn" @click.stop="onAction('编辑', item)">编辑</button>
+          <button class="demo__btn demo__btn--danger" @click.stop="onAction('删除', item)">
+            删除
+          </button>
         </template>
       </DataBrowser>
     </div>
@@ -284,7 +279,9 @@ const activeGroups = computed(() =>
   color: var(--mics-fg-muted);
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background 0.12s,
+    color 0.12s;
 }
 
 .demo__seg button:last-child {

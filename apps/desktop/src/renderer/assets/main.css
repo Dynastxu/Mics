@@ -10,16 +10,16 @@
   --mics-accent-fg: #ffffff;
   --mics-danger: #ff6b6b;
   --mics-radius: 8px;
-  --mics-font: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system,
-    sans-serif;
+  --mics-font:
+    'Inter', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
   color-scheme: dark;
 }
 
-:root[data-mics-theme="dark"] {
+:root[data-mics-theme='dark'] {
   color-scheme: dark;
 }
 
-:root[data-mics-theme="light"] {
+:root[data-mics-theme='light'] {
   color-scheme: light;
 }
 
@@ -147,7 +147,9 @@ svg.mics-icon {
   display: grid;
   place-items: center;
   color: var(--mics-fg-muted);
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .mics-titlebar__button svg {
@@ -202,7 +204,9 @@ svg.mics-icon {
   color: var(--mics-fg-muted);
   font-size: 13px;
   text-align: left;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .mics-nav__item:hover {
@@ -361,7 +365,10 @@ svg.mics-icon {
   font-size: 12.5px;
   font-weight: 500;
   white-space: nowrap;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .mics-button--primary {
@@ -758,7 +765,7 @@ svg.mics-icon {
 }
 
 .mics-mono {
-  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: 'Cascadia Code', 'Consolas', ui-monospace, monospace;
   font-size: 11.5px;
 }
 

@@ -8,8 +8,7 @@ import { computed } from 'vue'
  */
 const ICONS: Record<string, string> = {
   play: '<path d="M7 4.5v15l13-7.5-13-7.5Z" fill="currentColor" stroke="none"/>',
-  download:
-    '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 20h16"/>',
+  download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 20h16"/>',
   settings:
     '<path d="M4 6h9"/><path d="M17 6h3"/><circle cx="15" cy="6" r="2"/>' +
     '<path d="M4 12h3"/><path d="M11 12h9"/><circle cx="9" cy="12" r="2"/>' +
@@ -49,12 +48,13 @@ const ICONS: Record<string, string> = {
     '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.5l6.1-.9L12 3Z"/>',
-  activity: '<path d="M22 12h-2.5a2 2 0 0 0-1.9 1.5l-2.4 8.3a.25.25 0 0 1-.48 0L9.2 2.2a.25.25 0 0 0-.48 0L6.4 10.5A2 2 0 0 1 4.5 12H2"/>',
+  activity:
+    '<path d="M22 12h-2.5a2 2 0 0 0-1.9 1.5l-2.4 8.3a.25.25 0 0 1-.48 0L9.2 2.2a.25.25 0 0 0-.48 0L6.4 10.5A2 2 0 0 1 4.5 12H2"/>'
 }
 
 const props = withDefaults(defineProps<{ name?: string; size?: number }>(), {
   name: '',
-  size: 18,
+  size: 18
 })
 
 const glyph = computed(() => (props.name ? ICONS[props.name] : undefined))

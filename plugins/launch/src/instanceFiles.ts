@@ -11,7 +11,7 @@ import type {
   InstanceModEntry,
   InstanceMods,
   InstanceUsage,
-  InstanceUsageEntry,
+  InstanceUsageEntry
 } from './shared'
 import { countMods, isSafeInstanceId, loaderLabel, resolveInstance } from './instances'
 import { readJarModInfo } from './zip'
@@ -87,7 +87,7 @@ export function describeInstance(userDataDir: string, id: string): InstanceDetai
     loader: loaderLabel(instance.version),
     versionType: instance.version.type ?? null,
     javaMajor: instance.version.javaVersion?.majorVersion ?? null,
-    mods: countMods(instance.dir),
+    mods: countMods(instance.dir)
   }
 }
 
@@ -159,7 +159,10 @@ async function measureTree(root: string): Promise<Measurement> {
  * 归入 `.` 一项。资产目录可能有大量小文件，因此整个统计是异步的，
  * 由单独 RPC 触发，不阻塞详情主体。
  */
-export async function measureInstanceUsage(userDataDir: string, id: string): Promise<InstanceUsage> {
+export async function measureInstanceUsage(
+  userDataDir: string,
+  id: string
+): Promise<InstanceUsage> {
   const root = await requireInstanceDir(userDataDir, id)
 
   let children: Dirent[] = []
@@ -175,7 +178,7 @@ export async function measureInstanceUsage(userDataDir: string, id: string): Pro
       const target = path.join(root, entry.name)
       const result = entry.isDirectory() ? await measureTree(target) : await measureFile(target)
       return { name: entry.name, directory: entry.isDirectory(), ...result }
-    }),
+    })
   )
 
   const entries: InstanceUsageEntry[] = []
@@ -199,11 +202,14 @@ export async function measureInstanceUsage(userDataDir: string, id: string): Pro
     total: entries.reduce((sum, entry) => sum + entry.size, 0),
     files: entries.reduce((sum, entry) => sum + entry.files, 0),
     entries,
-    computedAt: Date.now(),
+    computedAt: Date.now()
   }
 }
 
-export async function listInstanceLogs(userDataDir: string, id: string): Promise<InstanceLogFile[]> {
+export async function listInstanceLogs(
+  userDataDir: string,
+  id: string
+): Promise<InstanceLogFile[]> {
   const dir = path.join(await requireInstanceDir(userDataDir, id), 'logs')
 
   let entries: Dirent[] = []
@@ -265,7 +271,7 @@ async function readFileTail(file: string, size: number, limit: number): Promise<
 export async function readInstanceLog(
   userDataDir: string,
   id: string,
-  name: string,
+  name: string
 ): Promise<InstanceLogContent> {
   if (!isPlainFileName(name) || !isLogFile(name)) throw new Error('无效的日志文件')
 
@@ -294,7 +300,7 @@ export async function readInstanceLog(
       size: info.size,
       modified: info.mtimeMs,
       content: tail.content,
-      truncated: tail.truncated,
+      truncated: tail.truncated
     }
   }
 
@@ -304,7 +310,7 @@ export async function readInstanceLog(
     size: info.size,
     modified: info.mtimeMs,
     content: tail.content,
-    truncated: tail.truncated,
+    truncated: tail.truncated
   }
 }
 
@@ -335,7 +341,7 @@ export async function listInstanceMods(userDataDir: string, id: string): Promise
         ...(meta.id ? { modId: meta.id } : {}),
         ...(meta.name ? { modName: meta.name } : {}),
         ...(meta.sha1 ? { sha1: meta.sha1 } : {}),
-        ...(meta.murmur2 !== undefined ? { murmur2: meta.murmur2 } : {}),
+        ...(meta.murmur2 !== undefined ? { murmur2: meta.murmur2 } : {})
       })
     } catch {
       // 读取期间被删除的文件直接忽略
@@ -344,7 +350,7 @@ export async function listInstanceMods(userDataDir: string, id: string): Promise
 
   return {
     dir,
-    entries: mods.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
+    entries: mods.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
   }
 }
 
@@ -359,7 +365,7 @@ export async function setInstanceModEnabled(
   userDataDir: string,
   id: string,
   fileName: string,
-  enabled: boolean,
+  enabled: boolean
 ): Promise<InstanceMods> {
   if (!isPlainFileName(fileName) || !isModFile(fileName)) throw new Error('无效的 Mod 文件')
 
@@ -389,7 +395,7 @@ export async function setInstanceModEnabled(
 export async function deleteInstanceMod(
   userDataDir: string,
   id: string,
-  fileName: string,
+  fileName: string
 ): Promise<InstanceMods> {
   if (!isPlainFileName(fileName) || !isModFile(fileName)) throw new Error('无效的 Mod 文件')
 
@@ -412,7 +418,7 @@ export async function deleteInstanceMod(
 export async function resolveInstanceArea(
   userDataDir: string,
   id: string,
-  area: InstanceArea = 'root',
+  area: InstanceArea = 'root'
 ): Promise<string> {
   const root = await requireInstanceDir(userDataDir, id)
   if (area === 'logs' || area === 'mods') {

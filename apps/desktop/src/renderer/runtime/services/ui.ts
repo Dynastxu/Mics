@@ -38,7 +38,9 @@ export class UiService extends Service {
     const owner = pluginIdOf(this.ctx)
     const existing = this.statusOwners.get(item.id)
     if (existing && existing !== owner) {
-      throw new Error(`状态栏 ${item.id} 已由插件 ${existing} 注册，${owner ?? '当前插件'} 不能覆盖`)
+      throw new Error(
+        `状态栏 ${item.id} 已由插件 ${existing} 注册，${owner ?? '当前插件'} 不能覆盖`
+      )
     }
     if (owner) this.statusOwners.set(item.id, owner)
     const entry = { ...item, pluginId: owner, source: 'runtime' as const }

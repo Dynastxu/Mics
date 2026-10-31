@@ -13,13 +13,13 @@ export const OFFICIAL_LOADER_BASES: Record<LoaderSourceKind, { meta: string; mav
   fabric: { meta: 'meta.fabricmc.net', maven: 'maven.fabricmc.net' },
   forge: {
     meta: 'files.minecraftforge.net',
-    maven: 'maven.minecraftforge.net',
+    maven: 'maven.minecraftforge.net'
   },
   neoforge: {
     // 版本接口在站点根路径 /api 下；文件仍在 /releases
     meta: 'maven.neoforged.net',
-    maven: 'maven.neoforged.net/releases',
-  },
+    maven: 'maven.neoforged.net/releases'
+  }
 }
 
 export interface LoaderUrlMatch {
@@ -65,10 +65,7 @@ export function originOf(base: string): string {
  * 同时匹配内置官方地址与用户配置的镜像地址：这样镜像返回的绝对地址
  * 也能被其它源替换。最长前缀优先，避免 `/releases` 被更短的基址抢走。
  */
-export function matchLoaderUrl(
-  url: string,
-  sources: LoaderSource[],
-): LoaderUrlMatch | null {
+export function matchLoaderUrl(url: string, sources: LoaderSource[]): LoaderUrlMatch | null {
   const bare = stripScheme(url)
   if (!bare) return null
 
@@ -95,10 +92,7 @@ export function matchLoaderUrl(
 }
 
 /** 指定加载器、参与下载的源（保持优先级顺序） */
-export function enabledSourcesOf(
-  sources: LoaderSource[],
-  kind: LoaderSourceKind,
-): LoaderSource[] {
+export function enabledSourcesOf(sources: LoaderSource[], kind: LoaderSourceKind): LoaderSource[] {
   return sources.filter((source) => source.kind === kind && source.enabled)
 }
 
@@ -107,7 +101,7 @@ export function metadataCandidates(
   sources: LoaderSource[],
   kind: LoaderSourceKind,
   path: string,
-  role: 'meta' | 'maven' = 'meta',
+  role: 'meta' | 'maven' = 'meta'
 ): string[] {
   const urls: string[] = []
   for (const source of enabledSourcesOf(sources, kind)) {

@@ -5,7 +5,7 @@ import type {
   PluginId,
   PluginInstallOutcome,
   PluginInstallSummary,
-  PluginUninstallOutcome,
+  PluginUninstallOutcome
 } from '@mics/sdk'
 
 function messageOf(error: unknown): string {
@@ -24,7 +24,7 @@ async function openFolder(): Promise<string | undefined> {
   const options: OpenDialogOptions = {
     title: '选择插件文件夹',
     buttonLabel: '选择',
-    properties: ['openDirectory'],
+    properties: ['openDirectory']
   }
   const result = window
     ? await dialog.showOpenDialog(window, options)
@@ -80,7 +80,7 @@ export function apply(ctx: Context): void {
       preview.hasMain
         ? '风险提示：主进程插件拥有与 Mics 相同的权限，可以读写文件、联网与执行命令。'
         : '',
-      ...preview.warnings.map((warning) => `注意：${warning}`),
+      ...preview.warnings.map((warning) => `注意：${warning}`)
     ].filter(Boolean)
 
     const confirmed = await confirm({
@@ -91,7 +91,7 @@ export function apply(ctx: Context): void {
       buttons: ['安装', '取消'],
       defaultId: 1,
       cancelId: 1,
-      noLink: true,
+      noLink: true
     })
     if (!confirmed) return { status: 'cancelled' }
 
@@ -125,12 +125,12 @@ export function apply(ctx: Context): void {
             `插件目录、插件存储与启用记录都会被删除，之后不会再出现在插件列表中。`,
             info.hasUninstall
               ? '确认后会先执行插件的卸载脚本，清理它自己在插件目录之外创建的内容。'
-              : '这个插件没有声明卸载脚本：宿主只删除插件本体，它在插件目录之外创建的内容会保留。',
+              : '这个插件没有声明卸载脚本：宿主只删除插件本体，它在插件目录之外创建的内容会保留。'
           ].join('\n'),
           buttons: ['卸载', '取消'],
           defaultId: 1,
           cancelId: 1,
-          noLink: true,
+          noLink: true
         })
         if (!confirmed) return { status: 'cancelled' }
       }
@@ -145,10 +145,10 @@ export function apply(ctx: Context): void {
           id,
           message: messageOf(error),
           // 只有卸载脚本失败才允许「跳过清理、强制卸载」；删文件失败必须重试
-          retryable: stage === 'script',
+          retryable: stage === 'script'
         }
       }
-    },
+    }
   )
 }
 

@@ -1,9 +1,5 @@
 import { reactive } from 'vue'
-import type {
-  NotificationItem,
-  NotificationLevel,
-  NotificationOptions,
-} from '@mics/sdk'
+import type { NotificationItem, NotificationLevel, NotificationOptions } from '@mics/sdk'
 
 /**
  * 通知队列是模块级状态：服务负责入队/定时，宿主组件负责绘制。
@@ -40,7 +36,7 @@ export function showNotification(input: NotificationOptions | string): string {
     title,
     message,
     level,
-    createdAt: Date.now(),
+    createdAt: Date.now()
   })
 
   // 超过上限时先关掉最旧的一条，避免通知堆满窗口
@@ -52,7 +48,10 @@ export function showNotification(input: NotificationOptions | string): string {
 
   const duration = options.duration ?? defaultDuration(level)
   if (duration > 0) {
-    timers.set(id, setTimeout(() => dismissNotification(id), duration))
+    timers.set(
+      id,
+      setTimeout(() => dismissNotification(id), duration)
+    )
   }
   return id
 }

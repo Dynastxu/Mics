@@ -19,7 +19,7 @@ const PACKS: DatapackItem[] = [
     summary: '让原版材料组合出更多工具、方块与装饰。',
     downloads: '18 万',
     versions: ['1.21.4', '1.21.1', '1.20.1'],
-    kind: '合成',
+    kind: '合成'
   },
   {
     id: 'biome-expansion',
@@ -28,7 +28,7 @@ const PACKS: DatapackItem[] = [
     summary: '在现有世界上生成新的群系变体与植被。',
     downloads: '12 万',
     versions: ['1.21.4', '1.21.1'],
-    kind: '世界',
+    kind: '世界'
   },
   {
     id: 'village-improved',
@@ -37,7 +37,7 @@ const PACKS: DatapackItem[] = [
     summary: '村庄会随时代扩建，并出现新的职业。',
     downloads: '9.6 万',
     versions: ['1.21.1', '1.20.1'],
-    kind: '村庄',
+    kind: '村庄'
   },
   {
     id: 'difficulty-ladder',
@@ -46,7 +46,7 @@ const PACKS: DatapackItem[] = [
     summary: '按天数为世界逐级提升怪物强度。',
     downloads: '7.2 万',
     versions: ['1.21.4', '1.20.1'],
-    kind: '挑战',
+    kind: '挑战'
   },
   {
     id: 'ruins-remake',
@@ -55,7 +55,7 @@ const PACKS: DatapackItem[] = [
     summary: '重新布置地牢、矿井与要塞的战利品。',
     downloads: '15 万',
     versions: ['1.21.1', '1.20.1'],
-    kind: '遗迹',
+    kind: '遗迹'
   },
   {
     id: 'seasons',
@@ -64,8 +64,8 @@ const PACKS: DatapackItem[] = [
     summary: '昼夜与季节会改变作物、天气与颜色。',
     downloads: '6.8 万',
     versions: ['1.21.4'],
-    kind: '环境',
-  },
+    kind: '环境'
+  }
 ]
 
 const VERSIONS = ['1.21.4', '1.21.1', '1.20.1']
@@ -79,7 +79,7 @@ const visible = computed(() => {
   return PACKS.filter(
     (pack) =>
       (gameVersion.value === 'all' || pack.versions.includes(gameVersion.value)) &&
-      (!keyword || `${pack.name} ${pack.author} ${pack.summary}`.toLowerCase().includes(keyword)),
+      (!keyword || `${pack.name} ${pack.author} ${pack.summary}`.toLowerCase().includes(keyword))
   )
 })
 </script>

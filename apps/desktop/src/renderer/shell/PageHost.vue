@@ -10,7 +10,7 @@ const component = computed(() => viewComponents[props.page.id])
 const activating = computed(() => Boolean(store.activating[props.page.pluginId]))
 const error = computed(() => store.errors[props.page.pluginId] ?? '')
 const disabled = computed(
-  () => store.plugins.find((plugin) => plugin.id === props.page.pluginId)?.state === 'disabled',
+  () => store.plugins.find((plugin) => plugin.id === props.page.pluginId)?.state === 'disabled'
 )
 
 function activate(): void {
@@ -32,7 +32,7 @@ watch(
     if (component.value || activating.value || error.value || disabled.value) return
     activate()
   },
-  { immediate: true },
+  { immediate: true }
 )
 </script>
 

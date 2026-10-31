@@ -29,10 +29,7 @@ export interface JsonRequestOptions {
   timeoutMs?: number
 }
 
-export async function requestJson<T>(
-  url: string,
-  options: JsonRequestOptions = {},
-): Promise<T> {
+export async function requestJson<T>(url: string, options: JsonRequestOptions = {}): Promise<T> {
   const { method = 'GET', headers = {}, body, timeoutMs = DEFAULT_TIMEOUT } = options
 
   let response: Response
@@ -41,7 +38,7 @@ export async function requestJson<T>(
       method,
       body,
       headers: { Accept: 'application/json', ...headers },
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs)
     })
   } catch (cause) {
     throw new Error(`无法连接 ${url}：${cause instanceof Error ? cause.message : String(cause)}`)
@@ -62,7 +59,7 @@ export async function requestJson<T>(
       errorMessageOf(data, response.status, url),
       response.status,
       data,
-      stringField(data, 'error'),
+      stringField(data, 'error')
     )
   }
   if (data === null) throw new Error(`响应为空：${url}`)

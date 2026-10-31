@@ -7,7 +7,7 @@ withDefaults(
     small?: boolean
     label?: string
   }>(),
-  { active: false, small: false, label: '筛选' },
+  { active: false, small: false, label: '筛选' }
 )
 
 /** 面板是否展开；点击按钮切换 */

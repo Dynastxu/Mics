@@ -22,7 +22,16 @@ import { dismissNotification, notificationItems } from './state'
           aria-label="关闭通知"
           @click="dismissNotification(item.id)"
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
             <path d="M6 6l12 12M18 6 6 18" />
           </svg>
         </button>
@@ -107,7 +116,9 @@ import { dismissNotification, notificationItems } from './state'
 
 .notification-enter-active,
 .notification-leave-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
 }
 
 .notification-enter-from,

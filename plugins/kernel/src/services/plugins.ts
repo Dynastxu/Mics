@@ -9,7 +9,7 @@ import {
   removePluginFiles,
   runUninstallScript,
   scanPlugins,
-  UNINSTALL_TIMEOUT_MS,
+  UNINSTALL_TIMEOUT_MS
 } from '@mics/plugin-loader'
 import type {
   CapabilitiesServiceApi,
@@ -33,7 +33,7 @@ import type {
   ProfileLock,
   RuntimeSnapshot,
   ScanError,
-  StorageServiceApi,
+  StorageServiceApi
 } from '@mics/sdk'
 import {
   bailEvent,
@@ -45,12 +45,12 @@ import {
   PLUGIN_SCHEME,
   PluginFailureError,
   PluginUninstallError,
-  pluginIdOf,
+  pluginIdOf
 } from '@mics/sdk'
 import {
   reportIpcRegistrations,
   snapshotIpcRegistrations,
-  type IpcRegistrationSnapshot,
+  type IpcRegistrationSnapshot
 } from '../cleanupAudit'
 
 /** 等插件真正停下来的上限；超过就认为它没救，交给失败态与用户重试 */
@@ -89,7 +89,7 @@ async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Pr
       task,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(message)), ms)
-      }),
+      })
     ])
   } finally {
     if (timer) clearTimeout(timer)
@@ -99,7 +99,7 @@ async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Pr
 /** 从插件入口模块里取出 cordis 插件对象 */
 function resolvePlugin(
   module: Record<string, unknown>,
-  id: PluginId,
+  id: PluginId
 ): import('cordis').Plugin.Object<unknown> {
   const candidate = module.default ?? module
   if (typeof candidate === 'function') {
@@ -161,7 +161,7 @@ export class PluginsService extends Service {
       const id = record.manifest.id
       this.entries.set(id, {
         record,
-        state: id === this.config.kernel ? 'active' : 'discovered',
+        state: id === this.config.kernel ? 'active' : 'discovered'
       })
     }
 
@@ -189,14 +189,14 @@ export class PluginsService extends Service {
     }
 
     const builtin = [...this.entries.values()].filter(
-      (entry) => entry.record.source === 'builtin',
+      (entry) => entry.record.source === 'builtin'
     ).length
     log.info(
       '插件目录已就绪：共 %d 个（内置 %d，第三方 %d），禁用 %d 个',
       this.entries.size,
       builtin,
       this.entries.size - builtin,
-      this.disabled.size,
+      this.disabled.size
     )
     if (this.disabled.size > 0) {
       log.info('已禁用的插件：%s', [...this.disabled].sort().join('、'))
@@ -250,7 +250,7 @@ export class PluginsService extends Service {
         provides: [],
         consumes: [],
         contributes: [],
-        warnings: [...entry.record.warnings],
+        warnings: [...entry.record.warnings]
       })
     }
 
@@ -270,11 +270,9 @@ export class PluginsService extends Service {
     const addDependency = (
       node: PluginGraphNode,
       targetId: PluginId,
-      detail: PluginDependencyDetail,
+      detail: PluginDependencyDetail
     ): void => {
-      let ref: PluginDependencyRef | undefined = node.dependsOn.find(
-        (item) => item.id === targetId,
-      )
+      let ref: PluginDependencyRef | undefined = node.dependsOn.find((item) => item.id === targetId)
       if (!ref) {
         const target = nodes.get(targetId)
         ref = {
@@ -282,7 +280,7 @@ export class PluginsService extends Service {
           name: target?.name ?? targetId,
           status: target?.status,
           satisfied: true,
-          details: [],
+          details: []
         }
         node.dependsOn.push(ref)
       }
@@ -303,7 +301,7 @@ export class PluginsService extends Service {
         }
         addDependency(node, dependency, {
           kind: 'manifest',
-          satisfied: targetEntry.state !== 'disabled' && targetEntry.state !== 'failed',
+          satisfied: targetEntry.state !== 'disabled' && targetEntry.state !== 'failed'
         })
       }
 
@@ -352,7 +350,7 @@ export class PluginsService extends Service {
             kind: 'capability',
             name,
             label: provider.label,
-            priority: provider.priority,
+            priority: provider.priority
           })
         }
       }
@@ -367,7 +365,7 @@ export class PluginsService extends Service {
         node.contributes.push({
           kind: 'command',
           id: contributor.id,
-          title: contributor.title,
+          title: contributor.title
         })
       }
       for (const method of ipc?.methodsOf?.(id) ?? []) {
@@ -392,7 +390,7 @@ export class PluginsService extends Service {
         node.contributes.push({
           kind: 'configuration',
           id: 'configuration',
-          title: configuration.title,
+          title: configuration.title
         })
       }
     }
@@ -408,20 +406,14 @@ export class PluginsService extends Service {
           name: node.name,
           status: node.status,
           satisfied: dependency.satisfied,
-          details: dependency.details.map((detail) => ({ ...detail })),
+          details: dependency.details.map((detail) => ({ ...detail }))
         })
       }
       node.dependsOn.sort(byName)
       node.dependents.sort(byName)
-      node.provides.sort(
-        (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
-      )
-      node.consumes.sort(
-        (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
-      )
-      node.contributes.sort(
-        (a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id),
-      )
+      node.provides.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name))
+      node.consumes.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name))
+      node.contributes.sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))
     }
 
     return {
@@ -430,9 +422,9 @@ export class PluginsService extends Service {
       profile: this.config.profile?.name,
       nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)),
       unmet: [...unmet.values()].sort(
-        (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
+        (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)
       ),
-      scanIssues: [...this.scanIssues],
+      scanIssues: [...this.scanIssues]
     }
   }
 
@@ -459,10 +451,10 @@ export class PluginsService extends Service {
     log.info(
       '开始激活启动插件（%d 个）：%s',
       startup.length,
-      startup.map((entry) => entry.record.manifest.id).join('、'),
+      startup.map((entry) => entry.record.manifest.id).join('、')
     )
     const results = await Promise.allSettled(
-      startup.map((entry) => this.activate(entry.record.manifest.id)),
+      startup.map((entry) => this.activate(entry.record.manifest.id))
     )
     const failed = results.filter((result) => result.status === 'rejected').length
     const waiting = [...this.entries.values()].filter((entry) => entry.state === 'waiting').length
@@ -470,7 +462,7 @@ export class PluginsService extends Service {
       '启动插件激活完成：成功 %d，失败 %d，等待依赖 %d',
       results.length - failed,
       failed,
-      waiting,
+      waiting
     )
   }
 
@@ -484,9 +476,7 @@ export class PluginsService extends Service {
       const entry = this.require(id)
       if (this.isLocked(entry)) {
         throw new Error(
-          entry.record.manifest.core
-            ? `内核插件 ${id} 不可禁用`
-            : `插件 ${id} 是必需插件，不可禁用`,
+          entry.record.manifest.core ? `内核插件 ${id} 不可禁用` : `插件 ${id} 是必需插件，不可禁用`
         )
       }
 
@@ -502,10 +492,7 @@ export class PluginsService extends Service {
       if (timedOut) {
         // 停不下来就不能说「已禁用」：保留 failed + timeout，用户重试或重启应用
         this.setState(entry, 'failed')
-        throw new PluginFailureError(
-          'timeout',
-          entry.failure?.message ?? `插件 ${id} 停止超时`,
-        )
+        throw new PluginFailureError('timeout', entry.failure?.message ?? `插件 ${id} 停止超时`)
       }
       entry.state = 'disabled'
       entry.failure = undefined
@@ -545,10 +532,7 @@ export class PluginsService extends Service {
         const timedOut = await this.stop(entry)
         if (timedOut) {
           this.setState(entry, 'failed')
-          throw new PluginFailureError(
-            'timeout',
-            entry.failure?.message ?? `插件 ${id} 停止超时`,
-          )
+          throw new PluginFailureError('timeout', entry.failure?.message ?? `插件 ${id} 停止超时`)
         }
         entry.state = 'discovered'
         entry.failure = undefined
@@ -558,11 +542,8 @@ export class PluginsService extends Service {
       } finally {
         if (audit) {
           const current = snapshotIpcRegistrations()
-          reportIpcRegistrations(
-            id,
-            this.ipcAuditBaselines.get(id),
-            current,
-            (message) => this.baseCtx.logger('cleanup').warn(message),
+          reportIpcRegistrations(id, this.ipcAuditBaselines.get(id), current, (message) =>
+            this.baseCtx.logger('cleanup').warn(message)
           )
           this.ipcAuditBaselines.set(id, current)
         }
@@ -579,7 +560,7 @@ export class PluginsService extends Service {
         ? {
             stage: 'timeout',
             message: `页面加载失败：${message}（主进程停止也超时，需要重启应用）`,
-            at: Date.now(),
+            at: Date.now()
           }
         : { stage, message, at: Date.now() }
       this.setState(entry, 'failed')
@@ -616,7 +597,7 @@ export class PluginsService extends Service {
           if (existing.restartRequired) {
             throw new PluginFailureError(
               'timeout',
-              `插件 ${preview.id} 上次停止超时，重启应用后才能替换文件`,
+              `插件 ${preview.id} 上次停止超时，重启应用后才能替换文件`
             )
           }
           const timedOut = await this.stop(existing)
@@ -624,7 +605,7 @@ export class PluginsService extends Service {
             this.setState(existing, 'failed')
             throw new PluginFailureError(
               'timeout',
-              existing.failure?.message ?? `插件 ${preview.id} 停止超时，无法替换文件`,
+              existing.failure?.message ?? `插件 ${preview.id} 停止超时，无法替换文件`
             )
           }
         }
@@ -634,14 +615,12 @@ export class PluginsService extends Service {
           installed = await installPluginFromDirectory({
             sourceDir: dir,
             pluginsDir: this.config.userPluginRoot,
-            reservedIds: this.builtinIds(),
+            reservedIds: this.builtinIds()
           })
         } catch (error) {
           // 替换失败时旧版本还在磁盘上：把它恢复到安装前的运行状态
           if (existing && wasActive) await this.doStart(existing).catch(() => {})
-          this.baseCtx
-            .logger('plugins')
-            .warn('安装插件 %s 失败：%s', preview.id, toMessage(error))
+          this.baseCtx.logger('plugins').warn('安装插件 %s 失败：%s', preview.id, toMessage(error))
           throw error
         }
 
@@ -656,11 +635,11 @@ export class PluginsService extends Service {
               ? '插件 %s 已升级到 v%s（保持禁用，需手动启用）'
               : '插件 %s v%s 已安装（默认禁用）',
             summary.id,
-            summary.version,
+            summary.version
           )
         return {
           plugin: summary,
-          upgraded: installed.upgraded,
+          upgraded: installed.upgraded
         }
       })
     })
@@ -693,7 +672,7 @@ export class PluginsService extends Service {
           // 此时删目录只会得到一个文件占用错误
           throw new PluginUninstallError(
             entry.failure?.message ?? `插件 ${id} 停止超时，无法卸载`,
-            'script',
+            'script'
           )
         }
         entry.state = 'disabled'
@@ -704,7 +683,7 @@ export class PluginsService extends Service {
           await runUninstallScript(entry.record, {
             userDataDir: this.config.userDataDir,
             timeoutMs: UNINSTALL_TIMEOUT_MS,
-            log: (message) => this.baseCtx.logger('plugins').info(message),
+            log: (message) => this.baseCtx.logger('plugins').info(message)
           })
         }
 
@@ -749,7 +728,7 @@ export class PluginsService extends Service {
       // 旧 fiber 的 dispose 没结束：再启动会得到第二个 fiber，只能重启应用
       const failure = new PluginFailureError(
         'timeout',
-        `插件 ${id} 上次停止超时，请重启应用后再操作`,
+        `插件 ${id} 上次停止超时，请重启应用后再操作`
       )
       this.recordFailure(entry, failure)
       return Promise.reject(failure)
@@ -757,7 +736,7 @@ export class PluginsService extends Service {
     if (entry.issues?.length) {
       const failure = new PluginFailureError(
         'dependency',
-        `插件 ${id} 的依赖有问题：${entry.issues.join('；')}`,
+        `插件 ${id} 的依赖有问题：${entry.issues.join('；')}`
       )
       this.recordFailure(entry, failure)
       return Promise.reject(failure)
@@ -774,7 +753,7 @@ export class PluginsService extends Service {
     } catch (error) {
       const failure = new PluginFailureError(
         'policy',
-        `插件 ${id} 的激活审批失败：${toMessage(error)}`,
+        `插件 ${id} 的激活审批失败：${toMessage(error)}`
       )
       this.recordFailure(entry, failure)
       return Promise.reject(failure)
@@ -782,7 +761,7 @@ export class PluginsService extends Service {
     if (verdict && typeof (verdict as { then?: unknown }).then === 'function') {
       const failure = new PluginFailureError(
         'policy',
-        `插件 ${id} 的激活审批返回了 Promise；plugin/beforeActivate 必须是同步投票`,
+        `插件 ${id} 的激活审批返回了 Promise；plugin/beforeActivate 必须是同步投票`
       )
       this.recordFailure(entry, failure)
       return Promise.reject(failure)
@@ -790,7 +769,9 @@ export class PluginsService extends Service {
     if (verdict && verdict.allow === false) {
       const failure = new PluginFailureError(
         'policy',
-        verdict.reason ? `插件 ${id} 被策略拒绝激活：${verdict.reason}` : `插件 ${id} 被策略拒绝激活`,
+        verdict.reason
+          ? `插件 ${id} 被策略拒绝激活：${verdict.reason}`
+          : `插件 ${id} 被策略拒绝激活`
       )
       this.recordFailure(entry, failure)
       return Promise.reject(failure)
@@ -829,7 +810,7 @@ export class PluginsService extends Service {
         } catch (error) {
           throw new PluginFailureError(
             'dependency',
-            `插件 ${id} 的依赖 ${dependency} 未就绪：${toMessage(error)}`,
+            `插件 ${id} 的依赖 ${dependency} 未就绪：${toMessage(error)}`
           )
         }
       }
@@ -889,7 +870,7 @@ export class PluginsService extends Service {
       await withTimeout(
         Promise.resolve(fiber.dispose()),
         STOP_TIMEOUT_MS,
-        `插件 ${id} 停止超时（${STOP_TIMEOUT_MS}ms）`,
+        `插件 ${id} 停止超时（${STOP_TIMEOUT_MS}ms）`
       )
       this.baseCtx.logger('plugins').debug('插件 %s 已停止', id)
       return false
@@ -901,9 +882,7 @@ export class PluginsService extends Service {
       return true
     } finally {
       // 使用记录属于运行时状态：重新激活时 require() 会重新登记
-      const capabilities = this.baseCtx.get('capabilities') as
-        | CapabilitiesDiagnostics
-        | undefined
+      const capabilities = this.baseCtx.get('capabilities') as CapabilitiesDiagnostics | undefined
       capabilities?.forget?.(id)
     }
   }
@@ -952,7 +931,7 @@ export class PluginsService extends Service {
       entry.failure ??= {
         stage: 'apply',
         message: '插件在运行中失效，详见日志',
-        at: Date.now(),
+        at: Date.now()
       }
     }
 
@@ -966,11 +945,7 @@ export class PluginsService extends Service {
       const unmet = entry.waitingFor ?? []
       this.baseCtx
         .logger('plugins')
-        .info(
-          '插件 %s 等待依赖服务：%s',
-          entry.record.manifest.id,
-          unmet.join('、') || '未知',
-        )
+        .info('插件 %s 等待依赖服务：%s', entry.record.manifest.id, unmet.join('、') || '未知')
     } else if (next === 'failed') {
       this.baseCtx.logger('plugins').warn('插件 %s 运行中失效', entry.record.manifest.id)
     }
@@ -1057,7 +1032,7 @@ export class PluginsService extends Service {
   private async rescan(): Promise<void> {
     const scan = await scanPlugins([
       ...this.config.pluginRoots.map((dir) => ({ dir, source: 'builtin' as const })),
-      { dir: this.config.userPluginRoot, source: 'user' as const },
+      { dir: this.config.userPluginRoot, source: 'user' as const }
     ])
     for (const failure of scan.errors) {
       this.baseCtx.logger('plugins').warn(`跳过插件 ${failure.dir}：${failure.errors.join('; ')}`)
@@ -1092,7 +1067,7 @@ export class PluginsService extends Service {
       } else {
         this.entries.set(id, {
           record,
-          state: this.disabled.has(id) ? 'disabled' : 'discovered',
+          state: this.disabled.has(id) ? 'disabled' : 'discovered'
         })
       }
     }
@@ -1134,8 +1109,7 @@ export class PluginsService extends Service {
 
   private forgetStorage(id: PluginId): void {
     const storage = this.baseCtx.get('storage') as
-      | (StorageServiceApi & { forget?: (id: PluginId) => void })
-      | undefined
+      (StorageServiceApi & { forget?: (id: PluginId) => void }) | undefined
     storage?.forget?.(id)
     this.ipcAuditBaselines.delete(id)
   }
@@ -1152,7 +1126,7 @@ export class PluginsService extends Service {
       hasRenderer: Boolean(record.entryRenderer),
       hasUninstall: Boolean(record.entryUninstall),
       installedVersion,
-      warnings: [...record.warnings],
+      warnings: [...record.warnings]
     }
   }
 
@@ -1272,13 +1246,13 @@ export class PluginsService extends Service {
       hasRenderer: Boolean(entry.record.entryRenderer),
       rendererUrl: this.resolveRenderUrl(entry.record, renderer),
       styles: (manifest.styles ?? []).map(
-        (style) => `${PLUGIN_SCHEME}://${manifest.id}/${encodePath(style)}`,
+        (style) => `${PLUGIN_SCHEME}://${manifest.id}/${encodePath(style)}`
       ),
       waitingFor: entry.state === 'waiting' ? entry.waitingFor : undefined,
       dependencyIssues: entry.issues?.length ? [...entry.issues] : undefined,
       failure: entry.failure,
       restartRequired: entry.restartRequired,
-      error: entry.failure?.message,
+      error: entry.failure?.message
     }
   }
 
@@ -1316,7 +1290,9 @@ export class PluginsService extends Service {
   private readDisabled(): PluginId[] {
     try {
       const parsed = JSON.parse(readFileSync(this.disabledFile(), 'utf8')) as unknown
-      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
+      return Array.isArray(parsed)
+        ? parsed.filter((id): id is string => typeof id === 'string')
+        : []
     } catch {
       return []
     }

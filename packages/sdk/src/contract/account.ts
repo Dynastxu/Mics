@@ -15,7 +15,7 @@ export type AccountKind = 'microsoft' | 'offline'
 
 export const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = {
   microsoft: '正版',
-  offline: '离线',
+  offline: '离线'
 }
 
 /** 渲染进程展示 / 选择账户需要的字段；令牌之类不跨进程外传 */

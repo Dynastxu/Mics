@@ -2,12 +2,17 @@ import { isLoaderSourceKind } from '@mics/sdk'
 import type { LoaderSourceKind, LoaderVersion } from '@mics/sdk'
 import { fabricProvider } from './fabric'
 import { forgeProvider, neoforgeProvider } from './forge'
-import type { LoaderEnvironment, LoaderInstallInput, LoaderInstallPlan, LoaderProvider } from './types'
+import type {
+  LoaderEnvironment,
+  LoaderInstallInput,
+  LoaderInstallPlan,
+  LoaderProvider
+} from './types'
 
 const PROVIDERS: Record<LoaderSourceKind, LoaderProvider> = {
   fabric: fabricProvider,
   forge: forgeProvider,
-  neoforge: neoforgeProvider,
+  neoforge: neoforgeProvider
 }
 
 export function loaderProvider(kind: LoaderSourceKind): LoaderProvider {
@@ -22,7 +27,7 @@ export function safeLoaderKind(value: unknown): LoaderSourceKind | null {
 export function listLoaderVersions(
   kind: LoaderSourceKind,
   gameVersion: string,
-  env: LoaderEnvironment,
+  env: LoaderEnvironment
 ): Promise<LoaderVersion[]> {
   return loaderProvider(kind).listVersions(gameVersion, env)
 }
@@ -30,7 +35,7 @@ export function listLoaderVersions(
 export function prepareLoaderInstall(
   kind: LoaderSourceKind,
   input: LoaderInstallInput,
-  env: LoaderEnvironment,
+  env: LoaderEnvironment
 ): Promise<LoaderInstallPlan> {
   return loaderProvider(kind).install(input, env)
 }

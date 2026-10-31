@@ -33,8 +33,8 @@ const props = withDefaults(
     error: '',
     details: () => [],
     blockedReason: '',
-    submitLabel: '安装',
-  },
+    submitLabel: '安装'
+  }
 )
 
 const emit = defineEmits<{
@@ -53,9 +53,7 @@ function reset(): void {
 
 async function install(): Promise<void> {
   if (props.installing || props.blockedReason) return
-  const result = field.value
-    ? await field.value.validate()
-    : check.value
+  const result = field.value ? await field.value.validate() : check.value
   if (!result.ok) return
   emit('install', result.name)
 }
@@ -70,7 +68,7 @@ watch(
   (open) => {
     if (open) reset()
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 const ready = () => check.value.ok && Boolean(check.value.name) && !props.blockedReason

@@ -23,10 +23,7 @@ function captureStack(): string {
   return new Error().stack?.split('\n').slice(2, 6).join('\n') ?? ''
 }
 
-function removeListenerRecord(
-  channel: string,
-  listener: (...args: unknown[]) => void,
-): void {
+function removeListenerRecord(channel: string, listener: (...args: unknown[]) => void): void {
   const entries = listeners.get(channel)
   if (!entries) return
   const index = entries.findIndex((entry) => entry.listener === listener)
@@ -75,17 +72,14 @@ function wrapIpcMain(): void {
   }) as typeof ipcMain.removeListener
 
   const originalRemoveAllListeners = ipcMain.removeAllListeners.bind(ipcMain)
-  ipcMain.removeAllListeners = (function (
-    this: typeof ipcMain,
-    channel?: string,
-  ): typeof ipcMain {
+  ipcMain.removeAllListeners = function (this: typeof ipcMain, channel?: string): typeof ipcMain {
     if (arguments.length === 0) {
       listeners.clear()
       return originalRemoveAllListeners()
     }
     listeners.delete(channel as string)
     return originalRemoveAllListeners(channel as never)
-  }) as typeof ipcMain.removeAllListeners
+  } as typeof ipcMain.removeAllListeners
 }
 
 export function snapshotIpcRegistrations(): IpcRegistrationSnapshot {
@@ -93,8 +87,8 @@ export function snapshotIpcRegistrations(): IpcRegistrationSnapshot {
     at: Date.now(),
     handlers: new Map(handlers),
     listeners: new Map(
-      [...listeners.entries()].map(([channel, entries]) => [channel, [...entries]]),
-    ),
+      [...listeners.entries()].map(([channel, entries]) => [channel, [...entries]])
+    )
   }
 }
 
@@ -122,18 +116,20 @@ export function reportIpcRegistrations(
   pluginId: string,
   previous: IpcRegistrationSnapshot | undefined,
   current: IpcRegistrationSnapshot,
-  warn: (message: string) => void,
+  warn: (message: string) => void
 ): void {
   if (!previous) return
 
   const addedHandlers = [...current.handlers.keys()].filter(
-    (channel) => !previous.handlers.has(channel),
+    (channel) => !previous.handlers.has(channel)
   )
   if (addedHandlers.length > 0) {
-    const stacks = stacksOf(addedHandlers.map((channel) => current.handlers.get(channel)!).filter(Boolean))
+    const stacks = stacksOf(
+      addedHandlers.map((channel) => current.handlers.get(channel)!).filter(Boolean)
+    )
     warn(
       `插件 ${pluginId} 重载后多出 ${addedHandlers.length} 个 ipcMain.handle：${addedHandlers.join(', ')}` +
-        (stacks ? `\n${stacks}` : ''),
+        (stacks ? `\n${stacks}` : '')
     )
   }
 
@@ -147,7 +143,7 @@ export function reportIpcRegistrations(
     }
     warn(
       `插件 ${pluginId} 重载后多出 ${currentListeners - previousListeners} 个 ipcMain 监听器` +
-        (extra.length ? `\n${stacksOf(extra)}` : ''),
+        (extra.length ? `\n${stacksOf(extra)}` : '')
     )
   }
 }

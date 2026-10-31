@@ -1,11 +1,6 @@
 import { spawn } from 'node:child_process'
 import type { ShellProcess } from '@mics/sdk'
-import type {
-  InstanceLaunchState,
-  LaunchPhase,
-  LaunchProcessInfo,
-  LaunchState,
-} from './shared'
+import type { InstanceLaunchState, LaunchPhase, LaunchProcessInfo, LaunchState } from './shared'
 
 interface ProcessRecord extends LaunchProcessInfo {
   instanceId: string
@@ -49,7 +44,7 @@ export function terminateProcessTree(pid: number): Promise<void> {
     return new Promise((resolve) => {
       const child = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
         windowsHide: true,
-        stdio: 'ignore',
+        stdio: 'ignore'
       })
       child.once('error', () => resolve())
       child.once('exit', () => resolve())
@@ -62,7 +57,9 @@ export function terminateProcessTree(pid: number): Promise<void> {
     } catch {
       try {
         process.kill(pid, value)
-      } catch { /* 进程已经退出 */ }
+      } catch {
+        /* 进程已经退出 */
+      }
     }
   }
 
@@ -105,7 +102,7 @@ export class LaunchRuntime {
           instanceId,
           pid,
           startedAt: Number(value.startedAt) || Date.now(),
-          phase: 'running',
+          phase: 'running'
         })
       }
     }
@@ -123,7 +120,7 @@ export class LaunchRuntime {
       pid,
       startedAt: Date.now(),
       phase: 'starting',
-      child,
+      child
     }
     this.records.set(pid, record)
 
@@ -164,14 +161,14 @@ export class LaunchRuntime {
       list.push({
         pid: record.pid,
         startedAt: record.startedAt,
-        phase: record.phase,
+        phase: record.phase
       })
       grouped.set(record.instanceId, list)
     }
 
     const instances: InstanceLaunchState[] = [...grouped.entries()].map(([id, processes]) => ({
       id,
-      processes: processes.sort((a, b) => a.startedAt - b.startedAt),
+      processes: processes.sort((a, b) => a.startedAt - b.startedAt)
     }))
     return { instances }
   }
@@ -222,7 +219,7 @@ export class LaunchRuntime {
       instanceId: record.instanceId,
       pid: record.pid,
       startedAt: record.startedAt,
-      phase: record.phase,
+      phase: record.phase
     }))
   }
 }

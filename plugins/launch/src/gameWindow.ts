@@ -72,9 +72,9 @@ export function waitForGameWindow(pid: number, timeoutMs: number): Promise<GameW
           '-ExecutionPolicy',
           'Bypass',
           '-EncodedCommand',
-          encodeCommand(pollScript(pid, timeoutMs)),
+          encodeCommand(pollScript(pid, timeoutMs))
         ],
-        { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] },
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
       )
     } catch {
       resolve('unsupported')

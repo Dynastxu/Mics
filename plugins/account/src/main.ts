@@ -5,14 +5,14 @@ import type {
   AccountSnapshot,
   AccountSummary,
   AuthCredentialsCapability,
-  LaunchCredentials,
+  LaunchCredentials
 } from '@mics/sdk'
 import { ACCOUNT_CHANGED_TOPIC, AUTH_CREDENTIALS } from '@mics/sdk'
 import {
   DeviceLoginError,
   MicrosoftAuth,
   MicrosoftTokenExpiredError,
-  type MinecraftIdentity,
+  type MinecraftIdentity
 } from './auth/microsoft'
 import {
   messageOf,
@@ -20,7 +20,7 @@ import {
   offlineUuid,
   sanitizePlayerName,
   toSummary,
-  type StoredAccount,
+  type StoredAccount
 } from './model'
 import { seal, unseal } from './secrets'
 import type { DeviceLoginPoll, DeviceLoginStart } from './shared'
@@ -46,9 +46,7 @@ export function apply(ctx: Context): void {
   }
   store = new AccountStore(ctx.storage, broadcast)
 
-  const microsoft = new MicrosoftAuth(() =>
-    String(ctx.storage.get('microsoftClientId', '') ?? ''),
-  )
+  const microsoft = new MicrosoftAuth(() => String(ctx.storage.get('microsoftClientId', '') ?? ''))
   const flows = new Map<string, DeviceFlow>()
   ctx.effect(() => () => flows.clear())
 
@@ -74,7 +72,7 @@ export function apply(ctx: Context): void {
   function saveMicrosoft(
     replaceId: string | undefined,
     identity: MinecraftIdentity,
-    refreshToken: string,
+    refreshToken: string
   ): StoredAccount {
     const secrets = { refreshToken: seal(refreshToken) }
     const target = replaceId ? store.get(replaceId) : undefined
@@ -84,7 +82,7 @@ export function apply(ctx: Context): void {
         name: identity.name,
         uuid: identity.uuid,
         authorized: true,
-        secrets,
+        secrets
       })
     }
     const existing = findDuplicate('microsoft', identity.uuid)
@@ -98,7 +96,7 @@ export function apply(ctx: Context): void {
       uuid: identity.uuid,
       createdAt: Date.now(),
       authorized: true,
-      secrets,
+      secrets
     })
   }
 
@@ -119,74 +117,80 @@ export function apply(ctx: Context): void {
           name: playerName,
           uuid,
           createdAt: Date.now(),
-          authorized: true,
+          authorized: true
         })
     store.setActive(account.id)
     log.info('离线账户已保存：%s', playerName)
     return toSummary(account)
   })
 
-  ctx.ipc.handle<{ replaceId?: string }>('accounts/login/start', async (params): Promise<DeviceLoginStart> => {
-    const replaceId = params?.replaceId
-    if (replaceId && !store.get(replaceId)) throw new Error('要重新登录的账户不存在')
-    pruneFlows()
+  ctx.ipc.handle<{ replaceId?: string }>(
+    'accounts/login/start',
+    async (params): Promise<DeviceLoginStart> => {
+      const replaceId = params?.replaceId
+      if (replaceId && !store.get(replaceId)) throw new Error('要重新登录的账户不存在')
+      pruneFlows()
 
-    const info = await microsoft.startDeviceCode()
-    const flowId = randomUUID()
-    flows.set(flowId, {
-      deviceCode: info.deviceCode,
-      expiresAt: info.expiresAt,
-      ...(replaceId ? { replaceId } : {}),
-    })
-    // 不自动打开浏览器：由界面展示验证码，用户点「复制并跳转至登录」再打开
-    log.info('Microsoft 登录已开始，验证码 %s', info.userCode)
-    return {
-      flowId,
-      userCode: info.userCode,
-      verificationUri: info.verificationUri,
-      expiresAt: info.expiresAt,
-      interval: info.interval,
-    }
-  })
-
-  ctx.ipc.handle<{ flowId?: string }>('accounts/login/poll', async (params): Promise<DeviceLoginPoll> => {
-    const flowId = params?.flowId
-    if (!flowId) throw new Error('缺少登录流程 id')
-    const flow = flows.get(flowId)
-    if (!flow) return { status: 'error', error: '登录流程已结束，请重新开始' }
-    if (Date.now() > flow.expiresAt) {
-      flows.delete(flowId)
-      return { status: 'error', error: '登录码已过期，请重新开始' }
-    }
-
-    let tokens
-    try {
-      tokens = await microsoft.pollDeviceCode(flow.deviceCode)
-    } catch (cause) {
-      if (cause instanceof DeviceLoginError) {
-        flows.delete(flowId)
-        log.warn('Microsoft 登录失败：%s', cause.message)
-        return { status: 'error', error: cause.message }
+      const info = await microsoft.startDeviceCode()
+      const flowId = randomUUID()
+      flows.set(flowId, {
+        deviceCode: info.deviceCode,
+        expiresAt: info.expiresAt,
+        ...(replaceId ? { replaceId } : {})
+      })
+      // 不自动打开浏览器：由界面展示验证码，用户点「复制并跳转至登录」再打开
+      log.info('Microsoft 登录已开始，验证码 %s', info.userCode)
+      return {
+        flowId,
+        userCode: info.userCode,
+        verificationUri: info.verificationUri,
+        expiresAt: info.expiresAt,
+        interval: info.interval
       }
-      // 网络抖动不能作废设备码：保留流程，下一次轮询继续
-      log.warn('Microsoft 登录轮询失败，稍后重试：%s', messageOf(cause))
-      return { status: 'pending' }
     }
-    if (!tokens) return { status: 'pending' }
+  )
 
-    try {
-      const identity = await microsoft.credentials(tokens.accessToken)
-      const account = saveMicrosoft(flow.replaceId, identity, tokens.refreshToken)
-      flows.delete(flowId)
-      store.setActive(account.id)
-      log.info('Microsoft 登录成功：%s', account.name)
-      return { status: 'done', account: toSummary(account) }
-    } catch (cause) {
-      flows.delete(flowId)
-      log.warn('Microsoft 登录失败：%s', messageOf(cause))
-      return { status: 'error', error: messageOf(cause) }
+  ctx.ipc.handle<{ flowId?: string }>(
+    'accounts/login/poll',
+    async (params): Promise<DeviceLoginPoll> => {
+      const flowId = params?.flowId
+      if (!flowId) throw new Error('缺少登录流程 id')
+      const flow = flows.get(flowId)
+      if (!flow) return { status: 'error', error: '登录流程已结束，请重新开始' }
+      if (Date.now() > flow.expiresAt) {
+        flows.delete(flowId)
+        return { status: 'error', error: '登录码已过期，请重新开始' }
+      }
+
+      let tokens
+      try {
+        tokens = await microsoft.pollDeviceCode(flow.deviceCode)
+      } catch (cause) {
+        if (cause instanceof DeviceLoginError) {
+          flows.delete(flowId)
+          log.warn('Microsoft 登录失败：%s', cause.message)
+          return { status: 'error', error: cause.message }
+        }
+        // 网络抖动不能作废设备码：保留流程，下一次轮询继续
+        log.warn('Microsoft 登录轮询失败，稍后重试：%s', messageOf(cause))
+        return { status: 'pending' }
+      }
+      if (!tokens) return { status: 'pending' }
+
+      try {
+        const identity = await microsoft.credentials(tokens.accessToken)
+        const account = saveMicrosoft(flow.replaceId, identity, tokens.refreshToken)
+        flows.delete(flowId)
+        store.setActive(account.id)
+        log.info('Microsoft 登录成功：%s', account.name)
+        return { status: 'done', account: toSummary(account) }
+      } catch (cause) {
+        flows.delete(flowId)
+        log.warn('Microsoft 登录失败：%s', messageOf(cause))
+        return { status: 'error', error: messageOf(cause) }
+      }
     }
-  })
+  )
 
   ctx.ipc.handle<{ flowId?: string }>('accounts/login/cancel', (params) => {
     if (params?.flowId) flows.delete(params.flowId)
@@ -227,7 +231,7 @@ export function apply(ctx: Context): void {
           name: account.name,
           uuid: account.uuid,
           accessToken: '0',
-          userType: 'legacy',
+          userType: 'legacy'
         }
 
       case 'microsoft': {
@@ -259,14 +263,14 @@ export function apply(ctx: Context): void {
           name: identity.name,
           uuid: identity.uuid,
           authorized: true,
-          secrets: { ...account.secrets, refreshToken: seal(tokens.refreshToken) },
+          secrets: { ...account.secrets, refreshToken: seal(tokens.refreshToken) }
         })
         return {
           accountId: account.id,
           name: identity.name,
           uuid: identity.uuid,
           accessToken: identity.accessToken,
-          userType: 'msa',
+          userType: 'msa'
         }
       }
     }
@@ -274,7 +278,7 @@ export function apply(ctx: Context): void {
 
   ctx.capabilities.provide<AuthCredentialsCapability>(AUTH_CREDENTIALS, {
     label: 'mics.account',
-    resolve: (accountId) => credentialsOf(accountId),
+    resolve: (accountId) => credentialsOf(accountId)
   })
 
   log.info('账户服务已就绪：%d 个账户', store.list().length)

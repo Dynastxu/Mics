@@ -19,7 +19,7 @@ import type {
   CatalogSearchResult,
   CatalogSourceError,
   CatalogSourceInfo,
-  CatalogVersion,
+  CatalogVersion
 } from './catalog'
 import type { FilterGroup, FilterSelection, ListRow } from './types'
 
@@ -60,8 +60,8 @@ const props = withDefaults(
     versionSearchPlaceholder: '搜索版本',
     pageSize: 20,
     channelLabels: () => ({ release: '正式版', beta: '测试版', alpha: '早期版' }),
-    intent: null,
-  },
+    intent: null
+  }
 )
 
 const emit = defineEmits<{
@@ -141,16 +141,14 @@ const sourceOptions = computed(() => {
 const sourceWarning = computed(() => {
   const readyKinds = new Set(readySources.value.map((item) => item.kind))
   const unavailable = enabledSources.value.filter(
-    (item) => !item.ready && !readyKinds.has(item.kind),
+    (item) => !item.ready && !readyKinds.has(item.kind)
   )
   if (unavailable.length === 0) return ''
-  return unavailable
-    .map((item) => `${item.label} 不可用：${item.hint || '未配置'}`)
-    .join('；')
+  return unavailable.map((item) => `${item.label} 不可用：${item.hint || '未配置'}`).join('；')
 })
 
 const sourceErrors = computed(() =>
-  errors.value.map((item) => `${item.label}：${item.message}`).join('；'),
+  errors.value.map((item) => `${item.label}：${item.message}`).join('；')
 )
 
 const loaderLabels = computed(() => {
@@ -175,8 +173,8 @@ const filterGroups = computed<FilterGroup[]>(() => [
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
-      ...sourceOptions.value.map((item) => ({ value: item.kind, label: item.label })),
-    ],
+      ...sourceOptions.value.map((item) => ({ value: item.kind, label: item.label }))
+    ]
   },
   {
     key: 'gameVersion',
@@ -187,8 +185,8 @@ const filterGroups = computed<FilterGroup[]>(() => [
       { value: 'all', label: '全部' },
       ...gameVersions.value
         .filter((item) => item.type === 'release')
-        .map((item) => ({ value: item.id, label: item.id })),
-    ],
+        .map((item) => ({ value: item.id, label: item.id }))
+    ]
   },
   {
     key: 'loader',
@@ -197,8 +195,8 @@ const filterGroups = computed<FilterGroup[]>(() => [
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
-      ...props.loaders.map((item) => ({ value: item.value, label: item.label })),
-    ],
+      ...props.loaders.map((item) => ({ value: item.value, label: item.label }))
+    ]
   },
   {
     key: 'category',
@@ -207,9 +205,9 @@ const filterGroups = computed<FilterGroup[]>(() => [
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
-      ...categories.value.map((item) => ({ value: item.id, label: item.label })),
-    ],
-  },
+      ...categories.value.map((item) => ({ value: item.id, label: item.label }))
+    ]
+  }
 ])
 
 const filterActive = computed(() => isFilterActive(filterSelection.value, filterGroups.value))
@@ -230,12 +228,10 @@ const selectedLoader = computed(() => {
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / props.pageSize)))
 
-const versionById = computed(
-  () => new Map(versions.value.map((version) => [version.id, version])),
-)
+const versionById = computed(() => new Map(versions.value.map((version) => [version.id, version])))
 
 const selectedVersion = computed(
-  () => versions.value.find((version) => version.id === selectedVersionId.value) ?? null,
+  () => versions.value.find((version) => version.id === selectedVersionId.value) ?? null
 )
 
 /** 详情页筛选不继承搜索页的版本/加载器限制，选项始终来自全部版本 */
@@ -243,8 +239,9 @@ const versionFilterGroups = computed<FilterGroup[]>(() => {
   const versionOptions = [...new Set(versions.value.flatMap((version) => version.gameVersions))]
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
     .map((value) => ({ value, label: value }))
-  const loaderOptions = [...new Set(versions.value.flatMap((version) => version.loaders))]
-    .map((value) => ({ value, label: loaderLabel(value) }))
+  const loaderOptions = [...new Set(versions.value.flatMap((version) => version.loaders))].map(
+    (value) => ({ value, label: loaderLabel(value) })
+  )
 
   return [
     {
@@ -252,14 +249,14 @@ const versionFilterGroups = computed<FilterGroup[]>(() => {
       label: 'MC 版本',
       mode: 'single',
       exclusive: 'all',
-      options: [{ value: 'all', label: '全部' }, ...versionOptions],
+      options: [{ value: 'all', label: '全部' }, ...versionOptions]
     },
     {
       key: 'loader',
       label: '加载器',
       mode: 'single',
       exclusive: 'all',
-      options: [{ value: 'all', label: '全部' }, ...loaderOptions],
+      options: [{ value: 'all', label: '全部' }, ...loaderOptions]
     },
     {
       key: 'channel',
@@ -268,8 +265,8 @@ const versionFilterGroups = computed<FilterGroup[]>(() => {
       exclusive: 'all',
       options: [
         { value: 'all', label: '全部' },
-        ...Object.entries(props.channelLabels).map(([value, label]) => ({ value, label })),
-      ],
+        ...Object.entries(props.channelLabels).map(([value, label]) => ({ value, label }))
+      ]
     },
     {
       key: 'sort',
@@ -278,9 +275,9 @@ const versionFilterGroups = computed<FilterGroup[]>(() => {
       affects: 'order',
       options: [
         { value: 'newest', label: '最新发布' },
-        { value: 'oldest', label: '最早发布' },
-      ],
-    },
+        { value: 'oldest', label: '最早发布' }
+      ]
+    }
   ]
 })
 
@@ -295,14 +292,14 @@ const versionRows = computed<ListRow[]>(() =>
       version.versionNumber,
       version.fileName,
       ...version.gameVersions,
-      ...version.loaders.map(loaderLabel),
+      ...version.loaders.map(loaderLabel)
     ].filter(Boolean),
     tags: {
       channel: version.channel,
       gameVersion: version.gameVersions,
-      loader: version.loaders,
-    },
-  })),
+      loader: version.loaders
+    }
+  }))
 )
 
 function versionOfRow(id: string): CatalogVersion | undefined {
@@ -313,9 +310,7 @@ function versionSort(a: ListRow, b: ListRow, selection: FilterSelection): number
   const order = selection.sort?.[0] ?? 'newest'
   const left = versionById.value.get(a.id)?.published ?? ''
   const right = versionById.value.get(b.id)?.published ?? ''
-  const byDate = order === 'oldest'
-    ? left.localeCompare(right)
-    : right.localeCompare(left)
+  const byDate = order === 'oldest' ? left.localeCompare(right) : right.localeCompare(left)
   return byDate || a.label.localeCompare(b.label)
 }
 
@@ -341,7 +336,7 @@ async function runSearch(resetPage = false): Promise<void> {
     loader: selectedLoader.value,
     category: categoryFilter === 'all' ? '' : categoryFilter,
     page: page.value,
-    pageSize: props.pageSize,
+    pageSize: props.pageSize
   }
 
   try {
@@ -455,7 +450,7 @@ function snapshot(): CatalogSnapshot | null {
     filter: { ...versionFilter.value },
     query: versionQuery.value,
     selectedVersionId: selectedVersionId.value,
-    scrollTop: pageScrollParent()?.scrollTop ?? 0,
+    scrollTop: pageScrollParent()?.scrollTop ?? 0
   }
 }
 
@@ -589,11 +584,17 @@ function backToTop(): void {
 }
 
 function loadFilterOptions(): void {
-  void props.fetchCategories()
-    .then((list) => { categories.value = list })
+  void props
+    .fetchCategories()
+    .then((list) => {
+      categories.value = list
+    })
     .catch(() => undefined)
-  void props.fetchGameVersions()
-    .then((list) => { gameVersions.value = list })
+  void props
+    .fetchGameVersions()
+    .then((list) => {
+      gameVersions.value = list
+    })
     .catch(() => undefined)
 }
 
@@ -603,11 +604,12 @@ function openPendingIntent(): void {
   if (!intent) return
 
   const targetName = (intent.name || intent.query).toLowerCase()
-  const target = results.value.find(
-    (item) => item.slug.toLowerCase() === targetName || item.name.toLowerCase() === targetName,
-  )
-    ?? results.value.find((item) => item.name.toLowerCase().includes(targetName))
-    ?? results.value[0]
+  const target =
+    results.value.find(
+      (item) => item.slug.toLowerCase() === targetName || item.name.toLowerCase() === targetName
+    ) ??
+    results.value.find((item) => item.name.toLowerCase().includes(targetName)) ??
+    results.value[0]
   if (target) openItem(target)
 }
 
@@ -668,7 +670,7 @@ watch(
     if (!ready) return
     void runSearch(true)
   },
-  { deep: true },
+  { deep: true }
 )
 
 onMounted(() => {
@@ -692,7 +694,7 @@ defineExpose({
   closeItem,
   closeToSearch,
   refresh: () => runSearch(true),
-  isDetail: () => activeItem.value !== null,
+  isDetail: () => activeItem.value !== null
 })
 </script>
 
@@ -878,11 +880,7 @@ defineExpose({
         >
           打开下载设置
         </button>
-        <button
-          v-else-if="searchError"
-          class="mics-empty__action"
-          @click="runSearch(false)"
-        >
+        <button v-else-if="searchError" class="mics-empty__action" @click="runSearch(false)">
           重试
         </button>
       </div>
@@ -894,12 +892,7 @@ defineExpose({
         </template>
       </div>
 
-      <ListPager
-        v-if="pageCount > 1"
-        :page="page"
-        :page-count="pageCount"
-        @change="goToPage"
-      />
+      <ListPager v-if="pageCount > 1" :page="page" :page-count="pageCount" @change="goToPage" />
     </template>
   </div>
 </template>

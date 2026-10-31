@@ -1,9 +1,9 @@
-import js from '@eslint/js';
-import tseslint from 'typescript-eslint';
-import pluginVue from 'eslint-plugin-vue';
-import vueParser from 'vue-eslint-parser';
-import prettierConfig from 'eslint-config-prettier';
-import globals from 'globals';
+import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+import pluginVue from 'eslint-plugin-vue'
+import vueParser from 'vue-eslint-parser'
+import prettierConfig from 'eslint-config-prettier'
+import globals from 'globals'
 
 export default tseslint.config(
   {
@@ -13,8 +13,8 @@ export default tseslint.config(
       '**/.pnpm-store/**',
       '**/out/**',
       'coverage/**',
-      '*.local',
-    ],
+      '*.local'
+    ]
   },
 
   js.configs.recommended,
@@ -29,12 +29,12 @@ export default tseslint.config(
       parserOptions: {
         parser: tseslint.parser,
         ecmaVersion: 'latest',
-        sourceType: 'module',
+        sourceType: 'module'
       },
       globals: {
-        ...globals.browser,
-      },
-    },
+        ...globals.browser
+      }
+    }
   },
 
   // 浏览器端 TypeScript (renderer)
@@ -42,9 +42,9 @@ export default tseslint.config(
     files: ['**/renderer/**/*.ts'],
     languageOptions: {
       globals: {
-        ...globals.browser,
-      },
-    },
+        ...globals.browser
+      }
+    }
   },
 
   // Node.js 端 TypeScript（主进程、preload、scripts）
@@ -54,13 +54,13 @@ export default tseslint.config(
       '**/preload/**/*.ts',
       'scripts/**/*.mjs',
       'scripts/**/*.js',
-      '*.config.{mjs,js,ts}',
+      '*.config.{mjs,js,ts}'
     ],
     languageOptions: {
       globals: {
-        ...globals.node,
-      },
-    },
+        ...globals.node
+      }
+    }
   },
 
   prettierConfig,
@@ -70,7 +70,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
       'vue/multi-word-component-names': 'off',
-      'vue/no-v-html': 'warn',
-    },
-  },
-);
+      'vue/no-v-html': 'warn'
+    }
+  }
+)

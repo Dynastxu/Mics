@@ -7,7 +7,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
+  statSync
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -41,8 +41,10 @@ export interface LaunchedProcess {
   child: ShellProcess
 }
 
-const OS_NAME = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
-const OS_KEY = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
+const OS_NAME =
+  process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
+const OS_KEY =
+  process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
 const ARCH_NAME = process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'arm64' : 'x86'
 
 const FEATURES: Record<string, boolean> = {
@@ -51,7 +53,7 @@ const FEATURES: Record<string, boolean> = {
   has_quick_plays_support: false,
   is_quick_play_singleplayer: false,
   is_quick_play_multiplayer: false,
-  is_quick_play_realms: false,
+  is_quick_play_realms: false
 }
 
 function ruleMatches(rule: Rule): boolean {
@@ -90,7 +92,7 @@ function replaceVariables(value: string, variables: Record<string, string>): str
 
 function expandArguments(
   entries: Array<string | ArgumentEntry>,
-  variables: Record<string, string>,
+  variables: Record<string, string>
 ): string[] {
   const result: string[] = []
   for (const entry of entries) {
@@ -123,7 +125,9 @@ function locateFile(file: string): string | null {
     for (const entry of readdirSync(directory)) {
       if (entry === base || entry.startsWith(`${base}.`)) return path.join(directory, entry)
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return null
 }
 
@@ -209,7 +213,7 @@ function nativeEntry(library: Library): NativeEntry | null {
   if (library.name.endsWith(`:${classifier}`)) {
     return {
       relative: library.downloads?.artifact?.path ?? mavenPath(library.name),
-      artifact: library.downloads?.artifact,
+      artifact: library.downloads?.artifact
     }
   }
 
@@ -221,8 +225,10 @@ function nativeEntry(library: Library): NativeEntry | null {
   const artifact = library.downloads?.classifiers?.[nativeName]
   if (!artifact) return null
   return {
-    relative: artifact.path ?? `${path.dirname(mavenPath(library.name))}/${path.basename(mavenPath(library.name), '.jar')}-${nativeName}.jar`,
-    artifact,
+    relative:
+      artifact.path ??
+      `${path.dirname(mavenPath(library.name))}/${path.basename(mavenPath(library.name), '.jar')}-${nativeName}.jar`,
+    artifact
   }
 }
 
@@ -237,7 +243,7 @@ function nativeJarFiles(libraries: Library[], librariesDir: string): LaunchFile[
     files.push({
       label: library.name,
       file: locateFile(target) ?? target,
-      sha1: native.artifact?.sha1,
+      sha1: native.artifact?.sha1
     })
   }
   return files
@@ -267,7 +273,9 @@ function pruneNatives(root: string, expected: Set<string>): void {
         try {
           if (now - statSync(target).mtimeMs < LEGACY_NATIVES_AGE) continue
           rmSync(target, { recursive: true, force: true })
-        } catch { /* 仍被运行中的实例占用 */ }
+        } catch {
+          /* 仍被运行中的实例占用 */
+        }
         continue
       }
       if (wanted.has(normalize(target))) continue
@@ -277,7 +285,9 @@ function pruneNatives(root: string, expected: Set<string>): void {
         return
       }
     }
-  } catch { /* 还没有 natives 目录 */ }
+  } catch {
+    /* 还没有 natives 目录 */
+  }
 }
 
 /**
@@ -292,7 +302,7 @@ function pruneNatives(root: string, expected: Set<string>): void {
 function syncNatives(
   instance: ResolvedInstance,
   files: LaunchFile[],
-  onLog?: LaunchOptions['onLog'],
+  onLog?: LaunchOptions['onLog']
 ): { dir: string; jars: string[] } {
   const nativesDir = instance.layout.nativesDir
   mkdirSync(nativesDir, { recursive: true })
@@ -321,7 +331,10 @@ function syncNatives(
   return { dir: nativesDir, jars }
 }
 
-export async function buildLaunchPlan(instance: ResolvedInstance, options: LaunchOptions): Promise<LaunchPlan> {
+export async function buildLaunchPlan(
+  instance: ResolvedInstance,
+  options: LaunchOptions
+): Promise<LaunchPlan> {
   const version = instance.version
   const requiredJava = version.javaVersion?.majorVersion ?? 8
   const java = findJava(requiredJava)
@@ -345,7 +358,7 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
     expectedFiles.push({
       label: `资源索引 ${assetIndex}`,
       file: path.join(assetsDir, 'indexes', `${assetIndex}.json`),
-      sha1: version.assetIndex?.sha1,
+      sha1: version.assetIndex?.sha1
     })
   }
 
@@ -398,7 +411,7 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
     library_directory: librariesDir,
     resolution_width: '1280',
     resolution_height: '720',
-    path: '',
+    path: ''
   }
 
   const jvmArgs: string[] = [`-Xms${Math.min(1024, memoryMb)}M`, `-Xmx${memoryMb}M`]
@@ -447,7 +460,7 @@ export async function buildLaunchPlan(instance: ResolvedInstance, options: Launc
     args: [...jvmArgs, version.mainClass, ...gameArgs],
     cwd: instance.dir,
     logPath: path.join(instance.dir, 'logs', 'mics-launch.log'),
-    javaMajor: java.major,
+    javaMajor: java.major
   }
 }
 
@@ -458,7 +471,7 @@ function quoteForLog(value: string): string {
 export async function launchInstance(
   shell: ShellExecuteCapability,
   instance: ResolvedInstance,
-  options: LaunchOptions,
+  options: LaunchOptions
 ): Promise<LaunchedProcess> {
   const plan = await buildLaunchPlan(instance, options)
   const line = `[${new Date().toISOString()}] ${quoteForLog(plan.java)} ${plan.args.map(quoteForLog).join(' ')}\n`
@@ -471,7 +484,7 @@ export async function launchInstance(
     args: plan.args,
     cwd: plan.cwd,
     logFile: plan.logPath,
-    detached: true,
+    detached: true
   })
 
   if (!child.pid) {

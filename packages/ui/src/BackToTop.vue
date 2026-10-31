@@ -5,7 +5,7 @@ withDefaults(
     visible?: boolean
     label?: string
   }>(),
-  { visible: false, label: '返回顶部' },
+  { visible: false, label: '返回顶部' }
 )
 
 defineEmits<{ click: [] }>()
@@ -53,7 +53,9 @@ defineEmits<{ click: [] }>()
   color: var(--mics-fg-muted);
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
   backdrop-filter: blur(8px);
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .back-to-top:hover {

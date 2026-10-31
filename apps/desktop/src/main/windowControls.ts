@@ -1,11 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import type { MicsWindowControl, MicsWindowResizeGesture, MicsWindowState } from '@mics/sdk'
-import {
-  beginResize,
-  endResize,
-  isResizeGesture,
-  moveResize,
-} from './windowSizing'
+import { beginResize, endResize, isResizeGesture, moveResize } from './windowSizing'
 
 const CONTROL_CHANNEL = 'mics:window-control'
 const RESIZE_CHANNEL = 'mics:window-resize'

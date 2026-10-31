@@ -23,7 +23,7 @@ const draft = reactive<{
   label: '',
   kind: 'modrinth',
   api: '',
-  key: '',
+  key: ''
 })
 
 const nameInput = ref<HTMLInputElement | null>(null)
@@ -46,7 +46,7 @@ watch(
     draft.key = props.source?.key ?? ''
     await nextTick()
     nameInput.value?.focus()
-  },
+  }
 )
 
 function submit(): void {
@@ -55,7 +55,7 @@ function submit(): void {
     kind: draft.kind,
     api: draft.api.trim(),
     key: draft.kind === 'curseforge' ? draft.key.trim() : '',
-    enabled: props.source?.enabled ?? true,
+    enabled: props.source?.enabled ?? true
   })
 }
 
@@ -134,9 +134,7 @@ function cancel(): void {
         </div>
 
         <div class="source-dialog__footer">
-          <button class="mics-button mics-button--ghost" type="button" @click="cancel">
-            取消
-          </button>
+          <button class="mics-button mics-button--ghost" type="button" @click="cancel">取消</button>
           <button class="mics-button mics-button--primary" type="submit">确定</button>
         </div>
       </form>

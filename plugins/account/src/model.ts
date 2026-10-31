@@ -26,7 +26,7 @@ export function toSummary(account: StoredAccount): AccountSummary {
     name: account.name,
     uuid: account.uuid,
     createdAt: account.createdAt,
-    authorized: account.authorized !== false,
+    authorized: account.authorized !== false
   }
 }
 

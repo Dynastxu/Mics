@@ -34,7 +34,7 @@ export class CommandsService extends Service {
         title: command.title ?? command.id,
         category: command.category,
         keybinding: command.keybinding,
-        pluginId: pluginIdOf(this.ctx),
+        pluginId: pluginIdOf(this.ctx)
       })
     }
 

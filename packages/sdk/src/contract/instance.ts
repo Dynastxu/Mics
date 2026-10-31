@@ -106,7 +106,9 @@ export function sanitizeInstanceName(raw: string): string {
  * 规范化后的名称才是落盘用的文件夹名。
  */
 export function normalizeInstanceName(raw: string): string {
-  return sanitizeInstanceName(raw).trim().replace(/[. ]+$/, '')
+  return sanitizeInstanceName(raw)
+    .trim()
+    .replace(/[. ]+$/, '')
 }
 
 /**
@@ -119,7 +121,7 @@ export function validateInstanceName(raw: string): InstanceNameCheck {
       ok: false,
       name: sanitizeInstanceName(raw).trim(),
       issue: 'invalid',
-      message: '名称不能包含 \\ / : * ? " < > | 等字符',
+      message: '名称不能包含 \\ / : * ? " < > | 等字符'
     }
   }
 
@@ -142,7 +144,7 @@ export function validateInstanceName(raw: string): InstanceNameCheck {
       ok: false,
       name,
       issue: 'too-long',
-      message: `名称最多 ${INSTANCE_NAME_MAX_LENGTH} 个字符`,
+      message: `名称最多 ${INSTANCE_NAME_MAX_LENGTH} 个字符`
     }
   }
 

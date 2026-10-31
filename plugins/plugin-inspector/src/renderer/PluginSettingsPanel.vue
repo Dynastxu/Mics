@@ -4,7 +4,7 @@ import { usePluginContext } from '@mics/sdk/renderer'
 import type {
   ConfigurationPropertyInfo,
   ConfigurationValue,
-  PluginConfigurationInfo,
+  PluginConfigurationInfo
 } from '@mics/sdk'
 import { ToggleSwitch } from '@mics/ui'
 
@@ -32,7 +32,7 @@ function isBusy(property: ConfigurationPropertyInfo): boolean {
 async function apply(
   method: 'configuration/set' | 'configuration/reset',
   property: ConfigurationPropertyInfo,
-  value?: ConfigurationValue,
+  value?: ConfigurationValue
 ): Promise<void> {
   busy.value = { ...busy.value, [property.key]: true }
   error.value = ''
@@ -42,8 +42,8 @@ async function apply(
       await ctx.ipc.invoke<PluginConfigurationInfo>('mics.kernel', method, {
         pluginId: props.config.pluginId,
         key: property.key,
-        value,
-      }),
+        value
+      })
     )
   } catch (cause) {
     error.value = messageOf(cause)

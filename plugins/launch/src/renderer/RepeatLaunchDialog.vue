@@ -21,7 +21,7 @@ watch(
     dontAsk.value = false
     await nextTick()
     confirmButton.value?.focus()
-  },
+  }
 )
 
 function confirm(): void {

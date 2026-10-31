@@ -4,7 +4,6 @@ import path from 'node:path'
 import type { PluginId, PluginRecord } from '@mics/sdk'
 import { PLUGIN_SCHEME } from '@mics/sdk'
 
-
 const MIME_TYPES: Record<string, string> = {
   '.mjs': 'text/javascript',
   '.js': 'text/javascript',
@@ -16,7 +15,7 @@ const MIME_TYPES: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.woff2': 'font/woff2',
-  '.woff': 'font/woff',
+  '.woff': 'font/woff'
 }
 
 /**
@@ -39,9 +38,9 @@ export function registerPrivilegedSchemes(): void {
         secure: true,
         supportFetchAPI: true,
         corsEnabled: true,
-        stream: true,
-      },
-    },
+        stream: true
+      }
+    }
   ])
 }
 
@@ -75,7 +74,7 @@ export function registerPluginProtocol(plugins: PluginRecord[]): PluginProtocolR
       const data = await readFile(target)
       const type = MIME_TYPES[path.extname(target).toLowerCase()] ?? 'application/octet-stream'
       return new Response(new Uint8Array(data), {
-        headers: { 'content-type': type, 'cache-control': 'no-store' },
+        headers: { 'content-type': type, 'cache-control': 'no-store' }
       })
     } catch {
       return new Response('not found', { status: 404 })

@@ -64,8 +64,7 @@ export interface PluginConfigurationInfo {
 }
 
 export type ConfigurationValueResult =
-  | { ok: true; value: ConfigurationValue }
-  | { ok: false; error: string }
+  { ok: true; value: ConfigurationValue } | { ok: false; error: string }
 
 const TYPES = new Set<ConfigurationType>(['string', 'number', 'integer', 'boolean', 'enum'])
 const KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$.-]*$/
@@ -83,7 +82,7 @@ function isPrimitive(value: unknown): value is ConfigurationValue {
 /** 按 schema 归一化一个值；数字类允许数字字符串，布尔允许 'true'/'false' */
 export function normalizeConfigurationValue(
   property: ConfigurationProperty,
-  raw: unknown,
+  raw: unknown
 ): ConfigurationValueResult {
   switch (property.type) {
     case 'string':
@@ -96,7 +95,8 @@ export function normalizeConfigurationValue(
       return { ok: false, error: '需要布尔值' }
     case 'number':
     case 'integer': {
-      const value = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN
+      const value =
+        typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN
       if (!Number.isFinite(value)) return { ok: false, error: '需要数字' }
       if (property.type === 'integer' && !Number.isInteger(value)) {
         return { ok: false, error: '需要整数' }
@@ -127,7 +127,7 @@ export function normalizeConfigurationValue(
 
 /** schema 的默认值（已按类型归一化）；没有默认值时返回 undefined */
 export function defaultConfigurationValue(
-  property: ConfigurationProperty,
+  property: ConfigurationProperty
 ): ConfigurationValue | undefined {
   return property.default
 }
@@ -237,7 +237,7 @@ export function validateConfigurationContribution(raw: unknown): {
           }
           options.push({
             value: option.value,
-            label: typeof option.label === 'string' ? option.label : undefined,
+            label: typeof option.label === 'string' ? option.label : undefined
           })
         }
         property.options = options

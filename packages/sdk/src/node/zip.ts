@@ -102,8 +102,7 @@ export function isReadableZipBuffer(buffer: Buffer): boolean {
   if (buffer.readUInt32LE(cdOffset) !== CENTRAL_SIGNATURE) return false
 
   const localOffset = buffer.readUInt32LE(cdOffset + 42)
-  return localOffset + 4 <= buffer.length
-    && buffer.readUInt32LE(localOffset) === LOCAL_SIGNATURE
+  return localOffset + 4 <= buffer.length && buffer.readUInt32LE(localOffset) === LOCAL_SIGNATURE
 }
 
 /**
@@ -159,7 +158,7 @@ export interface ZipExtractResult {
 export async function extractZipEntries(
   archive: string,
   dest: string,
-  options: ZipExtractOptions = {},
+  options: ZipExtractOptions = {}
 ): Promise<ZipExtractResult> {
   const buffer = await readFile(archive)
   const entries = readZipEntries(buffer)
@@ -169,9 +168,7 @@ export async function extractZipEntries(
     const relative = safeZipEntryPath(entry.name)
     if (!relative) continue
 
-    const targetRelative = options.map
-      ? options.map(entry, relative)
-      : relative
+    const targetRelative = options.map ? options.map(entry, relative) : relative
     if (!targetRelative) continue
 
     const safeTarget = safeZipEntryPath(targetRelative)

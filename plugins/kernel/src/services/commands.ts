@@ -50,7 +50,7 @@ export class CommandsService extends Service {
           title: command.title,
           category: command.category,
           keybinding: command.keybinding,
-          pluginId: info.id,
+          pluginId: info.id
         })
       }
     }
@@ -61,7 +61,7 @@ export class CommandsService extends Service {
         title: entry.command.title ?? declared?.title ?? id,
         category: entry.command.category ?? declared?.category,
         keybinding: entry.command.keybinding ?? declared?.keybinding,
-        pluginId: entry.owner ?? declared?.pluginId,
+        pluginId: entry.owner ?? declared?.pluginId
       })
     }
     return [...result.values()]

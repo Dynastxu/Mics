@@ -93,7 +93,7 @@ export function joinBase(base: string | undefined, relative: string): string {
  */
 export function normalizeLoaderLibraries(
   libraries: VersionLibrary[],
-  fallbackBase: string,
+  fallbackBase: string
 ): VersionLibrary[] {
   const normalized: VersionLibrary[] = []
   for (const library of libraries) {
@@ -111,18 +111,15 @@ export function normalizeLoaderLibraries(
           path: relative,
           // Fabric 的 profile 把 sha1 / size 直接放在库条目上
           sha1: artifact?.sha1 || library.sha1 || '',
-          size: artifact?.size ?? library.size ?? 0,
-        },
-      },
+          size: artifact?.size ?? library.size ?? 0
+        }
+      }
     })
   }
   return normalized
 }
 
-function mergeLibraries(
-  parent: VersionLibrary[],
-  child: VersionLibrary[],
-): VersionLibrary[] {
+function mergeLibraries(parent: VersionLibrary[], child: VersionLibrary[]): VersionLibrary[] {
   const childNames = new Set(child.map((library) => library.name))
   const merged: VersionLibrary[] = []
   const seen = new Set<string>()
@@ -141,12 +138,12 @@ function mergeLibraries(
 
 function mergeArguments(
   parent: VersionArguments | undefined,
-  child: VersionArguments | undefined,
+  child: VersionArguments | undefined
 ): VersionArguments | undefined {
   if (!parent && !child) return undefined
   return {
     jvm: [...(parent?.jvm ?? []), ...(child?.jvm ?? [])],
-    game: [...(parent?.game ?? []), ...(child?.game ?? [])],
+    game: [...(parent?.game ?? []), ...(child?.game ?? [])]
   }
 }
 
@@ -162,7 +159,7 @@ export function stripClientChecksum(version: VersionDetail): VersionDetail {
   if (!client?.url) return version
   return {
     ...version,
-    downloads: { ...version.downloads, client: { url: client.url } },
+    downloads: { ...version.downloads, client: { url: client.url } }
   }
 }
 
@@ -188,6 +185,6 @@ export function mergeVersion(parent: VersionDetail, child: VersionDetail): Versi
     logging: child.logging ?? parent.logging,
     javaVersion: child.javaVersion ?? parent.javaVersion,
     type: child.type ?? parent.type,
-    releaseTime: child.releaseTime ?? parent.releaseTime,
+    releaseTime: child.releaseTime ?? parent.releaseTime
   }
 }

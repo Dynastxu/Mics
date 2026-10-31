@@ -22,7 +22,7 @@ watch(
     await nextTick()
     // 默认焦点放在「取消」上：删除是不可撤销操作，不应让回车直接触发
     cancelButton.value?.focus()
-  },
+  }
 )
 
 function cancel(): void {
@@ -55,7 +55,9 @@ function confirm(): void {
         <p class="instance-delete__text">
           将删除「{{ name }}」的整个文件夹，包括存档、Mod、配置与日志。此操作不可恢复。
         </p>
-        <p v-if="running" class="instance-delete__warning">该实例正在运行，删除前会先结束游戏进程。</p>
+        <p v-if="running" class="instance-delete__warning">
+          该实例正在运行，删除前会先结束游戏进程。
+        </p>
 
         <div class="instance-delete__actions">
           <button

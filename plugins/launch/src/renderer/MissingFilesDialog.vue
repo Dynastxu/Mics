@@ -23,7 +23,7 @@ watch(
     if (!open) return
     await nextTick()
     confirmButton.value?.focus()
-  },
+  }
 )
 </script>
 

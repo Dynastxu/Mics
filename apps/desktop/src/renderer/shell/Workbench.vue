@@ -47,7 +47,7 @@ function onKeydown(event: KeyboardEvent): void {
   }
 
   const command = store.commands.find(
-    (item) => item.keybinding && matchesBinding(item.keybinding, event),
+    (item) => item.keybinding && matchesBinding(item.keybinding, event)
   )
   if (command) {
     event.preventDefault()

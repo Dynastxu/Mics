@@ -19,7 +19,7 @@ const PACKS: ResourcepackItem[] = [
     summary: '低饱和的 GUI 与字体，适合长时间游玩。',
     downloads: '22 万',
     versions: ['1.21.4', '1.21.1', '1.20.1'],
-    resolution: '16×',
+    resolution: '16×'
   },
   {
     id: 'realistic-64',
@@ -28,7 +28,7 @@ const PACKS: ResourcepackItem[] = [
     summary: '保留原版风格的高分辨率材质。',
     downloads: '48 万',
     versions: ['1.21.4', '1.20.1'],
-    resolution: '64×',
+    resolution: '64×'
   },
   {
     id: 'medieval',
@@ -37,7 +37,7 @@ const PACKS: ResourcepackItem[] = [
     summary: '石砖、木材与布料的复古配色。',
     downloads: '31 万',
     versions: ['1.21.1', '1.20.1'],
-    resolution: '32×',
+    resolution: '32×'
   },
   {
     id: 'low-end',
@@ -46,7 +46,7 @@ const PACKS: ResourcepackItem[] = [
     summary: '把复杂方块压缩成简单色块，帧数更稳。',
     downloads: '17 万',
     versions: ['1.21.4', '1.21.1'],
-    resolution: '16×',
+    resolution: '16×'
   },
   {
     id: 'minimal-sky',
@@ -55,7 +55,7 @@ const PACKS: ResourcepackItem[] = [
     summary: '去掉云层噪点，只保留渐变与星点。',
     downloads: '11 万',
     versions: ['1.21.4'],
-    resolution: '32×',
+    resolution: '32×'
   },
   {
     id: 'hand-font',
@@ -64,8 +64,8 @@ const PACKS: ResourcepackItem[] = [
     summary: '重新绘制全部界面文字，更适合小屏。',
     downloads: '8.4 万',
     versions: ['1.21.4', '1.21.1', '1.20.1'],
-    resolution: '16×',
-  },
+    resolution: '16×'
+  }
 ]
 
 const VERSIONS = ['1.21.4', '1.21.1', '1.20.1']
@@ -82,7 +82,7 @@ const visible = computed(() => {
     (pack) =>
       (gameVersion.value === 'all' || pack.versions.includes(gameVersion.value)) &&
       (resolution.value === 'all' || pack.resolution === resolution.value) &&
-      (!keyword || `${pack.name} ${pack.author} ${pack.summary}`.toLowerCase().includes(keyword)),
+      (!keyword || `${pack.name} ${pack.author} ${pack.summary}`.toLowerCase().includes(keyword))
   )
 })
 </script>

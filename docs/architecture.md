@@ -40,29 +40,29 @@
 
 ## 2. Cordis 映射
 
-| Cordis 概念 | 在本项目中的职责 |
-| --- | --- |
-| `Context` | 一切服务的容器；渲染进程也有一棵独立的 Context 树 |
-| `ctx.plugin(plugin, config)` | 插件激活；返回 `Fiber`，await 即等待激活完成 |
-| `ctx.effect(() => cleanup)` | 注册页面/命令/IPC 时的回收钩子；插件卸载自动执行 |
-| `ctx.inject(deps, cb)` | 依赖多个服务后再执行（内核注册系统 RPC 时用到）；服务缺失时插件停在 waiting |
-| `ctx.waterfall('ipc/before', …)` | RPC 派发前的拦截链：权限、审计、二次确认挂在插件侧，内核不再逐条加 if |
-| `Service` 子类 | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions` / `capabilities` / `configuration`；插件也能提供（`mics.logger` → `ctx.logs`） |
-| `ctx.isolate()` | 后续用于单插件服务隔离（例如独立日志命名空间） |
-| `ctx.on/emit` | 主进程内部事件；每个 Mics 事件在 `@mics/sdk` 的 `EVENT_MODES` 里声明派发模式，见下文「事件派发模式」 |
-| `ctx.registry` | 插件面板可据此列出所有 fiber（后续扩展点） |
+| Cordis 概念                      | 在本项目中的职责                                                                                                                                    |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Context`                        | 一切服务的容器；渲染进程也有一棵独立的 Context 树                                                                                                   |
+| `ctx.plugin(plugin, config)`     | 插件激活；返回 `Fiber`，await 即等待激活完成                                                                                                        |
+| `ctx.effect(() => cleanup)`      | 注册页面/命令/IPC 时的回收钩子；插件卸载自动执行                                                                                                    |
+| `ctx.inject(deps, cb)`           | 依赖多个服务后再执行（内核注册系统 RPC 时用到）；服务缺失时插件停在 waiting                                                                         |
+| `ctx.waterfall('ipc/before', …)` | RPC 派发前的拦截链：权限、审计、二次确认挂在插件侧，内核不再逐条加 if                                                                               |
+| `Service` 子类                   | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions` / `capabilities` / `configuration`；插件也能提供（`mics.logger` → `ctx.logs`） |
+| `ctx.isolate()`                  | 后续用于单插件服务隔离（例如独立日志命名空间）                                                                                                      |
+| `ctx.on/emit`                    | 主进程内部事件；每个 Mics 事件在 `@mics/sdk` 的 `EVENT_MODES` 里声明派发模式，见下文「事件派发模式」                                                |
+| `ctx.registry`                   | 插件面板可据此列出所有 fiber（后续扩展点）                                                                                                          |
 
 ### 事件派发模式
 
 cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式再派发：
 
-| 模式 | 语义 | 当前事件 |
-| --- | --- | --- |
-| `emit` | 通知，同步执行，返回值丢弃 | `plugins/changed`、`plugin/activated`、`plugin/deactivated`、`ipc/after`、`capability/changed` |
-| `bail` | 同步投票，第一个非空返回值即结论 | `plugin/beforeActivate`（审批：`{ allow: false, reason }` 拒绝激活） |
-| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认） |
-| `serial` | 串行等待，遇到第一个结论即停止 | 暂无（需要异步审批时使用） |
-| `parallel` | 扇出，等全部监听器完成 | 暂无（纯并行的收尾工作使用） |
+| 模式        | 语义                                      | 当前事件                                                                                       |
+| ----------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `emit`      | 通知，同步执行，返回值丢弃                | `plugins/changed`、`plugin/activated`、`plugin/deactivated`、`ipc/after`、`capability/changed` |
+| `bail`      | 同步投票，第一个非空返回值即结论          | `plugin/beforeActivate`（审批：`{ allow: false, reason }` 拒绝激活）                           |
+| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认）                                                     |
+| `serial`    | 串行等待，遇到第一个结论即停止            | 暂无（需要异步审批时使用）                                                                     |
+| `parallel`  | 扇出，等全部监听器完成                    | 暂无（纯并行的收尾工作使用）                                                                   |
 
 声明集中在 `packages/sdk/src/contract/events.ts`：
 
@@ -104,11 +104,11 @@ Cordis 的 Service 方法在被插件调用时，`this.ctx` 会指向**调用方
 Service 是「一个名字一个实现」，而有些能力需要**多份实现**（本机 / 沙箱 / 远程）。
 这类能力走 `ctx.capabilities`：
 
-| 角色 | 位置 | 例子 |
-| --- | --- | --- |
-| definition | `@mics/sdk` 的 `capability.ts` / `account.ts`：能力名 + 接口 | `SHELL_EXECUTE` / `FILE_TRANSFER` / `AUTH_CREDENTIALS` |
-| provider | 插件在 `apply()` 里 `ctx.capabilities.provide(name, impl, { priority })` | `mics.shell` 提供本机进程，`download-manager` 提供本机传输，`mics.account` 提供启动凭据 |
-| consumer | `ctx.capabilities.require(name)` | `mics.launch` 启动游戏、下载管线传输文件 |
+| 角色       | 位置                                                                     | 例子                                                                                    |
+| ---------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| definition | `@mics/sdk` 的 `capability.ts` / `account.ts`：能力名 + 接口             | `SHELL_EXECUTE` / `FILE_TRANSFER` / `AUTH_CREDENTIALS`                                  |
+| provider   | 插件在 `apply()` 里 `ctx.capabilities.provide(name, impl, { priority })` | `mics.shell` 提供本机进程，`download-manager` 提供本机传输，`mics.account` 提供启动凭据 |
+| consumer   | `ctx.capabilities.require(name)`                                         | `mics.launch` 启动游戏、下载管线传输文件                                                |
 
 选择规则是「priority 高的赢，同优先级后注册的赢」。因此沙箱插件只要注册同名能力并给
 更高 priority，就能整体替换执行方式，调用方一行不用改。`provide()` 绑定在提供方 fiber
@@ -211,13 +211,13 @@ app.whenReady()
 
 窗口是无边框的（`frame: false`），系统标题栏、菜单栏、窗口按钮都不显示：
 
-| 关注点 | 实现 |
-| --- | --- |
-| 系统菜单 | bootstrap 里 `Menu.setApplicationMenu(null)`；开发/预览构建下用 F12（或 `Ctrl+Shift+I`）开 DevTools、`Ctrl+R` 重载渲染进程 |
-| 标题栏 | `shell/WindowTitleBar.vue`；拖动区用 `-webkit-app-region: drag` 交给系统，双击最大化、贴边吸附都是系统行为 |
-| 窗口按钮 | 按钮区 `-webkit-app-region: no-drag`，点击经 `window.mics.windowControls` → IPC → 主进程 `BrowserWindow` |
-| 最大化状态 | 主进程监听 `maximize` / `unmaximize` 推给渲染进程，标题栏据此在「最大化 / 还原」之间切换图标 |
-| 窗口尺寸 | `main/windowSizing.ts`：最小 640×420，启动尺寸不超过当前工作区；状态栏「命令」右侧有一个拖动区，按住拖动即可缩放窗口（左上角固定，只受最小尺寸限制） |
+| 关注点     | 实现                                                                                                                                                 |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 系统菜单   | bootstrap 里 `Menu.setApplicationMenu(null)`；开发/预览构建下用 F12（或 `Ctrl+Shift+I`）开 DevTools、`Ctrl+R` 重载渲染进程                           |
+| 标题栏     | `shell/WindowTitleBar.vue`；拖动区用 `-webkit-app-region: drag` 交给系统，双击最大化、贴边吸附都是系统行为                                           |
+| 窗口按钮   | 按钮区 `-webkit-app-region: no-drag`，点击经 `window.mics.windowControls` → IPC → 主进程 `BrowserWindow`                                             |
+| 最大化状态 | 主进程监听 `maximize` / `unmaximize` 推给渲染进程，标题栏据此在「最大化 / 还原」之间切换图标                                                         |
+| 窗口尺寸   | `main/windowSizing.ts`：最小 640×420，启动尺寸不超过当前工作区；状态栏「命令」右侧有一个拖动区，按住拖动即可缩放窗口（左上角固定，只受最小尺寸限制） |
 
 壳专用的 IPC 通道：
 
@@ -274,13 +274,13 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 下载页里的「筛选按钮 / 筛选面板 / 通用列表」是跨页面的通用件，独立成
 `packages/ui`（`@mics/ui`）：
 
-| 组件 | 职责 |
-| --- | --- |
-| `FilterButton` | 漏斗按钮 + 非默认筛选圆点，`v-model:open` 控制面板 |
-| `FilterPanel` | 按 `FilterGroup[]` 渲染分组胶囊；`single` 单选、`multi` 多选，`exclusive` 选项（「全部」）与其它互斥 |
-| `DataList` | 通用行渲染（主文本 + 徽标 + 次要文本）；`role="button"` 整行进入，`role="radio"` 单选并显示勾，`role="static"` 仅展示；`#row` 插槽自定义行 |
-| `DataBrowser` | 搜索 + 筛选 + 计数标题 + `DataList`；内部持有查询与筛选状态，调用方只给 `items` 与 `@select` |
-| `ToggleSwitch` | 开关按钮，`v-model` 布尔值；用 `role="switch"` 与 `aria-checked` 表达状态 |
+| 组件           | 职责                                                                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FilterButton` | 漏斗按钮 + 非默认筛选圆点，`v-model:open` 控制面板                                                                                         |
+| `FilterPanel`  | 按 `FilterGroup[]` 渲染分组胶囊；`single` 单选、`multi` 多选，`exclusive` 选项（「全部」）与其它互斥                                       |
+| `DataList`     | 通用行渲染（主文本 + 徽标 + 次要文本）；`role="button"` 整行进入，`role="radio"` 单选并显示勾，`role="static"` 仅展示；`#row` 插槽自定义行 |
+| `DataBrowser`  | 搜索 + 筛选 + 计数标题 + `DataList`；内部持有查询与筛选状态，调用方只给 `items` 与 `@select`                                               |
+| `ToggleSwitch` | 开关按钮，`v-model` 布尔值；用 `role="switch"` 与 `aria-checked` 表达状态                                                                  |
 
 为什么是包而不是「组件插件」：插件各自独立打包，运行时组件注册表拿不到 props 类型，
 也保证不了加载顺序；静态引入让编译期就能校验，每个插件也只打包用到的组件。
@@ -295,13 +295,13 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 - 渲染端插件激活时也会同步内核状态（`plugins/activate`），保持主进程与渲染进程的生命周期一致。
 - **状态机**（目录是「已安装」的唯一事实来源）：
 
-  | 状态 | 含义 | 界面 |
-  | --- | --- | --- |
-  | 启用 | 目录在、fiber active | 开关打开 |
-  | 等待依赖 | 目录在、fiber pending：`inject` 的服务没人提供 | 徽标「等待依赖」+ 缺哪些服务 |
-  | 禁用 | 目录在、代码停止，状态写入 `userData/disabled-plugins.json` | 开关关闭 |
-  | 失败 | 目录在、导入或 `apply` 抛错 | 红色徽标 + 错误 |
-  | 未安装 | 目录不存在 | **不显示**（不是第五种开关） |
+  | 状态     | 含义                                                        | 界面                         |
+  | -------- | ----------------------------------------------------------- | ---------------------------- |
+  | 启用     | 目录在、fiber active                                        | 开关打开                     |
+  | 等待依赖 | 目录在、fiber pending：`inject` 的服务没人提供              | 徽标「等待依赖」+ 缺哪些服务 |
+  | 禁用     | 目录在、代码停止，状态写入 `userData/disabled-plugins.json` | 开关关闭                     |
+  | 失败     | 目录在、导入或 `apply` 抛错                                 | 红色徽标 + 错误              |
+  | 未安装   | 目录不存在                                                  | **不显示**（不是第五种开关） |
 
 - **三种状态与 waiting 的区别**：`PluginStatus` 里 `waiting` 不是安装状态，而是「插件已挂载、
   但 `inject` 的服务没出现」。cordis 在服务缺失时只会把 fiber 留在 pending，`ctx.plugin()`
@@ -330,14 +330,14 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 `app.getPath('userData')`（Windows 上是 `%APPDATA%\Mics\`，目录名由 `productName` 决定）
 是唯一的可写根：
 
-| 目录 | 内容 | 归属 |
-| --- | --- | --- |
-| `.minecraft/` | 游戏根，结构对齐原版启动器：`versions/`、`libraries/`、`assets/`，见下 | 下载管线（写）/ 启动管线（读） |
-| `cache/downloads/` | 按 URL / sha1 复用的下载缓存；大文件分段的断点状态以 `.part.segments.json` 与 `.part` 相邻存放 | 下载管线 |
-| `plugins/` | 第三方插件本体 | 插件管理 |
-| `logs/` | 每次启动一个 `mics-<时间>.log` | 日志插件 |
-| `profiles/` | `boot.config.json` 指向的 profile | 内核 |
-| `disabled-plugins.json`、各插件 JSON | 插件开关与 `ctx.storage` 数据 | 内核 / 各插件 |
+| 目录                                 | 内容                                                                                           | 归属                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------ |
+| `.minecraft/`                        | 游戏根，结构对齐原版启动器：`versions/`、`libraries/`、`assets/`，见下                         | 下载管线（写）/ 启动管线（读） |
+| `cache/downloads/`                   | 按 URL / sha1 复用的下载缓存；大文件分段的断点状态以 `.part.segments.json` 与 `.part` 相邻存放 | 下载管线                       |
+| `plugins/`                           | 第三方插件本体                                                                                 | 插件管理                       |
+| `logs/`                              | 每次启动一个 `mics-<时间>.log`                                                                 | 日志插件                       |
+| `profiles/`                          | `boot.config.json` 指向的 profile                                                              | 内核                           |
+| `disabled-plugins.json`、各插件 JSON | 插件开关与 `ctx.storage` 数据                                                                  | 内核 / 各插件                  |
 
 游戏数据与应用数据分开放：`.minecraft` 可以整目录备份或搬到别的盘，而 `plugins` /
 `logs` / `profiles` / `cache` 是启动器自己的东西。插件在根下新增目录前先确认没有
@@ -438,13 +438,13 @@ mtime；`.part` / `.part.segments.json` 属于在途传输，不计入占用也�
 
 ### 与原版 / PCL 的对照
 
-| | 原版启动器 / PCL | 本项目 |
-| --- | --- | --- |
-| 身份的键 | 版本名，`versions/<版本名>` 天然唯一 | 实例名，同一版本可以有多个实例 |
-| 版本档案 | `.minecraft/versions/<版本>/` | 实例根，`<版本 id>.json` + `.jar` |
-| 游戏目录 | `.minecraft`（隔离时是版本目录本身） | 实例根（同时是版本目录） |
-| `libraries` / `assets` | `.minecraft` 根一份，所有版本共享 | 用户数据根一份，所有实例共享 |
-| 纹理 | 在各自的 `client.jar` 里，跨版本不共享 | 同左 |
+|                        | 原版启动器 / PCL                       | 本项目                            |
+| ---------------------- | -------------------------------------- | --------------------------------- |
+| 身份的键               | 版本名，`versions/<版本名>` 天然唯一   | 实例名，同一版本可以有多个实例    |
+| 版本档案               | `.minecraft/versions/<版本>/`          | 实例根，`<版本 id>.json` + `.jar` |
+| 游戏目录               | `.minecraft`（隔离时是版本目录本身）   | 实例根（同时是版本目录）          |
+| `libraries` / `assets` | `.minecraft` 根一份，所有版本共享      | 用户数据根一份，所有实例共享      |
+| 纹理                   | 在各自的 `client.jar` 里，跨版本不共享 | 同左                              |
 
 一句话：**PCL 的版本隔离形态，把共享层再上提一级**——版本目录就是游戏目录，而
 `libraries` / `assets` 不随实例走。同一版本装第二个实例时，只有版本 json、客户端
@@ -452,13 +452,13 @@ jar 与 `natives` 会重新落盘，资源对象和库直接复用。
 
 ## 12. 路线图
 
-| 阶段 | 内容 |
-| --- | --- |
-| M0 | 当前骨架：双端 Cordis、内核服务、导航贡献点、懒激活、示例页面、构建脚本 |
-| M1 | 插件依赖图校验（已落地）、错误隔离面板、命令快捷键自定义、配置贡献点（带持久化） |
-| M2 | 下载源与安装管线、实例管理、工作台布局可扩展（多面板/分栏） |
-| M3 | 渲染端沙箱、性能追踪 |
-| M4 | electron-builder 打包、插件作为 extraResources |
+| 阶段 | 内容                                                                             |
+| ---- | -------------------------------------------------------------------------------- |
+| M0   | 当前骨架：双端 Cordis、内核服务、导航贡献点、懒激活、示例页面、构建脚本          |
+| M1   | 插件依赖图校验（已落地）、错误隔离面板、命令快捷键自定义、配置贡献点（带持久化） |
+| M2   | 下载源与安装管线、实例管理、工作台布局可扩展（多面板/分栏）                      |
+| M3   | 渲染端沙箱、性能追踪                                                             |
+| M4   | electron-builder 打包、插件作为 extraResources                                   |
 
 > 热插拔（安装 / 启用 / 禁用 / 重载 / 卸载，含卸载脚本）已在 M0 之后落地，
 > 见 [plugin-manager.md](plugin-manager.md)。

@@ -50,9 +50,11 @@ async function load(): Promise<void> {
 async function setActive(account: AccountSummary): Promise<void> {
   error.value = ''
   try {
-    apply(await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/setActive', {
-      id: account.id,
-    }))
+    apply(
+      await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/setActive', {
+        id: account.id
+      })
+    )
   } catch (cause) {
     error.value = messageOf(cause)
   }
@@ -62,9 +64,11 @@ async function remove(account: AccountSummary): Promise<void> {
   confirming.value = ''
   error.value = ''
   try {
-    apply(await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/remove', {
-      id: account.id,
-    }))
+    apply(
+      await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/remove', {
+        id: account.id
+      })
+    )
   } catch (cause) {
     error.value = messageOf(cause)
   }
@@ -136,17 +140,25 @@ onUnmounted(() => {
               {{ account.name }}
               <span class="mics-badge">{{ ACCOUNT_KIND_LABELS[account.kind] }}</span>
               <span v-if="account.id === activeId" class="mics-badge mics-badge--accent">当前</span>
-              <span v-if="!account.authorized" class="mics-badge account__expired">需要重新登录</span>
+              <span v-if="!account.authorized" class="mics-badge account__expired"
+                >需要重新登录</span
+              >
             </div>
             <div class="mics-list__meta mics-mono">{{ account.uuid }}</div>
           </div>
 
           <div class="account__actions">
             <template v-if="confirming === account.id">
-              <button class="mics-button mics-button--danger mics-button--small" @click="remove(account)">
+              <button
+                class="mics-button mics-button--danger mics-button--small"
+                @click="remove(account)"
+              >
                 移除
               </button>
-              <button class="mics-button mics-button--ghost mics-button--small" @click="confirming = ''">
+              <button
+                class="mics-button mics-button--ghost mics-button--small"
+                @click="confirming = ''"
+              >
                 取消
               </button>
             </template>

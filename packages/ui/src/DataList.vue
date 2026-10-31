@@ -23,8 +23,8 @@ const props = withDefaults(
     selectedIds: () => [],
     actionLabel: '',
     emptyText: '没有匹配的数据',
-    mono: true,
-  },
+    mono: true
+  }
 )
 
 const emit = defineEmits<{ select: [id: string] }>()
@@ -73,12 +73,7 @@ function actionText(item: ListRow): string {
         <!-- 左侧：自定义插槽 > 图片/占位（保证行间对齐） -->
         <slot name="left" :item="item" :index="index">
           <template v-if="hasAnyImg">
-            <img
-              v-if="item.img"
-              :src="item.img"
-              :alt="item.imgAlt ?? ''"
-              class="mics-list__img"
-            />
+            <img v-if="item.img" :src="item.img" :alt="item.imgAlt ?? ''" class="mics-list__img" />
             <span v-else class="mics-list__img mics-list__img--ghost" />
           </template>
         </slot>

@@ -19,7 +19,7 @@ const SHADERS: ShaderItem[] = [
     summary: '偏暖的色调与柔和阴影，白天观感最舒服。',
     downloads: '36 万',
     versions: ['1.21.4', '1.21.1', '1.20.1'],
-    loader: 'Iris',
+    loader: 'Iris'
   },
   {
     id: 'realistic-water',
@@ -28,7 +28,7 @@ const SHADERS: ShaderItem[] = [
     summary: '实时反射与折射，水面会随天气变化。',
     downloads: '29 万',
     versions: ['1.21.4', '1.20.1'],
-    loader: 'Iris',
+    loader: 'Iris'
   },
   {
     id: 'vintage-film',
@@ -37,7 +37,7 @@ const SHADERS: ShaderItem[] = [
     summary: '颗粒、暗角与轻微色散，电影感滤镜。',
     downloads: '14 万',
     versions: ['1.21.4', '1.21.1'],
-    loader: 'OptiFine',
+    loader: 'OptiFine'
   },
   {
     id: 'plain-light',
@@ -46,7 +46,7 @@ const SHADERS: ShaderItem[] = [
     summary: '只做方向光与雾，几乎不增加显卡负担。',
     downloads: '41 万',
     versions: ['1.21.4', '1.21.1', '1.20.1'],
-    loader: 'Iris',
+    loader: 'Iris'
   },
   {
     id: 'starlight',
@@ -55,7 +55,7 @@ const SHADERS: ShaderItem[] = [
     summary: '加强星空与月亮，夜晚有体积光。',
     downloads: '19 万',
     versions: ['1.21.4'],
-    loader: 'Iris',
+    loader: 'Iris'
   },
   {
     id: 'rainy',
@@ -64,8 +64,8 @@ const SHADERS: ShaderItem[] = [
     summary: '雨滴、积水与湿滑反光，氛围更沉浸。',
     downloads: '9.7 万',
     versions: ['1.21.1', '1.20.1'],
-    loader: 'OptiFine',
-  },
+    loader: 'OptiFine'
+  }
 ]
 
 const VERSIONS = ['1.21.4', '1.21.1', '1.20.1']
@@ -83,7 +83,7 @@ const visible = computed(() => {
       (gameVersion.value === 'all' || shader.versions.includes(gameVersion.value)) &&
       (loader.value === 'all' || shader.loader === loader.value) &&
       (!keyword ||
-        `${shader.name} ${shader.author} ${shader.summary}`.toLowerCase().includes(keyword)),
+        `${shader.name} ${shader.author} ${shader.summary}`.toLowerCase().includes(keyword))
   )
 })
 </script>

@@ -5,11 +5,11 @@
 
 ## 1. 三种状态，界面只显示两种
 
-| 状态 | 含义 | 文件 | 主进程 | 页面 | 界面 |
-| --- | --- | --- | --- | --- | --- |
-| **启用** | 正在使用 | 在 | 运行 | 显示 | 显示，开关打开 |
-| **禁用** | 已安装但不用 | 在 | 停止 | 隐藏 | 显示，开关关闭 |
-| **未安装** | 已卸载 | 不在 | 无 | 无 | **不显示** |
+| 状态       | 含义         | 文件 | 主进程 | 页面 | 界面           |
+| ---------- | ------------ | ---- | ------ | ---- | -------------- |
+| **启用**   | 正在使用     | 在   | 运行   | 显示 | 显示，开关打开 |
+| **禁用**   | 已安装但不用 | 在   | 停止   | 隐藏 | 显示，开关关闭 |
+| **未安装** | 已卸载       | 不在 | 无     | 无   | **不显示**     |
 
 「未安装」是内部状态，不是列表里的一行。插件管理页只列**已安装**的插件，
 卸载后直接从列表消失；将来做插件市场时，才在市场页展示「未安装」。
@@ -26,15 +26,15 @@ pending（代码没有执行）。它不是安装状态，界面只在插件管�
 
 失败会带上 `stage`，因为不同阶段的可恢复动作不同：
 
-| stage | 含义 | 界面给的恢复动作 |
-| --- | --- | --- |
-| `manifest` | 清单非法 / 入口缺失 | 修正 `plugin.json` 或重新安装 |
-| `import` | 主进程或页面入口导入失败 | 重新构建后「重载」 |
-| `apply` | cordis 插件启动时抛错 | 修代码后「重载」 |
-| `dependency` | 清单依赖或 `inject` 服务未满足 | 「查看依赖」并启用依赖插件后重载 |
-| `timeout` | 停止超时，旧代码可能还在跑 | **只能重启应用**（`restartRequired` 会阻止再次激活/替换文件） |
-| `renderer` | 渲染端加载失败 | 修页面产物后「重载」 |
-| `policy` | 被策略插件拒绝激活 | 查看日志或调整策略 |
+| stage        | 含义                           | 界面给的恢复动作                                              |
+| ------------ | ------------------------------ | ------------------------------------------------------------- |
+| `manifest`   | 清单非法 / 入口缺失            | 修正 `plugin.json` 或重新安装                                 |
+| `import`     | 主进程或页面入口导入失败       | 重新构建后「重载」                                            |
+| `apply`      | cordis 插件启动时抛错          | 修代码后「重载」                                              |
+| `dependency` | 清单依赖或 `inject` 服务未满足 | 「查看依赖」并启用依赖插件后重载                              |
+| `timeout`    | 停止超时，旧代码可能还在跑     | **只能重启应用**（`restartRequired` 会阻止再次激活/替换文件） |
+| `renderer`   | 渲染端加载失败                 | 修页面产物后「重载」                                          |
+| `policy`     | 被策略插件拒绝激活             | 查看日志或调整策略                                            |
 
 `PluginInfo.failure = { stage, message, at }` 是完整诊断；`PluginInfo.error` 保留为
 同一条短消息。停止超时的插件会同时带上 `PluginInfo.restartRequired = true`：
@@ -59,13 +59,13 @@ pending（代码没有执行）。它不是安装状态，界面只在插件管�
 
 ## 2. 内置与第三方
 
-| | 内置 | 第三方 |
-| --- | --- | --- |
-| 目录 | 应用安装目录 | 用户数据目录 |
-| 来源标记 | `source: 'builtin'` | `source: 'user'` |
-| 卸载 | **不可**（界面没有按钮，宿主也拒绝） | 可以 |
-| 禁用 | 可以 | 可以 |
-| 升级 | 跟随应用版本 | 重新安装同一 id 即升级 |
+|          | 内置                                 | 第三方                 |
+| -------- | ------------------------------------ | ---------------------- |
+| 目录     | 应用安装目录                         | 用户数据目录           |
+| 来源标记 | `source: 'builtin'`                  | `source: 'user'`       |
+| 卸载     | **不可**（界面没有按钮，宿主也拒绝） | 可以                   |
+| 禁用     | 可以                                 | 可以                   |
+| 升级     | 跟随应用版本                         | 重新安装同一 id 即升级 |
 
 `core` / `essential` 标记的插件（内核、插件管理、日志等）**连禁用也不行**：
 禁用开关在界面上锁住，宿主层也会拒绝，避免用户把自己锁在门外。
@@ -143,10 +143,10 @@ export default async function uninstall(context: UninstallScriptContext): Promis
 
 ### 4.2 脚本失败怎么办
 
-| 失败点 | 处理 | 界面可做的 |
-| --- | --- | --- |
+| 失败点                 | 处理                                       | 界面可做的                                |
+| ---------------------- | ------------------------------------------ | ----------------------------------------- |
 | 脚本抛错 / 超时（10s） | **中止卸载**，插件保持「已禁用」，目录保留 | 重试 / **强制卸载**（跳过清理，只删本体） |
-| 删除目录失败 | 同上，插件保持「已禁用」 | 重试（需要先解决文件占用） |
+| 删除目录失败           | 同上，插件保持「已禁用」                   | 重试（需要先解决文件占用）                |
 
 卸载失败时插件状态一定是「已禁用」且已写入 `disabled-plugins.json`：它不会在下次启动时
 自己跑起来，用户也有机会重试或强制删除。这样既不会被一个坏脚本卡死，也不会悄悄留下孤儿数据。
@@ -162,12 +162,12 @@ export default async function uninstall(context: UninstallScriptContext): Promis
   → 刷新界面和状态
 ```
 
-| 操作 | 改文件？ | 说明 |
-| --- | --- | --- |
-| 安装 | 新增目录 | 装完禁用 |
-| 卸载 | 删除目录 | 先停再删 |
+| 操作          | 改文件？ | 说明     |
+| ------------- | -------- | -------- |
+| 安装          | 新增目录 | 装完禁用 |
+| 卸载          | 删除目录 | 先停再删 |
 | 升级 / 改代码 | 覆盖目录 | 重载即可 |
-| 启用 / 禁用 | 不改 | 只切开关 |
+| 启用 / 禁用   | 不改     | 只切开关 |
 
 第一版不做 HMR：插件是单文件 bundle，卸载再加载就够了。渲染端的 `import()` 带
 `?rev=<修订号>` 绕过 ESM 模块缓存，样式链接同样带修订号。这里刻意不用 `v=`：Vite
@@ -180,19 +180,19 @@ dev server 会把 `v=` 当成依赖版本、回一年期 `immutable` 缓存，�
 
 ## 6. 运行时分工
 
-| 层 | 负责 | 在哪 |
-| --- | --- | --- |
-| 三态 / 内置保护 / 安装 / 卸载 / 持久化 | 内核 `PluginsService` | `plugins/kernel/src/services/plugins.ts` |
-| 页面与样式卸载、缓存绕过 | 渲染端 `PluginsService` | `apps/desktop/src/renderer/runtime/services/plugins.ts` |
-| 选文件夹、确认框、风险提示 | 插件管理页主进程部分 | `plugins/plugin-inspector/src/main.ts` |
-| 安装事务（暂存 / 原子替换 / 校验） | `@mics/plugin-loader` | `packages/plugin-loader/src/install.ts` |
-| 卸载脚本执行与超时 | `@mics/plugin-loader` | `packages/plugin-loader/src/uninstall.ts` |
-| `mics-plugin://` id → 目录映射 | bootstrap | `apps/desktop/src/main/protocol.ts` |
-| 清单扫描 / 校验（含配置 schema） | `@mics/plugin-loader` | `packages/plugin-loader/src/discovery.ts` |
-| 配置 schema / 默认值 / 校验 | `StorageService` + `ConfigurationService` | `plugins/kernel/src/services/{storage,configuration}.ts` |
-| 配置编辑界面 | 插件管理页的插件详情（`PluginSettingsPanel`）；声明 `settingsView` 的插件跳到自己的页面 | `plugins/plugin-inspector/src/renderer/{InspectorView,PluginSettingsPanel}.vue` |
-| profile 读取与启用集合合并 | bootstrap + `PluginsService` | `apps/desktop/src/main/config.ts`、`plugins/kernel/src/services/plugins.ts` |
-| dev 清理审计 | 内核 / 渲染端 cleanupAudit | `plugins/kernel/src/cleanupAudit.ts`、`apps/desktop/src/renderer/runtime/cleanupAudit.ts` |
+| 层                                     | 负责                                                                                    | 在哪                                                                                      |
+| -------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 三态 / 内置保护 / 安装 / 卸载 / 持久化 | 内核 `PluginsService`                                                                   | `plugins/kernel/src/services/plugins.ts`                                                  |
+| 页面与样式卸载、缓存绕过               | 渲染端 `PluginsService`                                                                 | `apps/desktop/src/renderer/runtime/services/plugins.ts`                                   |
+| 选文件夹、确认框、风险提示             | 插件管理页主进程部分                                                                    | `plugins/plugin-inspector/src/main.ts`                                                    |
+| 安装事务（暂存 / 原子替换 / 校验）     | `@mics/plugin-loader`                                                                   | `packages/plugin-loader/src/install.ts`                                                   |
+| 卸载脚本执行与超时                     | `@mics/plugin-loader`                                                                   | `packages/plugin-loader/src/uninstall.ts`                                                 |
+| `mics-plugin://` id → 目录映射         | bootstrap                                                                               | `apps/desktop/src/main/protocol.ts`                                                       |
+| 清单扫描 / 校验（含配置 schema）       | `@mics/plugin-loader`                                                                   | `packages/plugin-loader/src/discovery.ts`                                                 |
+| 配置 schema / 默认值 / 校验            | `StorageService` + `ConfigurationService`                                               | `plugins/kernel/src/services/{storage,configuration}.ts`                                  |
+| 配置编辑界面                           | 插件管理页的插件详情（`PluginSettingsPanel`）；声明 `settingsView` 的插件跳到自己的页面 | `plugins/plugin-inspector/src/renderer/{InspectorView,PluginSettingsPanel}.vue`           |
+| profile 读取与启用集合合并             | bootstrap + `PluginsService`                                                            | `apps/desktop/src/main/config.ts`、`plugins/kernel/src/services/plugins.ts`               |
+| dev 清理审计                           | 内核 / 渲染端 cleanupAudit                                                              | `plugins/kernel/src/cleanupAudit.ts`、`apps/desktop/src/renderer/runtime/cleanupAudit.ts` |
 
 ### 6.1 为什么主进程插件也走 `cordis` shim
 
@@ -218,12 +218,12 @@ entry、一个 fiber，禁用即 dispose，重载即 remove + create。没有引
 
 插件管理页点开任一插件后进入它的详情页，显示四栏：
 
-| 栏 | 内容 | 数据来源 |
-| --- | --- | --- |
-| 依赖 | 清单依赖、非内核服务提供方、能力提供方 | `manifest.dependencies` + `fiber.inject` + `capabilities` |
-| 被依赖 | 上面那张图的反向边 | 由「依赖」聚合 |
-| 提供 | 该插件注册的 cordis 服务与能力（含 provider 标签/优先级） | `fiber.provisions` + `capabilities.providers` |
-| 贡献 | RPC、命令、页面、导航分组、状态栏、主题、布局、配置 schema | `IpcService` / `CommandsService` / 清单贡献点 |
+| 栏     | 内容                                                       | 数据来源                                                  |
+| ------ | ---------------------------------------------------------- | --------------------------------------------------------- |
+| 依赖   | 清单依赖、非内核服务提供方、能力提供方                     | `manifest.dependencies` + `fiber.inject` + `capabilities` |
+| 被依赖 | 上面那张图的反向边                                         | 由「依赖」聚合                                            |
+| 提供   | 该插件注册的 cordis 服务与能力（含 provider 标签/优先级）  | `fiber.provisions` + `capabilities.providers`             |
+| 贡献   | RPC、命令、页面、导航分组、状态栏、主题、布局、配置 schema | `IpcService` / `CommandsService` / 清单贡献点             |
 
 底部「未满足」列出这个插件当前拿不到的服务、能力或插件。失败行按 `stage` 显示
 不同按钮：`dependency` → 「查看依赖」，`manifest` → 「重新安装」，

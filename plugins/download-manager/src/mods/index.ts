@@ -11,7 +11,7 @@ import type {
   ModSourceKind,
   ModSummary,
   ModVersion,
-  ModVersionRequest,
+  ModVersionRequest
 } from '@mics/sdk'
 import { MOD_SOURCE_LABELS } from '@mics/sdk'
 import { listModCategories } from './categories'
@@ -20,7 +20,7 @@ import {
   identifyCurseforge,
   projectCurseforge,
   searchCurseforge,
-  versionsCurseforge,
+  versionsCurseforge
 } from './curseforge'
 import { identifyModrinth, projectModrinth, searchModrinth, versionsModrinth } from './modrinth'
 
@@ -69,15 +69,17 @@ export async function searchMods(
   sources: ModSource[],
   request: ModSearchRequest,
   signal: AbortSignal,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): Promise<ModSearchResult> {
   const selected = sources.filter(
-    (source) => source.enabled && (request.source === 'all' || source.kind === request.source),
+    (source) => source.enabled && (request.source === 'all' || source.kind === request.source)
   )
   if (selected.length === 0) {
-    throw new Error(request.source === 'all'
-      ? '未启用任何 Mod 下载源'
-      : `未启用 ${MOD_SOURCE_LABELS[request.source]} 下载源`)
+    throw new Error(
+      request.source === 'all'
+        ? '未启用任何 Mod 下载源'
+        : `未启用 ${MOD_SOURCE_LABELS[request.source]} 下载源`
+    )
   }
 
   const usable = selected.filter(modSourceReady)
@@ -86,11 +88,12 @@ export async function searchMods(
   const limit = Math.min(MAX_FETCH, Math.max(request.pageSize, request.page * request.pageSize))
   const settled = await Promise.allSettled(
     usable.map(async (source) => {
-      const result = source.kind === 'curseforge'
-        ? await searchCurseforge(source, request, signal, limit, kind)
-        : await searchModrinth(source, request, signal, limit, kind)
+      const result =
+        source.kind === 'curseforge'
+          ? await searchCurseforge(source, request, signal, limit, kind)
+          : await searchModrinth(source, request, signal, limit, kind)
       return { source, ...result }
-    }),
+    })
   )
 
   const errors: ModSourceError[] = []
@@ -104,7 +107,7 @@ export async function searchMods(
         errors.push({
           source: source.kind,
           label: source.label.trim() || MOD_SOURCE_LABELS[source.kind],
-          message: sourceErrorMessage(outcome.reason),
+          message: sourceErrorMessage(outcome.reason)
         })
       }
       continue
@@ -118,7 +121,7 @@ export async function searchMods(
   }
 
   const ordered = [...merged.values()].sort(
-    (a, b) => b.downloads - a.downloads || a.name.localeCompare(b.name),
+    (a, b) => b.downloads - a.downloads || a.name.localeCompare(b.name)
   )
   const offset = (request.page - 1) * request.pageSize
 
@@ -128,7 +131,7 @@ export async function searchMods(
     total: Math.min(total, MAX_FETCH),
     page: request.page,
     pageSize: request.pageSize,
-    errors,
+    errors
   }
 }
 
@@ -136,15 +139,16 @@ export async function searchMods(
 export function resolveModSource(
   sources: ModSource[],
   kind: ModSourceKind,
-  sourceApi: string | undefined,
+  sourceApi: string | undefined
 ): ModSource {
   const matching = sources.filter((candidate) => candidate.enabled && candidate.kind === kind)
   if (matching.length === 0) {
     throw new Error(`未启用 ${MOD_SOURCE_LABELS[kind]} 下载源`)
   }
-  const source = (sourceApi
-    ? matching.find((candidate) => modSourceReady(candidate) && candidate.api === sourceApi)
-    : undefined) ?? matching.find(modSourceReady)
+  const source =
+    (sourceApi
+      ? matching.find((candidate) => modSourceReady(candidate) && candidate.api === sourceApi)
+      : undefined) ?? matching.find(modSourceReady)
   if (!source) throw new Error(unavailableMessage(matching[0]!))
   return source
 }
@@ -153,7 +157,7 @@ export async function listModVersions(
   sources: ModSource[],
   request: ModVersionRequest,
   signal: AbortSignal,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): Promise<ModVersion[]> {
   const source = resolveModSource(sources, request.source, request.sourceApi)
   return request.source === 'curseforge'
@@ -171,7 +175,7 @@ export async function loadModProject(
   sources: ModSource[],
   request: ModProjectRequest,
   signal: AbortSignal,
-  kind: ModProjectKind = 'mod',
+  kind: ModProjectKind = 'mod'
 ): Promise<ModSummary> {
   const source = resolveModSource(sources, request.source, request.sourceApi)
   return request.source === 'curseforge'
@@ -188,24 +192,25 @@ export async function loadModProject(
 export async function identifyMods(
   sources: ModSource[],
   files: ModIdentifyFile[],
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<ModIdentity[]> {
   const usable = sources.filter(modSourceReady)
   if (usable.length === 0 || files.length === 0) return []
 
   // Modrinth 优先（与 PCL 的平台优先级一致），其余保持用户配置顺序
   const ordered = [...usable].sort((a, b) => {
-    const rank = (source: ModSource): number => source.kind === 'modrinth' ? 0 : 1
+    const rank = (source: ModSource): number => (source.kind === 'modrinth' ? 0 : 1)
     return rank(a) - rank(b)
   })
 
   const settled = await Promise.allSettled(
     ordered.map(async (source) => {
-      const hits = source.kind === 'modrinth'
-        ? await identifyModrinth(source, files, signal)
-        : await identifyCurseforge(source, files, signal)
+      const hits =
+        source.kind === 'modrinth'
+          ? await identifyModrinth(source, files, signal)
+          : await identifyCurseforge(source, files, signal)
       return { source, hits }
-    }),
+    })
   )
 
   const chosen = new Map<string, ModIdentity>()
@@ -221,7 +226,7 @@ export async function identifyMods(
         sourceLabel: source.label.trim() || MOD_SOURCE_LABELS[source.kind],
         projectId: hit.projectId,
         versionId: hit.versionId,
-        project: hit.project,
+        project: hit.project
       })
     }
   }

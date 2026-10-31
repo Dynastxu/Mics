@@ -42,7 +42,7 @@ export function tagValues(row: ListRow, key: string): string[] {
 export function matchesQuery(
   row: ListRow,
   query: string,
-  searchText?: (row: ListRow) => string,
+  searchText?: (row: ListRow) => string
 ): boolean {
   const keyword = query.trim().toLowerCase()
   if (!keyword) return true
@@ -55,7 +55,7 @@ export function matchesQuery(
         ...(row.badges?.map((b) => b.label) ?? []),
         row.meta,
         ...(row.keywords ?? []),
-        ...Object.keys(row.tags ?? {}).flatMap((key) => tagValues(row, key)),
+        ...Object.keys(row.tags ?? {}).flatMap((key) => tagValues(row, key))
       ]
         .filter(Boolean)
         .join(' ')

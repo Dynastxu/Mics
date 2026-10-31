@@ -10,7 +10,7 @@ import type {
   InstanceNameCheck,
   LoaderKind,
   LoaderSourceKind,
-  LoaderVersion,
+  LoaderVersion
 } from '@mics/sdk'
 
 const ctx = usePluginContext()
@@ -39,7 +39,7 @@ const CHANNEL_RANK: Record<LoaderChannel, number> = { 稳定版: 0, 测试版: 1
 const SORTS: FilterOption[] = [
   { value: 'type', label: '按类型' },
   { value: 'newest', label: '最新发布' },
-  { value: 'oldest', label: '最早发布' },
+  { value: 'oldest', label: '最早发布' }
 ]
 
 const SORT_GROUP: FilterGroup = {
@@ -47,7 +47,7 @@ const SORT_GROUP: FilterGroup = {
   label: '排序方式',
   mode: 'single',
   affects: 'order',
-  options: SORTS,
+  options: SORTS
 }
 
 const LIST_FILTER_GROUPS: FilterGroup[] = [
@@ -59,9 +59,9 @@ const LIST_FILTER_GROUPS: FilterGroup[] = [
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
-      ...VERSION_TYPES.map((type) => ({ value: type, label: type })),
-    ],
-  },
+      ...VERSION_TYPES.map((type) => ({ value: type, label: type }))
+    ]
+  }
 ]
 
 const LOADER_FILTER_GROUPS: FilterGroup[] = [
@@ -73,14 +73,14 @@ const LOADER_FILTER_GROUPS: FilterGroup[] = [
     exclusive: 'all',
     options: [
       { value: 'all', label: '全部' },
-      ...CHANNELS.map((channel) => ({ value: channel, label: channel })),
-    ],
-  },
+      ...CHANNELS.map((channel) => ({ value: channel, label: channel }))
+    ]
+  }
 ]
 
 const LOADERS: LoaderOption[] = [
   { id: 'vanilla', label: '原版' },
-  ...LOADER_SOURCE_KINDS.map((kind) => ({ id: kind, label: LOADER_LABELS[kind] })),
+  ...LOADER_SOURCE_KINDS.map((kind) => ({ id: kind, label: LOADER_LABELS[kind] }))
 ]
 
 const VANILLA_LOADER = LOADERS[0]!
@@ -114,7 +114,7 @@ const nameField = ref<InstanceType<typeof InstanceNameField> | null>(null)
 const nameCheck = ref<InstanceNameCheck>({ ok: true, name: '' })
 
 const currentLoader = computed(
-  () => LOADERS.find((item) => item.id === loaderId.value) ?? VANILLA_LOADER,
+  () => LOADERS.find((item) => item.id === loaderId.value) ?? VANILLA_LOADER
 )
 
 const defaultName = computed(() => {
@@ -128,11 +128,15 @@ const defaultName = computed(() => {
 /** Mojang type -> 中文类型 */
 function mapType(type: GameVersion['type']): VersionType {
   switch (type) {
-    case 'release': return '正式版'
-    case 'snapshot': return '快照'
+    case 'release':
+      return '正式版'
+    case 'snapshot':
+      return '快照'
     case 'old_alpha':
-    case 'old_beta': return '旧版'
-    default: return '快照'
+    case 'old_beta':
+      return '旧版'
+    default:
+      return '快照'
   }
 }
 
@@ -144,8 +148,8 @@ const VERSION_ROWS = computed<ListRow[]>(() =>
     badge: mapType(version.type),
     badgeAccent: version.type === 'release',
     meta: version.releaseTime.slice(0, 10),
-    tags: { nature: mapType(version.type) },
-  })),
+    tags: { nature: mapType(version.type) }
+  }))
 )
 
 function loaderChannel(channel: LoaderVersion['channel']): LoaderChannel {
@@ -159,8 +163,8 @@ const loaderRows = computed<ListRow[]>(() =>
     badge: loaderChannel(item.channel),
     badgeAccent: item.channel !== 'beta',
     meta: item.date ? item.date.slice(0, 10) : '',
-    tags: { nature: loaderChannel(item.channel) },
-  })),
+    tags: { nature: loaderChannel(item.channel) }
+  }))
 )
 
 function versionSearchText(row: ListRow): string {
@@ -181,20 +185,14 @@ function bySort(rank: (row: ListRow) => number) {
   }
 }
 
-const versionSort = bySort(
-  (row) => TYPE_RANK[(row.badge ?? '') as VersionType] ?? 0,
-)
-const loaderSort = bySort(
-  (row) => CHANNEL_RANK[(row.badge ?? '') as LoaderChannel] ?? 0,
-)
+const versionSort = bySort((row) => TYPE_RANK[(row.badge ?? '') as VersionType] ?? 0)
+const loaderSort = bySort((row) => CHANNEL_RANK[(row.badge ?? '') as LoaderChannel] ?? 0)
 
 /** 主进程重名校验；本地规则由 InstanceNameField 负责 */
 async function checkName(name: string): Promise<InstanceNameCheck> {
-  return ctx.ipc.invoke<InstanceNameCheck>(
-    'mics.download.manager',
-    'install/validate-name',
-    { name },
-  )
+  return ctx.ipc.invoke<InstanceNameCheck>('mics.download.manager', 'install/validate-name', {
+    name
+  })
 }
 
 function syncNameDraft(previousDefault: string): void {
@@ -240,12 +238,11 @@ async function loadLoaderVersions(): Promise<void> {
 
   try {
     const list = await withTimeout(
-      ctx.ipc.invoke<LoaderVersion[]>(
-        'mics.download.manager',
-        'loaders/versions',
-        { gameVersion: target.id, kind },
-      ),
-      '请求超时，请检查网络或在下载设置中添加镜像源',
+      ctx.ipc.invoke<LoaderVersion[]>('mics.download.manager', 'loaders/versions', {
+        gameVersion: target.id,
+        kind
+      }),
+      '请求超时，请检查网络或在下载设置中添加镜像源'
     )
     if (seq !== loaderSeq) return
     loaderVersions.value = list
@@ -296,7 +293,11 @@ function scrollToTop(): void {
 function openInstall(id: string): void {
   const version = VERSION_ROWS.value.find((item) => item.id === id)
   if (!version) return
-  installTarget.value = { id: version.id, type: version.badge as VersionType, date: version.meta ?? '' }
+  installTarget.value = {
+    id: version.id,
+    type: version.badge as VersionType,
+    date: version.meta ?? ''
+  }
   loaderSeq += 1
   loaderId.value = VANILLA_LOADER.id
   loaderVersion.value = ''
@@ -333,9 +334,7 @@ async function install(): Promise<void> {
       return
     }
 
-    const name = nameField.value
-      ? await nameField.value.validate()
-      : nameCheck.value
+    const name = nameField.value ? await nameField.value.validate() : nameCheck.value
     if (!name.ok) {
       noticeError.value = true
       notice.value = name.message ?? '实例名称不可用'
@@ -350,8 +349,8 @@ async function install(): Promise<void> {
         instanceName: name.name,
         ...(loader && loaderVersion.value
           ? { loader: { kind: loader, version: loaderVersion.value } }
-          : {}),
-      },
+          : {})
+      }
     )
 
     if (result.error) {
@@ -379,7 +378,7 @@ async function loadVersions(): Promise<void> {
   try {
     rawVersions.value = await withTimeout(
       ctx.ipc.invoke<GameVersion[]>('mics.download.manager', 'versions/list'),
-      '请求超时，请检查网络或在下载设置中添加镜像源',
+      '请求超时，请检查网络或在下载设置中添加镜像源'
     )
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause)
@@ -446,7 +445,12 @@ onUnmounted(() => {
 
             <button
               class="mics-button mics-button--primary install__submit"
-              :disabled="installing || loaderLoading || !nameCheck.ok || (loaderId !== VANILLA_LOADER.id && !loaderVersion)"
+              :disabled="
+                installing ||
+                loaderLoading ||
+                !nameCheck.ok ||
+                (loaderId !== VANILLA_LOADER.id && !loaderVersion)
+              "
               @click="install"
             >
               {{ installing ? '提交中…' : '安装' }}

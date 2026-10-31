@@ -9,7 +9,7 @@ const props = withDefaults(
     /** 是否显示类型标签（整合包 / Mod 都可关掉） */
     showTags?: boolean
   }>(),
-  { showTags: true },
+  { showTags: true }
 )
 
 const emit = defineEmits<{ open: [] }>()

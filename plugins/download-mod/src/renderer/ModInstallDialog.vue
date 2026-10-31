@@ -1,11 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { MOD_LOADER_LABELS } from '@mics/sdk'
-import type {
-  InstallStartResult,
-  InstanceSummary,
-  ModLoader,
-} from '@mics/sdk'
+import type { InstallStartResult, InstanceSummary, ModLoader } from '@mics/sdk'
 import { usePluginContext } from '@mics/sdk/renderer'
 import { Dialog } from '@mics/ui'
 
@@ -42,7 +38,7 @@ const error = ref('')
 let loadSeq = 0
 
 const instanceById = computed(
-  () => new Map(instances.value.map((instance) => [instance.id, instance])),
+  () => new Map(instances.value.map((instance) => [instance.id, instance]))
 )
 
 /** 返回不可安装的原因；空串表示可以安装 */
@@ -53,7 +49,9 @@ function incompatibleReason(instance: InstanceSummary): string {
   if (!version) return '未选择文件'
 
   if (version.loaders.length > 0) {
-    const allowed = version.loaders.map((loader) => MOD_LOADER_LABELS[loader as ModLoader] ?? loader)
+    const allowed = version.loaders.map(
+      (loader) => MOD_LOADER_LABELS[loader as ModLoader] ?? loader
+    )
     if (!allowed.includes(instance.loader)) return `需要 ${allowed.join(' / ')}`
   }
   if (version.gameVersions.length > 0 && !version.gameVersions.includes(instance.minecraft)) {
@@ -63,7 +61,7 @@ function incompatibleReason(instance: InstanceSummary): string {
 }
 
 const compatible = computed(() =>
-  instances.value.filter((instance) => !incompatibleReason(instance)),
+  instances.value.filter((instance) => !incompatibleReason(instance))
 )
 const unsupportedCount = computed(() => instances.value.length - compatible.value.length)
 
@@ -78,13 +76,13 @@ const showUnsupported = computed({
     if (value) return
     const allowed = new Set(compatible.value.map((instance) => instance.id))
     selected.value = selected.value.filter((id) => allowed.has(id))
-  },
+  }
 })
 
 const allSelected = computed(
   () =>
     visible.value.length > 0 &&
-    visible.value.every((instance) => selected.value.includes(instance.id)),
+    visible.value.every((instance) => selected.value.includes(instance.id))
 )
 
 function toggle(id: string): void {
@@ -132,12 +130,12 @@ async function install(): Promise<void> {
           url: version.fileUrl,
           fileName: version.fileName,
           sha1: version.sha1,
-          size: version.size,
+          size: version.size
         },
         instanceNames,
         title: version.name,
-        detail: `${instanceNames.length} 个实例`,
-      },
+        detail: `${instanceNames.length} 个实例`
+      }
     )
     if (outcome.error) {
       error.value = outcome.error
@@ -166,7 +164,7 @@ watch(
     error.value = ''
     instances.value = []
     void loadInstances(seq)
-  },
+  }
 )
 </script>
 
@@ -188,11 +186,7 @@ watch(
     <div v-else-if="visible.length === 0" class="mics-empty">没有支持的实例</div>
 
     <div v-else class="install-dialog__list">
-      <label
-        v-for="instance in visible"
-        :key="instance.id"
-        class="install-instance"
-      >
+      <label v-for="instance in visible" :key="instance.id" class="install-instance">
         <input
           type="checkbox"
           class="install-instance__check"

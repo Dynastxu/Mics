@@ -8,7 +8,7 @@ import type {
   PluginId,
   RpcRequest,
   RpcResponse,
-  RuntimeEventEnvelope,
+  RuntimeEventEnvelope
 } from '@mics/sdk'
 import { emitEvent, pluginIdOf, waterfallEvent } from '@mics/sdk'
 
@@ -53,7 +53,7 @@ export class IpcService extends Service {
 
   handle<T = unknown>(
     method: string,
-    handler: (params: T, meta: IpcMeta) => MaybePromise<unknown>,
+    handler: (params: T, meta: IpcMeta) => MaybePromise<unknown>
   ): Disposable {
     const target = pluginIdOf(this.ctx)
     if (!target) {
@@ -120,7 +120,7 @@ export class IpcService extends Service {
       }
 
       const response = await waterfallEvent(this.baseCtx, 'ipc/before', request, () =>
-        this.dispatch(request),
+        this.dispatch(request)
       )
       emitEvent(this.baseCtx, 'ipc/after', request, response)
       return response
@@ -142,14 +142,14 @@ export class IpcService extends Service {
     const value = await handler(request.params, {
       target: request.target,
       method: request.method,
-      callerId: request.callerId,
+      callerId: request.callerId
     })
     return { ok: true, value }
   }
 
   private onEventEmit = (
     event: IpcMainEvent,
-    data: { topic?: unknown; payload?: unknown; callerId?: string },
+    data: { topic?: unknown; payload?: unknown; callerId?: string }
   ): void => {
     if (!data || typeof data.topic !== 'string') return
     this.broadcast(data.topic, data.payload, data.callerId)

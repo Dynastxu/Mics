@@ -54,9 +54,12 @@ function stopPolling(): void {
 
 function schedulePoll(seconds: number): void {
   stopPolling()
-  timer = setInterval(() => {
-    void poll()
-  }, Math.max(3, seconds) * 1000)
+  timer = setInterval(
+    () => {
+      void poll()
+    },
+    Math.max(3, seconds) * 1000
+  )
 }
 
 function reset(): void {
@@ -76,7 +79,7 @@ async function loadMicrosoftConfig(): Promise<void> {
   try {
     const config = await ctx.ipc.invoke<{ microsoftConfigured: boolean }>(
       'mics.account',
-      'accounts/config',
+      'accounts/config'
     )
     microsoftReady.value = config.microsoftConfigured
   } catch {
@@ -130,7 +133,8 @@ async function copyCode(): Promise<void> {
 function pollCancelled(): void {
   const flow = login.value
   if (flow) {
-    void ctx.ipc.invoke('mics.account', 'accounts/login/cancel', { flowId: flow.flowId })
+    void ctx.ipc
+      .invoke('mics.account', 'accounts/login/cancel', { flowId: flow.flowId })
       .catch(() => undefined)
   }
 }
@@ -144,7 +148,7 @@ async function startMicrosoft(): Promise<void> {
   status.value = 'starting'
   try {
     const flow = await ctx.ipc.invoke<DeviceLoginStart>('mics.account', 'accounts/login/start', {
-      ...(props.replaceId ? { replaceId: props.replaceId } : {}),
+      ...(props.replaceId ? { replaceId: props.replaceId } : {})
     })
     login.value = flow
     status.value = 'waiting'
@@ -163,7 +167,7 @@ async function poll(): Promise<void> {
   polling = true
   try {
     const result = await ctx.ipc.invoke<DeviceLoginPoll>('mics.account', 'accounts/login/poll', {
-      flowId: flow.flowId,
+      flowId: flow.flowId
     })
     if (result.status === 'pending') return
 
@@ -216,7 +220,7 @@ async function addOffline(): Promise<void> {
   error.value = ''
   try {
     const account = await ctx.ipc.invoke<AccountSummary>('mics.account', 'accounts/offline', {
-      name: offlineName.value,
+      name: offlineName.value
     })
     emit('added', account)
     emit('close')
@@ -291,7 +295,7 @@ watch(
     await loadMicrosoftConfig()
     if (props.autoStart && microsoftReady.value) void startMicrosoft()
     else loginButton.value?.focus()
-  },
+  }
 )
 
 onUnmounted(() => {
@@ -308,7 +312,12 @@ onUnmounted(() => {
       @click.self="close"
       @keydown.esc.stop.prevent="close"
     >
-      <div class="account-dialog__box" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
+      <div
+        class="account-dialog__box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-dialog-title"
+      >
         <h2 id="account-dialog-title" class="account-dialog__title">{{ title }}</h2>
 
         <div v-if="!replaceId" class="mics-chips account-dialog__tabs">
@@ -410,7 +419,12 @@ onUnmounted(() => {
         <p v-if="error" class="mics-notice account-dialog__error">{{ error }}</p>
 
         <div class="account-dialog__footer">
-          <button class="mics-button mics-button--ghost" type="button" :disabled="busy" @click="close">
+          <button
+            class="mics-button mics-button--ghost"
+            type="button"
+            :disabled="busy"
+            @click="close"
+          >
             取消
           </button>
         </div>
@@ -497,7 +511,10 @@ onUnmounted(() => {
   background: transparent;
   color: var(--mics-fg-muted);
   transform: translateY(-50%);
-  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .account-dialog__copy:hover {

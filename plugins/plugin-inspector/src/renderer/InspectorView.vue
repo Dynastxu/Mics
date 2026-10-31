@@ -15,7 +15,7 @@ import type {
   PluginInstallOutcome,
   PluginProvideRef,
   PluginStatus,
-  PluginUninstallOutcome,
+  PluginUninstallOutcome
 } from '@mics/sdk'
 import { DataBrowser, ToggleSwitch } from '@mics/ui'
 import type { FilterGroup, ListRow } from '@mics/ui'
@@ -41,20 +41,20 @@ const pluginMap = computed(() => new Map(plugins.value.map((plugin) => [plugin.i
 const enabledCount = computed(
   () =>
     plugins.value.filter((plugin) => plugin.status === 'enabled' || plugin.status === 'waiting')
-      .length,
+      .length
 )
 
 const nodeMap = computed<Map<PluginId, PluginGraphNode>>(
-  () => new Map((graph.value?.nodes ?? []).map((node) => [node.id, node] as const)),
+  () => new Map((graph.value?.nodes ?? []).map((node) => [node.id, node] as const))
 )
 const selectedNode = computed(() => nodeMap.value.get(selectedId.value))
 const selectedInfo = computed(() => pluginOf(selectedId.value))
 const selectedConfig = computed(() =>
-  configs.value.find((config) => config.pluginId === selectedId.value),
+  configs.value.find((config) => config.pluginId === selectedId.value)
 )
 const scanIssues = computed(() => graph.value?.scanIssues ?? [])
 const unmetOfSelected = computed(() =>
-  (graph.value?.unmet ?? []).filter((item) => item.neededBy.includes(selectedId.value)),
+  (graph.value?.unmet ?? []).filter((item) => item.neededBy.includes(selectedId.value))
 )
 
 const FILTERS: FilterGroup[] = [
@@ -68,8 +68,8 @@ const FILTERS: FilterGroup[] = [
       { value: 'enabled', label: '已启用' },
       { value: 'waiting', label: '等待依赖' },
       { value: 'disabled', label: '已禁用' },
-      { value: 'failed', label: '失败' },
-    ],
+      { value: 'failed', label: '失败' }
+    ]
   },
   {
     key: 'form',
@@ -80,9 +80,9 @@ const FILTERS: FilterGroup[] = [
       { value: 'all', label: '全部' },
       { value: 'page', label: '页面' },
       { value: 'main', label: '后台' },
-      { value: 'manifest', label: '清单' },
-    ],
-  },
+      { value: 'manifest', label: '清单' }
+    ]
+  }
 ]
 
 const STAGE_LABELS: Record<PluginFailureStage, string> = {
@@ -92,7 +92,7 @@ const STAGE_LABELS: Record<PluginFailureStage, string> = {
   dependency: '依赖',
   timeout: '停止超时',
   renderer: '页面',
-  policy: '策略',
+  policy: '策略'
 }
 
 const CONTRIBUTION_LABELS: Record<PluginContributionRef['kind'], string> = {
@@ -103,7 +103,7 @@ const CONTRIBUTION_LABELS: Record<PluginContributionRef['kind'], string> = {
   statusBar: '状态栏',
   theme: '主题',
   layout: '布局',
-  configuration: '配置',
+  configuration: '配置'
 }
 
 const rows = computed<ListRow[]>(() =>
@@ -113,7 +113,7 @@ const rows = computed<ListRow[]>(() =>
       `v${plugin.version}`,
       plugin.waitingFor?.length ? `等待：${plugin.waitingFor.join('、')}` : '',
       plugin.dependencyIssues?.length ? `依赖：${plugin.dependencyIssues.join('；')}` : '',
-      plugin.failure ? failureText(plugin) : '',
+      plugin.failure ? failureText(plugin) : ''
     ].filter(Boolean)
     return {
       id: plugin.id,
@@ -130,13 +130,13 @@ const rows = computed<ListRow[]>(() =>
         ...(plugin.restartRequired && !plugin.failure ? [{ label: '需重启' }] : []),
         ...(plugin.failure
           ? [{ label: `失败·${STAGE_LABELS[plugin.failure.stage]}`, accent: true }]
-          : []),
+          : [])
       ],
       meta: detail.join(' · '),
       keywords: [plugin.description ?? '', plugin.author ?? ''],
-      tags: { state: plugin.status, form: formTags(plugin) },
+      tags: { state: plugin.status, form: formTags(plugin) }
     }
-  }),
+  })
 )
 
 /** 徽章：页面 / 后台 各自独立，既没有入口也没有主进程时只标「清单」 */
@@ -284,7 +284,10 @@ async function loadGraph(): Promise<void> {
 
 async function loadConfigs(): Promise<void> {
   try {
-    configs.value = await ctx.ipc.invoke<PluginConfigurationInfo[]>('mics.kernel', 'configuration/list')
+    configs.value = await ctx.ipc.invoke<PluginConfigurationInfo[]>(
+      'mics.kernel',
+      'configuration/list'
+    )
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
@@ -412,7 +415,10 @@ onBeforeUnmount(() => {
     <div v-if="!selectedId && failure" class="inspector__error inspector__failure">
       <span>{{ failure.message }}</span>
       <span class="inspector__failure-actions">
-        <button class="mics-button mics-button--ghost mics-button--small" @click="uninstall(failure.id)">
+        <button
+          class="mics-button mics-button--ghost mics-button--small"
+          @click="uninstall(failure.id)"
+        >
           重试
         </button>
         <button
@@ -577,11 +583,7 @@ onBeforeUnmount(() => {
             打开设置页
           </button>
         </div>
-        <PluginSettingsPanel
-          v-else
-          :config="selectedConfig"
-          @updated="replaceConfig"
-        />
+        <PluginSettingsPanel v-else :config="selectedConfig" @updated="replaceConfig" />
       </section>
 
       <div v-if="selectedNode" class="inspector__columns">

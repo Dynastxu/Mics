@@ -87,7 +87,7 @@ export const EVENT_MODES = {
   'plugin/beforeActivate': 'bail',
   'ipc/before': 'waterfall',
   'ipc/after': 'emit',
-  'capability/changed': 'emit',
+  'capability/changed': 'emit'
 } as const satisfies Record<keyof MicsEvents, EventDispatchMode>
 
 export type MicsEventName = keyof MicsEvents

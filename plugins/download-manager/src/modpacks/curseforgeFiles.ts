@@ -32,9 +32,11 @@ const BATCH_SIZE = 50
 const FALLBACK_CONCURRENCY = 6
 
 function sha1Of(file: CurseforgeFile): string {
-  return (file.hashes ?? [])
-    .find((hash) => hash.algo === 1 && typeof hash.value === 'string')
-    ?.value?.toLowerCase() ?? ''
+  return (
+    (file.hashes ?? [])
+      .find((hash) => hash.algo === 1 && typeof hash.value === 'string')
+      ?.value?.toLowerCase() ?? ''
+  )
 }
 
 function fileRefOf(file: CurseforgeFile): ModFileRef | null {
@@ -53,25 +55,22 @@ function fileRefOf(file: CurseforgeFile): ModFileRef | null {
     url: downloadUrl,
     fileName,
     sha1: sha1Of(file),
-    size: typeof file.fileLength === 'number' && file.fileLength > 0 ? file.fileLength : 0,
+    size: typeof file.fileLength === 'number' && file.fileLength > 0 ? file.fileLength : 0
   }
 }
 
 async function resolveBatch(
   source: ModSource,
   fileIds: number[],
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<Map<number, CurseforgeFile>> {
   const result = new Map<number, CurseforgeFile>()
-  const response = await requestJson<CurseforgeFilesResponse>(
-    endpoint(source.api, 'mods/files'),
-    {
-      method: 'POST',
-      body: JSON.stringify({ fileIds }),
-      headers: curseforgeHeaders(source),
-      signal,
-    },
-  )
+  const response = await requestJson<CurseforgeFilesResponse>(endpoint(source.api, 'mods/files'), {
+    method: 'POST',
+    body: JSON.stringify({ fileIds }),
+    headers: curseforgeHeaders(source),
+    signal
+  })
   for (const file of response.data ?? []) {
     if (typeof file.id === 'number') result.set(file.id, file)
   }
@@ -81,11 +80,11 @@ async function resolveBatch(
 async function resolveOne(
   source: ModSource,
   entry: ModpackCurseforgeFile,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<CurseforgeFile | undefined> {
   const response = await requestJson<{ data?: CurseforgeFile }>(
     endpoint(source.api, `mods/${entry.projectId}/files/${entry.fileId}`),
-    { headers: curseforgeHeaders(source), signal },
+    { headers: curseforgeHeaders(source), signal }
   )
   return response.data
 }
@@ -95,7 +94,7 @@ export async function resolveCurseforgeModpackFiles(
   source: ModSource,
   entries: ModpackCurseforgeFile[],
   signal: AbortSignal,
-  onProgress?: (done: number, total: number) => void,
+  onProgress?: (done: number, total: number) => void
 ): Promise<Array<{ entry: ModpackCurseforgeFile; file: ModFileRef }>> {
   if (entries.length === 0) return []
 
@@ -120,7 +119,7 @@ export async function resolveCurseforgeModpackFiles(
       batch.map(async (entry) => {
         const file = await resolveOne(source, entry, signal)
         return { entry, file }
-      }),
+      })
     )
     for (const outcome of settled) {
       if (outcome.status === 'rejected') {

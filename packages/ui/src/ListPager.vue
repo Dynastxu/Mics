@@ -14,9 +14,7 @@ const items = computed<Array<number | 'gap'>>(() => {
   if (count <= 7) return Array.from({ length: count }, (_value, index) => index + 1)
 
   const values = new Set<number>([1, count, props.page, props.page - 1, props.page + 1])
-  const sorted = [...values]
-    .filter((value) => value >= 1 && value <= count)
-    .sort((a, b) => a - b)
+  const sorted = [...values].filter((value) => value >= 1 && value <= count).sort((a, b) => a - b)
   const result: Array<number | 'gap'> = []
   sorted.forEach((value, index) => {
     const previous = sorted[index - 1]
@@ -121,7 +119,9 @@ function goTo(next: number): void {
   border-radius: 999px;
   color: var(--mics-fg-muted);
   font-size: 12px;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .catalog-pager__arrow {

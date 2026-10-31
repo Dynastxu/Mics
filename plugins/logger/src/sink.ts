@@ -1,11 +1,4 @@
-import {
-  appendFileSync,
-  mkdirSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const FILE_PREFIX = 'mics-'
@@ -74,11 +67,11 @@ export class LogSink {
     return readdirSync(this.directory, { withFileTypes: true })
       .filter(
         (entry) =>
-          entry.isFile() && entry.name.startsWith(FILE_PREFIX) && entry.name.endsWith(FILE_SUFFIX),
+          entry.isFile() && entry.name.startsWith(FILE_PREFIX) && entry.name.endsWith(FILE_SUFFIX)
       )
       .map((entry) => ({
         name: entry.name,
-        modifiedAt: statSync(path.join(this.directory, entry.name)).mtimeMs,
+        modifiedAt: statSync(path.join(this.directory, entry.name)).mtimeMs
       }))
       .sort((a, b) => b.modifiedAt - a.modifiedAt)
   }
@@ -115,6 +108,6 @@ function timestampForName(now: Date): string {
   return [
     `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`,
     `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`,
-    pad(now.getMilliseconds(), 3),
+    pad(now.getMilliseconds(), 3)
   ].join('-')
 }

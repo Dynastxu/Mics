@@ -6,7 +6,7 @@ import {
   requestJson,
   numberField,
   recordOf,
-  stringField,
+  stringField
 } from './http'
 
 /**
@@ -33,12 +33,12 @@ export type MicrosoftAuthority = 'live' | 'entra'
 const AUTHORITIES: Record<MicrosoftAuthority, { deviceCode: string; token: string }> = {
   live: {
     deviceCode: 'https://login.live.com/oauth20_connect.srf',
-    token: 'https://login.live.com/oauth20_token.srf',
+    token: 'https://login.live.com/oauth20_token.srf'
   },
   entra: {
     deviceCode: 'https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode',
-    token: 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token',
-  },
+    token: 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token'
+  }
 }
 
 const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -77,7 +77,7 @@ const XSTS_ERRORS: Record<number, string> = {
   2148916235: '该账户所在地区不支持 Xbox Live',
   2148916236: '该账户需要在 xbox.com 完成成人验证',
   2148916237: '该账户需要在 xbox.com 完成成人验证',
-  2148916238: '未成年账户需要先加入 Microsoft 家庭组',
+  2148916238: '未成年账户需要先加入 Microsoft 家庭组'
 }
 
 export interface DeviceCodeInfo {
@@ -114,7 +114,9 @@ export class MicrosoftAuth {
   private requireClientId(): string {
     const id = this.clientId().trim()
     if (!id) {
-      throw new Error('正版登录尚未配置：请在「插件管理 → 账户」填写以 Mics 注册的 Azure 应用 client id')
+      throw new Error(
+        '正版登录尚未配置：请在「插件管理 → 账户」填写以 Mics 注册的 Azure 应用 client id'
+      )
     }
     return id
   }
@@ -129,8 +131,8 @@ export class MicrosoftAuth {
         client_id: clientId,
         scope: SCOPE,
         // Live 的设备码端点要求显式声明 response_type；Entra 会忽略它
-        ...(authority === 'live' ? { response_type: 'device_code' } : {}),
-      }),
+        ...(authority === 'live' ? { response_type: 'device_code' } : {})
+      })
     })
     const deviceCode = stringField(data, 'device_code')
     const userCode = stringField(data, 'user_code')
@@ -144,7 +146,7 @@ export class MicrosoftAuth {
       userCode,
       verificationUri,
       expiresAt: Date.now() + expiresIn * 1000,
-      interval: Math.max(3, numberField(data, 'interval') ?? 5),
+      interval: Math.max(3, numberField(data, 'interval') ?? 5)
     }
   }
 
@@ -160,9 +162,9 @@ export class MicrosoftAuth {
           body: formBody({
             client_id: clientId,
             grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            device_code: deviceCode,
-          }),
-        },
+            device_code: deviceCode
+          })
+        }
       )
       return tokensOf(data)
     } catch (cause) {
@@ -190,8 +192,8 @@ export class MicrosoftAuth {
           grant_type: 'refresh_token',
           refresh_token: refreshToken,
           // Entra 的 refresh 需要 scope；Live 端点带不带都可以
-          ...(authority === 'entra' ? { scope: SCOPE } : {}),
-        }),
+          ...(authority === 'entra' ? { scope: SCOPE } : {})
+        })
       })
     } catch (cause) {
       // 只有明确被拒绝才算「需要重新登录」；网络故障留给调用方按失败重试
@@ -212,11 +214,11 @@ export class MicrosoftAuth {
         Properties: {
           AuthMethod: 'RPS',
           SiteName: 'user.auth.xboxlive.com',
-          RpsTicket: `d=${msaAccessToken}`,
+          RpsTicket: `d=${msaAccessToken}`
         },
         RelyingParty: 'http://auth.xboxlive.com',
-        TokenType: 'JWT',
-      }),
+        TokenType: 'JWT'
+      })
     })
     const xblToken = stringField(xbl, 'Token')
     if (!xblToken) throw new Error('Xbox Live 认证没有返回令牌')
@@ -229,8 +231,8 @@ export class MicrosoftAuth {
         body: jsonBody({
           Properties: { SandboxId: 'RETAIL', UserTokens: [xblToken] },
           RelyingParty: 'rp://api.minecraftservices.com/',
-          TokenType: 'JWT',
-        }),
+          TokenType: 'JWT'
+        })
       })
     } catch (cause) {
       const xerr = cause instanceof HttpRequestError ? numberField(cause.data, 'XErr') : undefined
@@ -249,7 +251,7 @@ export class MicrosoftAuth {
     const minecraft = await requestJson<Record<string, unknown>>(MINECRAFT_LOGIN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: jsonBody({ identityToken: `XBL3.0 x=${userHash};${xstsToken}` }),
+      body: jsonBody({ identityToken: `XBL3.0 x=${userHash};${xstsToken}` })
     })
     const accessToken = stringField(minecraft, 'access_token')
     if (!accessToken) throw new Error('Minecraft 服务没有返回 access token')
@@ -257,7 +259,7 @@ export class MicrosoftAuth {
     let profile: Record<string, unknown>
     try {
       profile = await requestJson<Record<string, unknown>>(MINECRAFT_PROFILE_URL, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: { Authorization: `Bearer ${accessToken}` }
       })
     } catch (cause) {
       if (cause instanceof HttpRequestError && cause.status === 404) {

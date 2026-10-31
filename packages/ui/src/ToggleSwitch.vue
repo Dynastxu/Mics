@@ -9,7 +9,7 @@ const props = withDefaults(
     /** 悬停提示 */
     title?: string
   }>(),
-  { disabled: false, label: '', title: '' },
+  { disabled: false, label: '', title: '' }
 )
 
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()

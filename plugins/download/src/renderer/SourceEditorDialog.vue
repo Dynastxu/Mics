@@ -7,7 +7,7 @@ type TargetKey = 'launchermeta' | 'libraries' | 'resources'
 const TARGET_FIELDS = [
   { key: 'launchermeta', label: '版本清单', placeholder: 'launchermeta.mojang.com' },
   { key: 'libraries', label: '依赖库', placeholder: 'libraries.minecraft.net' },
-  { key: 'resources', label: '资源文件', placeholder: 'resources.download.minecraft.net' },
+  { key: 'resources', label: '资源文件', placeholder: 'resources.download.minecraft.net' }
 ] as const satisfies ReadonlyArray<{
   key: TargetKey
   label: string
@@ -29,7 +29,7 @@ const draft = reactive<Record<'label' | TargetKey, string>>({
   label: '',
   launchermeta: '',
   libraries: '',
-  resources: '',
+  resources: ''
 })
 
 const nameInput = ref<HTMLInputElement | null>(null)
@@ -44,7 +44,7 @@ watch(
     draft.resources = props.source?.resources ?? ''
     await nextTick()
     nameInput.value?.focus()
-  },
+  }
 )
 
 function submit(): void {
@@ -53,7 +53,7 @@ function submit(): void {
     launchermeta: draft.launchermeta.trim(),
     libraries: draft.libraries.trim(),
     resources: draft.resources.trim(),
-    enabled: props.source?.enabled ?? true,
+    enabled: props.source?.enabled ?? true
   })
 }
 
@@ -85,12 +85,7 @@ function cancel(): void {
         <div class="source-dialog__fields">
           <label class="source-dialog__field">
             <span class="source-dialog__label">名称</span>
-            <input
-              ref="nameInput"
-              v-model="draft.label"
-              class="mics-input"
-              autocomplete="off"
-            />
+            <input ref="nameInput" v-model="draft.label" class="mics-input" autocomplete="off" />
           </label>
 
           <label v-for="field in TARGET_FIELDS" :key="field.key" class="source-dialog__field">
@@ -106,9 +101,7 @@ function cancel(): void {
         </div>
 
         <div class="source-dialog__footer">
-          <button class="mics-button mics-button--ghost" type="button" @click="cancel">
-            取消
-          </button>
+          <button class="mics-button mics-button--ghost" type="button" @click="cancel">取消</button>
           <button class="mics-button mics-button--primary" type="submit">确定</button>
         </div>
       </form>
