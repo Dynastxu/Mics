@@ -23,6 +23,7 @@ const ctx = usePluginContext()
 
 const instances = ref<InstanceSummary[]>([])
 const selected = ref<string[]>([])
+const showAllInstances = ref(false)
 const loading = ref(false)
 const installing = ref(false)
 const error = ref('')
@@ -52,21 +53,38 @@ function incompatibleReason(instance: InstanceSummary): string {
 const compatible = computed(() =>
   instances.value.filter((instance) => !incompatibleReason(instance)),
 )
-const compatibleCount = computed(() => compatible.value.length)
+const unsupportedCount = computed(() => instances.value.length - compatible.value.length)
+
+/** 默认只列出支持的实例；打开开关后才把不支持的实例放出来强行安装 */
+const visible = computed(() => (showAllInstances.value ? instances.value : compatible.value))
+
+/** 关掉开关时把已勾选的不支持实例一并取消，避免隐藏项仍被安装 */
+const showUnsupported = computed({
+  get: () => showAllInstances.value,
+  set: (value: boolean) => {
+    showAllInstances.value = value
+    if (value) return
+    const allowed = new Set(compatible.value.map((instance) => instance.id))
+    selected.value = selected.value.filter((id) => allowed.has(id))
+  },
+})
+
 const allSelected = computed(
-  () => compatibleCount.value > 0 && selected.value.length === compatibleCount.value,
+  () =>
+    visible.value.length > 0 &&
+    visible.value.every((instance) => selected.value.includes(instance.id)),
 )
 
 function toggle(id: string): void {
   const instance = instanceById.value.get(id)
-  if (!instance || incompatibleReason(instance)) return
+  if (!instance) return
   const index = selected.value.indexOf(id)
   if (index >= 0) selected.value.splice(index, 1)
   else selected.value.push(id)
 }
 
 function toggleAll(): void {
-  selected.value = allSelected.value ? [] : compatible.value.map((instance) => instance.id)
+  selected.value = allSelected.value ? [] : visible.value.map((instance) => instance.id)
 }
 
 async function loadInstances(seq: number): Promise<void> {
@@ -132,6 +150,7 @@ watch(
     const seq = ++loadSeq
     if (!open) return
     selected.value = []
+    showAllInstances.value = false
     error.value = ''
     instances.value = []
     void loadInstances(seq)
@@ -169,18 +188,19 @@ watch(
           还没有可用实例，请先在「原版」页安装一个带模组加载器的实例。
         </div>
 
+        <div v-else-if="visible.length === 0" class="mics-empty">没有支持的实例</div>
+
         <div v-else class="install-dialog__list">
           <label
-            v-for="instance in instances"
+            v-for="instance in visible"
             :key="instance.id"
             class="install-instance"
-            :class="{ 'is-disabled': Boolean(incompatibleReason(instance)) }"
           >
             <input
               type="checkbox"
               class="install-instance__check"
               :checked="selected.includes(instance.id)"
-              :disabled="Boolean(incompatibleReason(instance)) || installing"
+              :disabled="installing"
               @change="toggle(instance.id)"
             />
             <span class="install-instance__main">
@@ -198,7 +218,7 @@ watch(
         <footer class="install-dialog__footer">
           <div class="install-dialog__left">
             <button
-              v-if="compatibleCount > 0"
+              v-if="visible.length > 0"
               class="mics-button mics-button--ghost mics-button--small"
               type="button"
               :disabled="installing"
@@ -206,8 +226,17 @@ watch(
             >
               {{ allSelected ? '取消全选' : '全选' }}
             </button>
-            <span class="install-dialog__count">
-              已选 {{ selected.length }} / {{ compatibleCount }}
+            <label v-if="unsupportedCount > 0" class="install-dialog__toggle">
+              <input
+                v-model="showUnsupported"
+                type="checkbox"
+                class="install-instance__check"
+                :disabled="installing"
+              />
+              显示不支持的实例 ({{ unsupportedCount }})
+            </label>
+            <span v-if="visible.length > 0" class="install-dialog__count">
+              已选 {{ selected.length }} / {{ visible.length }}
             </span>
           </div>
 
@@ -302,15 +331,6 @@ watch(
   background: var(--mics-bg-hover);
 }
 
-.install-instance.is-disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-
-.install-instance.is-disabled:hover {
-  background: transparent;
-}
-
 .install-instance__check {
   flex: none;
   width: 14px;
@@ -357,9 +377,25 @@ watch(
 
 .install-dialog__left {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   min-width: 0;
+}
+
+.install-dialog__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mics-fg-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.install-dialog__toggle:hover {
+  color: var(--mics-fg);
 }
 
 .install-dialog__count {
