@@ -8,6 +8,7 @@ import {
 import type {
   GameVersion,
   ModCategory,
+  ModDependency,
   ModLoader,
   ModReleaseChannel,
   ModSearchRequest,
@@ -48,6 +49,23 @@ const CHANNEL_OPTIONS = [
 
 const pageEl = ref<HTMLElement | null>(null)
 
+/** 页面真正的滚动容器（shell 的 .mics-main__page）；挂载后缓存，用于监听滚动 */
+let pageScrollEl: HTMLElement | null = null
+const showBackToTop = ref(false)
+
+/** 页面滚过一屏左右才显示悬浮按钮，避免首屏就挡住内容 */
+const BACK_TO_TOP_THRESHOLD = 240
+
+function onPageScroll(): void {
+  showBackToTop.value = (pageScrollEl?.scrollTop ?? 0) > BACK_TO_TOP_THRESHOLD
+}
+
+function backToTop(): void {
+  const container = pageScrollEl ?? pageScrollParent()
+  if (container) container.scrollTo({ top: 0, behavior: 'smooth' })
+  else scrollToTop()
+}
+
 const sources = ref<ModSourceInfo[]>([])
 const categories = ref<ModCategory[]>([])
 const gameVersions = ref<GameVersion[]>([])
@@ -71,9 +89,35 @@ const versionLoading = ref(false)
 const versionError = ref('')
 const versionQuery = ref('')
 const versionFilter = ref<FilterSelection>({ sort: ['newest'] })
+/** 版本行是单选列表：点击只选中，安装由选中行右侧的按钮触发 */
+const selectedVersionId = ref('')
 
 const installOpen = ref(false)
 const installVersion = ref<ModVersion | null>(null)
+
+/** 一个 Mod 详情页的浏览现场：返回上一层时要原样恢复，用户才能接着操作 */
+interface ModViewSnapshot {
+  mod: ModSummary
+  filter: FilterSelection
+  query: string
+  selectedVersionId: string
+  /** 离开时的页面滚动位置（shell 的 .mics-main__page） */
+  scrollTop: number
+}
+
+/**
+ * 从「前置」跳转过来的历史。
+ *
+ * 返回时不能只回到项目：筛选、版本搜索词、选中的版本和滚动位置都要恢复，
+ * 否则用户在长列表里刚选好的版本会丢失。
+ */
+const modHistory = ref<ModViewSnapshot[]>([])
+
+/** 返回上一层时待恢复的滚动位置；版本列表渲染后消费一次 */
+let pendingScrollTop: number | null = null
+
+/** 从搜索结果进入详情时的滚动位置；彻底关闭详情后恢复，不用重新往下翻 */
+let searchScrollTop = 0
 
 const iconFailed = ref<Record<string, boolean>>({})
 
@@ -177,6 +221,26 @@ const versionById = computed(
   () => new Map(versions.value.map((version) => [version.id, version])),
 )
 
+/** 当前选中的版本；列表被筛选隐藏时仍然保留，安装按钮依旧可用 */
+const selectedVersion = computed(
+  () => versions.value.find((version) => version.id === selectedVersionId.value) ?? null,
+)
+
+/** 每个版本行的必装前置；只有选中的那一行会渲染成按钮 */
+const requiredDependencies = computed(() => {
+  const map = new Map<string, ModDependency[]>()
+  for (const version of versions.value) {
+    const dependencies = (version.dependencies ?? [])
+      .filter((dependency) => dependency.kind === 'required' && dependency.name)
+    if (dependencies.length > 0) map.set(version.id, dependencies)
+  }
+  return map
+})
+
+function rowDependencies(id: string): ModDependency[] {
+  return requiredDependencies.value.get(id) ?? []
+}
+
 /** 详情页的筛选不继承搜索页的版本/加载器限制，选项始终来自全部版本 */
 const versionFilterGroups = computed<FilterGroup[]>(() => {
   const versionOptions = [...new Set(versions.value.flatMap((version) => version.gameVersions))]
@@ -220,6 +284,14 @@ const versionFilterGroups = computed<FilterGroup[]>(() => {
   ]
 })
 
+/** 前置名称参与版本搜索；匹配「Fabric API」可以找到需要它的版本 */
+function requiredDependencyNames(version: ModVersion): string[] {
+  return (version.dependencies ?? [])
+    .filter((dependency) => dependency.kind === 'required')
+    .map((dependency) => dependency.name)
+    .filter(Boolean)
+}
+
 const versionRows = computed<ListRow[]>(() =>
   versions.value.map((version) => ({
     id: version.id,
@@ -232,6 +304,7 @@ const versionRows = computed<ListRow[]>(() =>
       version.fileName,
       ...version.gameVersions,
       ...version.loaders.map((item) => MOD_LOADER_LABELS[item]),
+      ...requiredDependencyNames(version),
     ].filter(Boolean),
     tags: {
       channel: version.channel,
@@ -361,6 +434,7 @@ async function loadVersions(): Promise<void> {
     loader: 'all',
   }
 
+  let loaded = false
   try {
     const list = await ctx.ipc.invoke<ModVersion[]>(
       'mics.download.manager',
@@ -369,11 +443,24 @@ async function loadVersions(): Promise<void> {
     )
     if (seq !== versionSeq) return
     versions.value = list
+    loaded = true
   } catch (cause) {
     if (seq !== versionSeq) return
     versionError.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
-    if (seq === versionSeq) versionLoading.value = false
+    if (seq === versionSeq) {
+      versionLoading.value = false
+      // 必须等 versionLoading 触发的这次渲染结束：此时列表还没挂载，
+      // 直接设 scrollTop 会被「正在获取版本列表」的短内容钳成 0。
+      if (loaded && pendingScrollTop !== null) {
+        const top = pendingScrollTop
+        pendingScrollTop = null
+        restoreScroll(top)
+      } else if (loaded && selectedVersionId.value) {
+        // 没有待恢复的滚动位置（例如失败后重试）时，至少保证选中行可见
+        scrollToSelectedVersion()
+      }
+    }
   }
 }
 
@@ -391,32 +478,202 @@ function intentFilter(intent: ModOpenIntent): FilterSelection {
   return filter
 }
 
-function openMod(mod: ModSummary, initialFilter = searchFilter()): void {
+/** 前置跳转保留当前的 MC 版本 / 加载器筛选，方便直接挑对应版本的依赖 */
+function dependencyFilter(): FilterSelection {
+  const filter: FilterSelection = { sort: ['newest'] }
+  const gameVersion = versionFilter.value.gameVersion?.[0]
+  if (gameVersion && gameVersion !== 'all') filter.gameVersion = [gameVersion]
+  const loader = versionFilter.value.loader?.[0]
+  if (loader && loader !== 'all') filter.loader = [loader]
+  return filter
+}
+
+/** 页面真正的滚动容器是 shell 的 .mics-main__page，而不是 mics-page 本身 */
+function pageScrollParent(): HTMLElement | null {
+  let node = pageEl.value?.parentElement ?? null
+  while (node) {
+    const overflowY = getComputedStyle(node).overflowY
+    if (overflowY === 'auto' || overflowY === 'scroll') return node
+    node = node.parentElement
+  }
+  return null
+}
+
+function selectedRowElement(): HTMLElement | null {
+  return pageEl.value?.querySelector<HTMLElement>('.mics-list__row.is-selected') ?? null
+}
+
+/** 离开一个 Mod 详情页时记录浏览现场，返回时原样恢复 */
+function snapshotMod(mod: ModSummary): ModViewSnapshot {
+  return {
+    mod,
+    filter: { ...versionFilter.value },
+    query: versionQuery.value,
+    selectedVersionId: selectedVersionId.value,
+    scrollTop: pageScrollParent()?.scrollTop ?? 0,
+  }
+}
+
+/**
+ * 补项目作者。
+ *
+ * 版本列表 / 指纹识别里的项目摘要不含作者（Modrinth 的作者在团队信息里），
+ * 打开详情后单独查一次；查不到只影响作者这一行，不影响页面其它内容。
+ */
+async function hydrateAuthor(mod: ModSummary): Promise<void> {
+  if (mod.author) return
+  try {
+    const summary = await ctx.ipc.invoke<ModSummary>(
+      'mics.download.manager',
+      'mods/project',
+      {
+        source: mod.source,
+        ...(mod.sourceApi ? { sourceApi: mod.sourceApi } : {}),
+        projectId: mod.projectId,
+      },
+    )
+    // 用户可能已经返回或跳到别的 Mod，只有还停在这个项目时才更新
+    if (activeMod.value?.id === mod.id) activeMod.value = summary
+  } catch {
+    // 作者只是展示信息，查不到就保持原样
+  }
+}
+
+function openMod(mod: ModSummary, initialFilter = searchFilter(), remember = false): void {
+  if (remember && activeMod.value) {
+    modHistory.value.push(snapshotMod(activeMod.value))
+  }
+  // 从搜索结果进入详情前记下滚动位置；从另一个详情跳过来时保持原值
+  if (!activeMod.value) searchScrollTop = pageScrollParent()?.scrollTop ?? 0
+  pendingScrollTop = null
+  showBackToTop.value = false
   activeMod.value = mod
+  selectedVersionId.value = ''
   versionQuery.value = ''
   // 详情筛选的选择项仍来自全部版本；初始值来自搜索页或实例上下文。
   versionFilter.value = initialFilter
   installOpen.value = false
   installVersion.value = null
   void loadVersions()
+  void hydrateAuthor(mod)
   scrollToTop()
 }
 
-function closeMod(): void {
+/** 返回上一层：恢复筛选、版本搜索词、选中的版本与滚动位置 */
+function restoreMod(snapshot: ModViewSnapshot): void {
+  activeMod.value = snapshot.mod
+  versionQuery.value = snapshot.query
+  versionFilter.value = snapshot.filter
+  selectedVersionId.value = snapshot.selectedVersionId
+  installOpen.value = false
+  installVersion.value = null
+  pendingScrollTop = snapshot.scrollTop
+  void loadVersions()
+  void hydrateAuthor(snapshot.mod)
+}
+
+/**
+ * 恢复离开前的滚动位置。
+ *
+ * 列表刚挂载时高度可能还会变一帧；内容没撑开就先别设 scrollTop
+ * （否则会被钳成 0），等下一帧再试。设好后再检查选中行是否在视野内。
+ */
+function restoreScroll(top: number): void {
+  const apply = (attempt: number): void => {
+    const container = pageScrollParent()
+    if (!container) {
+      if (attempt < 3) {
+        requestAnimationFrame(() => apply(attempt + 1))
+        return
+      }
+      // 极端情况下找不到滚动容器，至少保证选中行可见
+      selectedRowElement()?.scrollIntoView({ block: 'center' })
+      return
+    }
+
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight)
+    if (maxScroll + 1 < top && attempt < 3) {
+      requestAnimationFrame(() => apply(attempt + 1))
+      return
+    }
+
+    container.scrollTop = Math.min(top, maxScroll)
+
+    const row = selectedRowElement()
+    if (!row) return
+    const containerRect = container.getBoundingClientRect()
+    const rowRect = row.getBoundingClientRect()
+    if (rowRect.top < containerRect.top || rowRect.bottom > containerRect.bottom) {
+      row.scrollIntoView({ block: 'center' })
+    }
+  }
+
+  void nextTick(() => requestAnimationFrame(() => apply(0)))
+}
+
+function scrollToSelectedVersion(): void {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      selectedRowElement()?.scrollIntoView({ block: 'center' })
+    })
+  })
+}
+
+/** 彻底回到搜索结果：清空前置跳转的历史，保留搜索页自己的状态与滚动位置 */
+function closeToSearch(): void {
   versionSeq += 1
+  installOpen.value = false
+  installVersion.value = null
+  pendingScrollTop = null
+  modHistory.value = []
   activeMod.value = null
   versions.value = []
   versionError.value = ''
-  installOpen.value = false
-  installVersion.value = null
-  scrollToTop()
+  selectedVersionId.value = ''
+
+  // 搜索结果列表重新挂载后再恢复滚动位置
+  const top = searchScrollTop
+  void nextTick(() => {
+    const container = pageScrollParent()
+    if (container) container.scrollTop = top
+  })
 }
 
+/** 左上角「主页」：不经过前置返回栈，直接回到 Mod 搜索页 */
+function goHome(): void {
+  closeToSearch()
+}
+
+function closeMod(): void {
+  // 从「前置」跳转进来的，先退回上一个 Mod；否则回到搜索结果
+  const previous = modHistory.value.pop()
+  if (!previous) {
+    closeToSearch()
+    return
+  }
+
+  versionSeq += 1
+  installOpen.value = false
+  installVersion.value = null
+  restoreMod(previous)
+}
+
+/** 点击版本行只选中；安装按钮在选中行右侧，点击后才打开实例选择 */
 function selectVersion(id: string): void {
-  const version = versions.value.find((item) => item.id === id)
+  selectedVersionId.value = id
+}
+
+function openInstall(): void {
+  const version = selectedVersion.value
   if (!version) return
   installVersion.value = version
   installOpen.value = true
+}
+
+function openDependency(dependency: ModDependency): void {
+  const project = dependency.project
+  if (!project) return
+  openMod(project, dependencyFilter(), true)
 }
 
 function closeInstall(): void {
@@ -579,9 +836,17 @@ watch(
   { deep: true },
 )
 
-onMounted(loadPageData)
+onMounted(() => {
+  // 页面滚动由 shell 的 .mics-main__page 承担，mics-page 本身不滚动
+  pageScrollEl = pageScrollParent()
+  pageScrollEl?.addEventListener('scroll', onPageScroll, { passive: true })
+  onPageScroll()
+  void loadPageData()
+})
 
 onBeforeUnmount(() => {
+  pageScrollEl?.removeEventListener('scroll', onPageScroll)
+  pageScrollEl = null
   if (searchTimer) clearTimeout(searchTimer)
   searchSeq += 1
   versionSeq += 1
@@ -592,22 +857,50 @@ onBeforeUnmount(() => {
   <div ref="pageEl" class="mics-page">
     <template v-if="activeMod">
       <header class="mod-detail__header">
-        <button class="mics-button mics-button--ghost mics-button--small" @click="closeMod">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.7"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
+        <div class="mod-detail__nav">
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            type="button"
+            title="回到 Mod 搜索"
+            @click="goHome"
           >
-            <path d="m15 6-6 6 6 6" />
-          </svg>
-          返回
-        </button>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <path d="M9 22V12h6v10" />
+            </svg>
+            主页
+          </button>
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            type="button"
+            @click="closeMod"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m15 6-6 6 6 6" />
+            </svg>
+            返回
+          </button>
+        </div>
 
         <img
           v-if="activeMod.icon && !iconFailed[activeMod.id]"
@@ -641,16 +934,87 @@ onBeforeUnmount(() => {
         v-else
         :items="versionRows"
         :groups="versionFilterGroups"
+        role="radio"
+        :selected-id="selectedVersionId"
         title="版本"
         search-placeholder="搜索版本"
-        action-label="安装"
         empty-text="没有匹配的版本"
         :mono="false"
         :sort="versionSort"
         v-model:query="versionQuery"
         v-model:filter="versionFilter"
         @select="selectVersion"
-      />
+      >
+        <template #row="{ item }">
+          <div class="mics-list__main">
+            <div class="mics-list__title">
+              <span>{{ item.label }}</span>
+              <span
+                v-if="item.badge"
+                class="mics-badge"
+                :class="{ 'mics-badge--accent': item.badgeAccent }"
+              >
+                {{ item.badge }}
+              </span>
+            </div>
+            <div v-if="item.meta" class="mics-list__meta">{{ item.meta }}</div>
+            <div
+              v-if="item.id === selectedVersionId && rowDependencies(item.id).length"
+              class="version-deps"
+            >
+              <span class="version-deps__label">前置</span>
+              <button
+                v-for="dependency in rowDependencies(item.id)"
+                :key="`${dependency.projectId}:${dependency.name}`"
+                class="version-deps__chip"
+                type="button"
+                :disabled="!dependency.project"
+                :title="dependency.project ? `打开 ${dependency.name}` : undefined"
+                @click.stop="openDependency(dependency)"
+                @keydown.enter.stop
+                @keydown.space.stop
+              >
+                {{ dependency.name }}
+                <span v-if="dependency.project" class="version-deps__arrow" aria-hidden="true">↗</span>
+              </button>
+            </div>
+          </div>
+          <button
+            v-if="item.id === selectedVersionId"
+            class="mics-button mics-button--primary mics-button--small version-install"
+            type="button"
+            :title="`安装 ${item.label}`"
+            @click.stop="openInstall"
+            @keydown.enter.stop
+            @keydown.space.stop
+          >
+            安装
+          </button>
+        </template>
+      </DataBrowser>
+
+      <button
+        v-if="showBackToTop"
+        class="mod-backtop"
+        type="button"
+        title="返回顶部"
+        aria-label="返回顶部"
+        @click="backToTop"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m6 14 6-6 6 6" />
+        </svg>
+      </button>
     </template>
 
     <template v-else>
@@ -813,6 +1177,53 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+.version-deps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.version-deps__label {
+  color: var(--mics-fg-muted);
+  font-size: 10.5px;
+}
+
+.version-deps__chip {
+  padding: 1px 8px;
+  border: 1px solid var(--mics-border);
+  border-radius: 999px;
+  background: var(--mics-bg-hover);
+  color: var(--mics-fg);
+  font-size: 10.5px;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.version-deps__chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--mics-accent) 55%, var(--mics-border));
+  color: var(--mics-accent);
+}
+
+.version-deps__chip:focus-visible {
+  outline: 2px solid var(--mics-accent);
+  outline-offset: 1px;
+}
+
+.version-deps__chip:disabled {
+  color: var(--mics-fg-muted);
+  cursor: default;
+}
+
+.version-deps__arrow {
+  margin-left: 3px;
+  opacity: 0.6;
+}
+
+.version-install {
+  flex: none;
+}
+
 .mods-card {
   cursor: pointer;
   text-align: left;
@@ -930,7 +1341,11 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 
-.mod-detail__header > .mics-button {
+.mod-detail__nav {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin-top: 2px;
 }
 
@@ -975,6 +1390,35 @@ onBeforeUnmount(() => {
   color: var(--mics-fg-muted);
   font-size: 12.5px;
   line-height: 1.7;
+}
+
+/* 详情页右下角的悬浮「返回顶部」；底部留出 26px 状态栏 */
+.mod-backtop {
+  position: fixed;
+  right: 24px;
+  bottom: 42px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--mics-border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mics-bg-elevated) 92%, transparent);
+  color: var(--mics-fg-muted);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  backdrop-filter: blur(8px);
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.mod-backtop:hover {
+  border-color: var(--mics-accent);
+  color: var(--mics-accent);
+}
+
+.mod-backtop:focus-visible {
+  outline: 2px solid var(--mics-accent);
+  outline-offset: 2px;
 }
 
 .mics-notice--error {

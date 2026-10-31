@@ -1,4 +1,5 @@
 import type {
+  ModDependency,
   ModLoader,
   ModSearchRequest,
   ModSource,
@@ -48,6 +49,13 @@ interface ModrinthFile {
   hashes?: { sha1?: string; sha512?: string }
 }
 
+interface ModrinthDependency {
+  version_id?: string | null
+  project_id?: string | null
+  file_name?: string | null
+  dependency_type?: string
+}
+
 interface ModrinthVersion {
   id?: string
   project_id?: string
@@ -59,6 +67,7 @@ interface ModrinthVersion {
   date_published?: string
   downloads?: number
   files?: ModrinthFile[]
+  dependencies?: ModrinthDependency[]
 }
 
 interface ModrinthProject {
@@ -71,6 +80,13 @@ interface ModrinthProject {
   follows?: number
   icon_url?: string | null
   date_modified?: string
+  /** 团队 id；项目接口本身不含作者，需要再查团队成员 */
+  team?: string
+}
+
+interface ModrinthTeamMember {
+  role?: string
+  user?: { username?: string }
 }
 
 export interface ModrinthIdentified {
@@ -162,10 +178,85 @@ function releaseChannel(value: string | undefined): ModVersion['channel'] {
   return 'release'
 }
 
+/** 未登记的依赖类型直接丢弃，避免把来源扩展字段带进契约 */
+function dependencyKind(value: string | undefined): ModDependency['kind'] | null {
+  switch (value) {
+    case 'required':
+    case 'optional':
+    case 'incompatible':
+    case 'embedded':
+      return value
+    default:
+      return null
+  }
+}
+
+function dependenciesOf(
+  version: ModrinthVersion,
+  projects: Map<string, ModSummary>,
+): ModDependency[] {
+  const dependencies: ModDependency[] = []
+  for (const dependency of version.dependencies ?? []) {
+    const kind = dependencyKind(dependency.dependency_type)
+    if (!kind) continue
+    const projectId = dependency.project_id ?? ''
+    const project = projectId ? projects.get(projectId) : undefined
+    const name = project?.name || dependency.file_name?.trim() || projectId
+    if (!name) continue
+    dependencies.push({
+      projectId,
+      name,
+      versionId: dependency.version_id ?? '',
+      kind,
+      ...(project ? { project } : {}),
+    })
+  }
+  return dependencies
+}
+
+/**
+ * 批量解析依赖项目。
+ *
+ * 依赖里只有 project_id，直接展示 id 没有意义；顺便把项目摘要带回去，
+ * 点击版本行里的前置按钮就不用再发一次请求。解析失败只影响名称，
+ * 不应该让整个版本列表报错，因此网络失败时退回空表。
+ */
+async function dependencyProjects(
+  source: ModSource,
+  versions: ModrinthVersion[],
+  signal: AbortSignal,
+): Promise<Map<string, ModSummary>> {
+  const ids = new Set<string>()
+  for (const version of versions) {
+    for (const dependency of version.dependencies ?? []) {
+      if (dependency.project_id) ids.add(dependency.project_id)
+    }
+  }
+  if (ids.size === 0) return new Map()
+
+  try {
+    const projects = await requestJson<ModrinthProject[]>(
+      withParams(endpoint(source.api, 'projects'), { ids: JSON.stringify([...ids]) }),
+      { signal },
+    )
+    const summaries = new Map<string, ModSummary>()
+    for (const project of projects) {
+      if (!project.id) continue
+      const summary = projectSummary(source, project)
+      if (summary) summaries.set(project.id, summary)
+    }
+    return summaries
+  } catch (cause) {
+    if (signal.aborted) throw cause
+    return new Map()
+  }
+}
+
 function versionOf(
   source: ModSource,
   projectId: string,
   version: ModrinthVersion,
+  projects: Map<string, ModSummary>,
 ): ModVersion | null {
   const files = version.files ?? []
   const file =
@@ -190,6 +281,7 @@ function versionOf(
     sha1: file.hashes?.sha1 ?? '',
     size: file.size ?? 0,
     downloads: version.downloads ?? 0,
+    dependencies: dependenciesOf(version, projects),
   }
 }
 
@@ -220,6 +312,48 @@ function projectSummary(source: ModSource, project: ModrinthProject): ModSummary
     updated: project.date_modified ?? '',
     url: `https://modrinth.com/mod/${encodeURIComponent(slug)}`,
   }
+}
+
+/**
+ * 项目作者。
+ *
+ * Modrinth 的项目接口没有作者字段；搜索接口展示的作者是团队 Owner，
+ * 这里按同样规则取 Owner，取不到再退回第一个成员。
+ */
+async function projectAuthor(
+  source: ModSource,
+  teamId: string | undefined,
+  signal: AbortSignal,
+): Promise<string> {
+  if (!teamId) return ''
+  try {
+    const members = await requestJson<ModrinthTeamMember[]>(
+      endpoint(source.api, `team/${encodeURIComponent(teamId)}/members`),
+      { signal },
+    )
+    const list = Array.isArray(members) ? members : []
+    const owner = list.find((member) => member.role?.toLowerCase() === 'owner')
+    return owner?.user?.username?.trim() || list[0]?.user?.username?.trim() || ''
+  } catch (cause) {
+    if (signal.aborted) throw cause
+    return ''
+  }
+}
+
+/** 读取单个项目的完整摘要；前置跳转时用来补齐详情页头部 */
+export async function projectModrinth(
+  source: ModSource,
+  projectId: string,
+  signal: AbortSignal,
+): Promise<ModSummary> {
+  const project = await requestJson<ModrinthProject>(
+    endpoint(source.api, `project/${encodeURIComponent(projectId)}`),
+    { signal },
+  )
+  const summary = projectSummary(source, project)
+  if (!summary) throw new Error('Modrinth 没有返回有效的项目信息')
+  const author = await projectAuthor(source, project.team, signal)
+  return { ...summary, author }
 }
 
 /**
@@ -292,8 +426,10 @@ export async function versionsModrinth(
     params,
   )
   const response = await requestJson<ModrinthVersion[]>(url, { signal })
-  const versions = (Array.isArray(response) ? response : [])
-    .map((version) => versionOf(source, request.projectId, version))
+  const data = Array.isArray(response) ? response : []
+  const projects = await dependencyProjects(source, data, signal)
+  const versions = data
+    .map((version) => versionOf(source, request.projectId, version, projects))
     .filter((version): version is ModVersion => version !== null)
 
   versions.sort((a, b) => b.published.localeCompare(a.published))

@@ -1,4 +1,5 @@
 import type {
+  ModDependency,
   ModLoader,
   ModSearchRequest,
   ModSource,
@@ -71,6 +72,13 @@ interface CurseforgeHash {
   algo?: number
 }
 
+interface CurseforgeDependency {
+  /** 依赖的项目 id；0 表示 CurseForge 未收录该项目 */
+  modId?: number
+  /** 关系：1 内嵌 / 2 可选 / 3 必装 / 4 工具 / 5 冲突 */
+  relationType?: number
+}
+
 interface CurseforgeFile {
   id?: number
   displayName?: string
@@ -82,6 +90,7 @@ interface CurseforgeFile {
   gameVersions?: string[]
   downloadUrl?: string | null
   hashes?: CurseforgeHash[]
+  dependencies?: CurseforgeDependency[]
 }
 
 interface CurseforgeFilesResponse {
@@ -103,6 +112,10 @@ interface CurseforgeFingerprintResponse {
 
 interface CurseforgeModsResponse {
   data?: CurseforgeMod[]
+}
+
+interface CurseforgeModResponse {
+  data?: CurseforgeMod
 }
 
 export interface CurseforgeIdentified {
@@ -212,6 +225,21 @@ export async function searchCurseforge(
   return { items, total: total || items.length }
 }
 
+/** 读取单个项目的完整摘要；前置跳转时用来补齐详情页头部 */
+export async function projectCurseforge(
+  source: ModSource,
+  projectId: string,
+  signal: AbortSignal,
+): Promise<ModSummary> {
+  const response = await requestJson<CurseforgeModResponse>(
+    endpoint(source.api, `mods/${encodeURIComponent(projectId)}`),
+    { headers: apiHeaders(source), signal },
+  )
+  const summary = response.data ? modSummary(source, response.data) : null
+  if (!summary) throw new Error('CurseForge 没有返回有效的项目信息')
+  return summary
+}
+
 function releaseChannel(releaseType: number | undefined): ModVersion['channel'] {
   if (releaseType === 2) return 'beta'
   if (releaseType === 3) return 'alpha'
@@ -222,10 +250,92 @@ function loaderOf(value: string): ModLoader | null {
   return LOADER_NAMES.get(value.trim().toLowerCase()) ?? null
 }
 
+/** 未登记的依赖关系直接丢弃，避免把来源扩展字段带进契约 */
+function dependencyKind(relationType: number | undefined): ModDependency['kind'] | null {
+  switch (relationType) {
+    case 1:
+      return 'embedded'
+    case 2:
+      return 'optional'
+    case 3:
+      return 'required'
+    case 5:
+      return 'incompatible'
+    default:
+      return null
+  }
+}
+
+function dependenciesOf(
+  file: CurseforgeFile,
+  projects: Map<number, ModSummary>,
+): ModDependency[] {
+  const dependencies: ModDependency[] = []
+  for (const dependency of file.dependencies ?? []) {
+    const kind = dependencyKind(dependency.relationType)
+    // modId 为 0 表示该前置没有收录进 CurseForge，无法给出名称与链接
+    if (!kind || typeof dependency.modId !== 'number' || dependency.modId <= 0) continue
+    const project = projects.get(dependency.modId)
+    dependencies.push({
+      projectId: String(dependency.modId),
+      name: project?.name || `Mod #${dependency.modId}`,
+      versionId: '',
+      kind,
+      ...(project ? { project } : {}),
+    })
+  }
+  return dependencies
+}
+
+/**
+ * 批量解析依赖项目。
+ *
+ * 顺便把项目摘要带回去，点击版本行里的前置按钮就不用再发一次请求。
+ * 解析失败只影响名称，不应该让整个版本列表报错，因此网络失败时退回空表。
+ */
+async function dependencyProjects(
+  source: ModSource,
+  files: CurseforgeFile[],
+  signal: AbortSignal,
+): Promise<Map<number, ModSummary>> {
+  const ids = new Set<number>()
+  for (const file of files) {
+    for (const dependency of file.dependencies ?? []) {
+      if (typeof dependency.modId === 'number' && dependency.modId > 0) {
+        ids.add(dependency.modId)
+      }
+    }
+  }
+  if (ids.size === 0) return new Map()
+
+  try {
+    const response = await requestJson<CurseforgeModsResponse>(
+      endpoint(source.api, 'mods'),
+      {
+        method: 'POST',
+        body: JSON.stringify({ modIds: [...ids] }),
+        headers: apiHeaders(source),
+        signal,
+      },
+    )
+    const summaries = new Map<number, ModSummary>()
+    for (const mod of response.data ?? []) {
+      if (typeof mod.id !== 'number') continue
+      const summary = modSummary(source, mod)
+      if (summary) summaries.set(mod.id, summary)
+    }
+    return summaries
+  } catch (cause) {
+    if (signal.aborted) throw cause
+    return new Map()
+  }
+}
+
 function versionOf(
   source: ModSource,
   projectId: string,
   file: CurseforgeFile,
+  projects: Map<number, ModSummary>,
 ): ModVersion | null {
   if (typeof file.id !== 'number' || !file.downloadUrl || !file.fileName) return null
   const downloadUrl = file.downloadUrl
@@ -259,6 +369,7 @@ function versionOf(
     sha1,
     size: file.fileLength ?? 0,
     downloads: file.downloadCount ?? 0,
+    dependencies: dependenciesOf(file, projects),
   }
 }
 
@@ -375,8 +486,9 @@ export async function versionsCurseforge(
     offset += data.length
   }
 
+  const projects = await dependencyProjects(source, files, signal)
   const versions = files
-    .map((file) => versionOf(source, request.projectId, file))
+    .map((file) => versionOf(source, request.projectId, file, projects))
     .filter((version): version is ModVersion => version !== null)
 
   versions.sort((a, b) => b.published.localeCompare(a.published))

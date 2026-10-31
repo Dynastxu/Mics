@@ -2,10 +2,12 @@ import type {
   ModCategory,
   ModIdentifyFile,
   ModIdentity,
+  ModProjectRequest,
   ModSearchRequest,
   ModSearchResult,
   ModSource,
   ModSourceError,
+  ModSourceKind,
   ModSummary,
   ModVersion,
   ModVersionRequest,
@@ -15,10 +17,11 @@ import { listModCategories } from './categories'
 import {
   curseforgeReady,
   identifyCurseforge,
+  projectCurseforge,
   searchCurseforge,
   versionsCurseforge,
 } from './curseforge'
-import { identifyModrinth, searchModrinth, versionsModrinth } from './modrinth'
+import { identifyModrinth, projectModrinth, searchModrinth, versionsModrinth } from './modrinth'
 
 /**
  * 多来源聚合。
@@ -127,25 +130,49 @@ export async function searchMods(
   }
 }
 
+/** 在已启用的来源里挑选实际使用的那一个；sourceApi 用于锁定命中的镜像 */
+function resolveSource(
+  sources: ModSource[],
+  kind: ModSourceKind,
+  sourceApi: string | undefined,
+): ModSource {
+  const matching = sources.filter((candidate) => candidate.enabled && candidate.kind === kind)
+  if (matching.length === 0) {
+    throw new Error(`未启用 ${MOD_SOURCE_LABELS[kind]} 下载源`)
+  }
+  const source = (sourceApi
+    ? matching.find((candidate) => modSourceReady(candidate) && candidate.api === sourceApi)
+    : undefined) ?? matching.find(modSourceReady)
+  if (!source) throw new Error(unavailableMessage(matching[0]!))
+  return source
+}
+
 export async function listModVersions(
   sources: ModSource[],
   request: ModVersionRequest,
   signal: AbortSignal,
 ): Promise<ModVersion[]> {
-  const matching = sources.filter(
-    (candidate) => candidate.enabled && candidate.kind === request.source,
-  )
-  if (matching.length === 0) {
-    throw new Error(`未启用 ${MOD_SOURCE_LABELS[request.source]} 下载源`)
-  }
-  const source = (request.sourceApi
-    ? matching.find((candidate) => modSourceReady(candidate) && candidate.api === request.sourceApi)
-    : undefined) ?? matching.find(modSourceReady)
-  if (!source) throw new Error(unavailableMessage(matching[0]!))
-
+  const source = resolveSource(sources, request.source, request.sourceApi)
   return request.source === 'curseforge'
     ? versionsCurseforge(source, request, signal)
     : versionsModrinth(source, request, signal)
+}
+
+/**
+ * 读取单个项目摘要。
+ *
+ * 版本列表里能拿到项目名、图标等基础信息，但 Modrinth 的作者要单独查；
+ * 前置跳转时用它补齐详情页头部。
+ */
+export async function loadModProject(
+  sources: ModSource[],
+  request: ModProjectRequest,
+  signal: AbortSignal,
+): Promise<ModSummary> {
+  const source = resolveSource(sources, request.source, request.sourceApi)
+  return request.source === 'curseforge'
+    ? projectCurseforge(source, request.projectId, signal)
+    : projectModrinth(source, request.projectId, signal)
 }
 
 /**

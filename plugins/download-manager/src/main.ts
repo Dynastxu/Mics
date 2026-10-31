@@ -58,10 +58,12 @@ import type {
   ModIdentifyRequest,
   ModIdentity,
   ModInstallRequest,
+  ModProjectRequest,
   ModSearchRequest,
   ModSearchResult,
   ModSource,
   ModSourceInfo,
+  ModSummary,
   ModVersion,
   ModVersionRequest,
   ShellExecuteCapability,
@@ -73,6 +75,7 @@ import {
   identifyMods,
   listCategories,
   listModVersions,
+  loadModProject,
   modSourceReady,
   searchMods,
 } from './mods'
@@ -332,6 +335,7 @@ export function apply(ctx: Context): void {
   /** Mod 搜索/版本列表的短时缓存：筛选切换与返回详情时避免重复打接口 */
   const modSearchCache = new Map<string, { at: number; value: ModSearchResult }>()
   const modVersionCache = new Map<string, { at: number; value: ModVersion[] }>()
+  const modProjectCache = new Map<string, { at: number; value: ModSummary }>()
   const modIdentityCache = new Map<string, { at: number; value: ModIdentity[] }>()
   const MOD_SEARCH_TTL = 90 * 1000
   const MOD_VERSION_TTL = 5 * 60 * 1000
@@ -2442,6 +2446,7 @@ export function apply(ctx: Context): void {
       loaderVersionCache.clear()
       modSearchCache.clear()
       modVersionCache.clear()
+      modProjectCache.clear()
       modIdentityCache.clear()
       log.info(
         '%s设置已更新',
@@ -2610,6 +2615,45 @@ export function apply(ctx: Context): void {
       const versions = await listModVersions(loadModSources(), normalized, abort.signal)
       writeModCache(modVersionCache, cacheKey, versions)
       return versions
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)
+    } finally {
+      clearTimeout(timeout)
+      abort.abort()
+    }
+  })
+
+  /**
+   * 单个项目摘要。
+   *
+   * 版本列表只带项目名、图标等基础信息；Modrinth 的作者要从团队 Owner 推，
+   * 前置跳转打开详情后调用这里补齐头部，不拖慢版本列表本身。
+   */
+  ctx.ipc.handle<ModProjectRequest>('mods/project', async (request): Promise<ModSummary> => {
+    const source = request?.source === 'curseforge'
+      ? 'curseforge'
+      : request?.source === 'modrinth' ? 'modrinth' : null
+    if (!source) throw new Error('不支持的 Mod 下载源')
+    const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的 Mod 项目 id')
+
+    const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
+    const normalized: ModProjectRequest = {
+      source,
+      ...(sourceApi ? { sourceApi } : {}),
+      projectId,
+    }
+    const cacheKey = `${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}`
+    const cached = readModCache(modProjectCache, cacheKey, MOD_VERSION_TTL)
+    if (cached) return cached
+
+    const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
+    try {
+      const project = await loadModProject(loadModSources(), normalized, abort.signal)
+      writeModCache(modProjectCache, cacheKey, project)
+      return project
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
       throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message)

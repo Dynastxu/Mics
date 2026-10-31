@@ -229,6 +229,20 @@ export interface ModVersionRequest {
   loader: ModLoader | 'all'
 }
 
+/**
+ * 单个项目摘要查询。
+ *
+ * 版本列表里只能拿到项目的展示名与基础摘要；作者这类信息需要单独查
+ * （Modrinth 的项目接口本身不含作者，要从团队 Owner 推出来），
+ * 前置跳转时用它补齐详情页头部。
+ */
+export interface ModProjectRequest {
+  source: ModSourceKind
+  /** 具体来源接口；多镜像时用于避免串源 */
+  sourceApi?: string
+  projectId: string
+}
+
 /** 送去指纹识别的一个本地文件 */
 export interface ModIdentifyFile {
   /** 调用方自己的唯一键，通常是文件名 */
@@ -258,6 +272,27 @@ export interface ModIdentifyRequest {
 /** Mod 文件的发布渠道 */
 export type ModReleaseChannel = 'release' | 'beta' | 'alpha'
 
+/** Mod 版本声明的依赖种类（已跨来源归一化） */
+export type ModDependencyKind = 'required' | 'optional' | 'incompatible' | 'embedded'
+
+/**
+ * Mod 版本声明的一条依赖。
+ *
+ * 玩家口中的「前置」就是 `kind === 'required'` 的依赖。来源只保证提供项目 id，
+ * 展示名与项目摘要由主进程批量解析；解析失败时回退成文件名或项目 id。
+ */
+export interface ModDependency {
+  /** 该来源内的项目 id；来源未提供时为空串 */
+  projectId: string
+  /** 展示名；例如 `Fabric API` */
+  name: string
+  /** 指定精确版本 id；空串表示不限定版本 */
+  versionId: string
+  kind: ModDependencyKind
+  /** 项目摘要；点击前置按钮时用它直接打开详情，解析失败时为空 */
+  project?: ModSummary
+}
+
 export interface ModVersion {
   /** `${source}:${fileId}`；同一项目内唯一 */
   id: string
@@ -277,6 +312,8 @@ export interface ModVersion {
   sha1: string
   size: number
   downloads: number
+  /** 该文件声明的依赖；版本列表的「前置」只展示 required */
+  dependencies: ModDependency[]
 }
 
 /** 一次 Mod 安装要落盘的文件 */
