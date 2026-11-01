@@ -56,7 +56,12 @@ function validateContributions(
           title: item.title,
           icon: typeof item.icon === 'string' ? item.icon : undefined,
           order: typeof item.order === 'number' ? item.order : undefined,
-          group: typeof item.group === 'string' ? item.group : undefined
+          group: typeof item.group === 'string' ? item.group : undefined,
+          rightSlot: typeof item.rightSlot === 'string' ? item.rightSlot : undefined,
+          rightDisplay:
+            item.rightDisplay === 'always' || item.rightDisplay === 'hover'
+              ? item.rightDisplay
+              : undefined
         })
       }
       contributions.nav = nav
@@ -77,7 +82,12 @@ function validateContributions(
           id: group.id,
           title: group.title,
           icon: typeof group.icon === 'string' ? group.icon : undefined,
-          order: typeof group.order === 'number' ? group.order : undefined
+          order: typeof group.order === 'number' ? group.order : undefined,
+          rightSlot: typeof group.rightSlot === 'string' ? group.rightSlot : undefined,
+          rightDisplay:
+            group.rightDisplay === 'always' || group.rightDisplay === 'hover'
+              ? group.rightDisplay
+              : undefined
         })
       }
       contributions.navGroups = navGroups

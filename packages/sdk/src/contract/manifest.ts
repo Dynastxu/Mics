@@ -28,6 +28,10 @@ export interface NavContribution {
   order?: number
   /** 所属分组 id；缺省表示顶层导航项（例如「启动」） */
   group?: string
+  /** 右侧自定义区域插槽名，对应 ctx.ui.registerView 注册的组件 */
+  rightSlot?: string
+  /** 右侧区域显示策略：'always' 常驻 | 'hover' 鼠标悬停时显示，默认 'hover' */
+  rightDisplay?: 'always' | 'hover'
 }
 
 /** 导航分组：只提供标题与图标，子项由各插件用 `nav` + `group` 自行挂载 */
@@ -36,6 +40,10 @@ export interface NavGroupContribution {
   title: string
   icon?: string
   order?: number
+  /** 右侧自定义区域插槽名，对应 ctx.ui.registerView 注册的组件 */
+  rightSlot?: string
+  /** 右侧区域显示策略：'always' 常驻 | 'hover' 鼠标悬停时显示，默认 'hover' */
+  rightDisplay?: 'always' | 'hover'
 }
 
 export interface CommandContribution {

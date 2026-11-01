@@ -8,9 +8,10 @@
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
   "dependencies": ["mics.kernel", "mics.shell", "mics.account"],
+  "activation": ["onStartup"],
   "contributes": {
     "nav": [
-      { "id": "launch", "title": "启动", "icon": "play", "order": 10 },
+      { "id": "launch", "title": "启动", "icon": "play", "order": 10, "rightSlot": "launch.badge", "rightDisplay": "always" },
       {
         "id": "settings.launch",
         "group": "settings",

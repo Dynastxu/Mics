@@ -269,6 +269,20 @@ svg.mics-icon {
   font-size: 12.5px;
 }
 
+.mics-nav__right {
+  display: flex;
+  align-items: center;
+  flex: none;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.mics-nav__item:hover .mics-nav__right,
+.mics-nav__right.is-always {
+  opacity: 1;
+}
+
 /* ---------------------------------------------------------------- 主区域 */
 
 .mics-main {

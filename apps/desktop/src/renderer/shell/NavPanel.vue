@@ -5,6 +5,7 @@ import {
   navRoots,
   store,
   toggleGroup,
+  viewComponents,
   type NavGroup,
   type NavItem
 } from '../runtime/store'
@@ -34,6 +35,13 @@ function isGroupCurrent(group: NavGroup): boolean {
         >
           <MicsIcon :name="root.item.icon" />
           <span class="mics-nav__label">{{ root.item.title }}</span>
+          <span
+            v-if="root.item.rightSlot && viewComponents[root.item.rightSlot]"
+            class="mics-nav__right"
+            :class="{ 'is-always': root.item.rightDisplay === 'always' }"
+          >
+            <component :is="viewComponents[root.item.rightSlot]" />
+          </span>
         </button>
 
         <div v-else class="mics-nav__group">
@@ -46,6 +54,13 @@ function isGroupCurrent(group: NavGroup): boolean {
           >
             <MicsIcon :name="root.group.icon" />
             <span class="mics-nav__label">{{ root.group.title }}</span>
+            <span
+              v-if="root.group.rightSlot && viewComponents[root.group.rightSlot]"
+              class="mics-nav__right"
+              :class="{ 'is-always': root.group.rightDisplay === 'always' }"
+            >
+              <component :is="viewComponents[root.group.rightSlot]" />
+            </span>
             <MicsIcon
               class="mics-nav__chevron"
               :class="{ 'is-open': isGroupExpanded(root.group.id) }"
@@ -64,6 +79,13 @@ function isGroupCurrent(group: NavGroup): boolean {
             >
               <MicsIcon :name="item.icon" :size="15" />
               <span class="mics-nav__label">{{ item.title }}</span>
+              <span
+                v-if="item.rightSlot && viewComponents[item.rightSlot]"
+                class="mics-nav__right"
+                :class="{ 'is-always': item.rightDisplay === 'always' }"
+              >
+                <component :is="viewComponents[item.rightSlot]" />
+              </span>
             </button>
           </div>
         </div>

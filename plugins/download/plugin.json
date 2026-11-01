@@ -15,7 +15,9 @@
         "group": "download",
         "title": "下载进度",
         "icon": "activity",
-        "order": 10
+        "order": 10,
+        "rightSlot": "download.badge",
+        "rightDisplay": "always"
       },
       {
         "id": "settings.download",
@@ -25,5 +27,6 @@
         "order": 40
       }
     ]
-  }
+  },
+  "activation": ["onStartup"]
 }
