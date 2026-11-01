@@ -1,10 +1,12 @@
 import { createApp } from 'vue'
 import * as Vue from 'vue'
 import * as Cordis from 'cordis'
+import { iconPlaybackGateKey } from '@mics/ui'
 import App from './App.vue'
 import { boot, reportBootError } from './runtime/context'
 import { installCleanupAudit } from './runtime/cleanupAudit'
 import { store } from './runtime/store'
+import { startWindowVisibilityTracking, windowVisibilityGate } from './runtime/windowVisibility'
 import './assets/main.css'
 
 /**
@@ -24,7 +26,10 @@ globals.__MICS_CORDIS__ = Cordis
 // 开发期清理审计要在任何插件加载前安装，才能记录到它们的监听器
 installCleanupAudit()
 
-createApp(App).mount('#app')
+// 图标动画要等窗口真的显示出来再播：由主进程的窗口状态回答「可见了吗」
+startWindowVisibilityTracking()
+
+createApp(App).provide(iconPlaybackGateKey, windowVisibilityGate).mount('#app')
 
 boot().catch((error: unknown) => {
   store.bootError = error instanceof Error ? error.message : String(error)

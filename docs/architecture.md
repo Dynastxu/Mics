@@ -211,13 +211,14 @@ app.whenReady()
 
 窗口是无边框的（`frame: false`），系统标题栏、菜单栏、窗口按钮都不显示：
 
-| 关注点     | 实现                                                                                                                                                 |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 系统菜单   | bootstrap 里 `Menu.setApplicationMenu(null)`；开发/预览构建下用 F12（或 `Ctrl+Shift+I`）开 DevTools、`Ctrl+R` 重载渲染进程                           |
-| 标题栏     | `shell/WindowTitleBar.vue`；拖动区用 `-webkit-app-region: drag` 交给系统，双击最大化、贴边吸附都是系统行为                                           |
-| 窗口按钮   | 按钮区 `-webkit-app-region: no-drag`，点击经 `window.mics.windowControls` → IPC → 主进程 `BrowserWindow`                                             |
-| 最大化状态 | 主进程监听 `maximize` / `unmaximize` 推给渲染进程，标题栏据此在「最大化 / 还原」之间切换图标                                                         |
-| 窗口尺寸   | `main/windowSizing.ts`：最小 640×420，启动尺寸不超过当前工作区；状态栏「命令」右侧有一个拖动区，按住拖动即可缩放窗口（左上角固定，只受最小尺寸限制） |
+| 关注点     | 实现                                                                                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 系统菜单   | bootstrap 里 `Menu.setApplicationMenu(null)`；开发/预览构建下用 F12（或 `Ctrl+Shift+I`）开 DevTools、`Ctrl+R` 重载渲染进程                             |
+| 标题栏     | `shell/WindowTitleBar.vue`；拖动区用 `-webkit-app-region: drag` 交给系统，双击最大化、贴边吸附都是系统行为                                             |
+| 窗口按钮   | 按钮区 `-webkit-app-region: no-drag`，点击经 `window.mics.windowControls` → IPC → 主进程 `BrowserWindow`                                               |
+| 最大化状态 | 主进程监听 `maximize` / `unmaximize` 推给渲染进程，标题栏据此在「最大化 / 还原」之间切换图标                                                           |
+| 窗口可见性 | 主进程按 `isVisible() && !isMinimized()` 推 `visible`；图标入场动画等它为 true 才播放。隐藏窗口里 Electron 仍在绘制，`document.visibilityState` 不可信 |
+| 窗口尺寸   | `main/windowSizing.ts`：最小 640×420，启动尺寸不超过当前工作区；状态栏「命令」右侧有一个拖动区，按住拖动即可缩放窗口（左上角固定，只受最小尺寸限制）   |
 
 壳专用的 IPC 通道：
 
@@ -226,8 +227,8 @@ app.whenReady()
 - `mics:window-resize`：渲染 → 主，`{ phase: 'start' | 'move' | 'end', x, y }`；
   指针用屏幕坐标，主进程以按下时的 bounds 加上位移算出新宽高，左上角保持不动，
   只夹最小尺寸；最大化时先还原再继续。
-- `mics:window-state`：主 → 渲染，`{ maximized }`；渲染进程挂载时再 `invoke` 拉一次，
-  因为窗口重载时状态事件可能早于监听。
+- `mics:window-state`：主 → 渲染，`{ maximized, visible }`；最大化、显示 / 隐藏、最小化 / 还原
+  都会推，渲染进程挂载时再 `invoke` 拉一次，因为窗口重载时状态事件可能早于监听。
 
 窗口装饰和导航容器、状态栏一样属于外壳，不作为插件贡献点。
 

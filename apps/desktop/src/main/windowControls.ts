@@ -7,7 +7,11 @@ const RESIZE_CHANNEL = 'mics:window-resize'
 const STATE_CHANNEL = 'mics:window-state'
 
 function stateOf(window: BrowserWindow | null): MicsWindowState {
-  return { maximized: window?.isMaximized() ?? false }
+  return {
+    maximized: window?.isMaximized() ?? false,
+    // 最小化的窗口仍算「可见」，但用户看不到内容，不能当作可播放
+    visible: window ? window.isVisible() && !window.isMinimized() : false
+  }
 }
 
 /**
@@ -56,7 +60,7 @@ export function registerWindowControls(): void {
   ipcMain.handle(STATE_CHANNEL, (event) => stateOf(BrowserWindow.fromWebContents(event.sender)))
 }
 
-/** 把最大化状态推给渲染进程：双击拖动区、Win+↑、系统菜单都会改变它 */
+/** 把窗口状态推给渲染进程：双击拖动区、Win+↑、系统菜单、显示 / 隐藏都会改变它 */
 export function trackWindowState(window: BrowserWindow): void {
   const push = (): void => {
     if (window.isDestroyed() || window.webContents.isDestroyed()) return
@@ -65,6 +69,11 @@ export function trackWindowState(window: BrowserWindow): void {
 
   window.on('maximize', push)
   window.on('unmaximize', push)
+  // 入场动画要等窗口真的显示出来再播：渲染进程靠 visible 判断，不能猜 document.visibilityState
+  window.on('show', push)
+  window.on('hide', push)
+  window.on('minimize', push)
+  window.on('restore', push)
   // 拖动中失去焦点（切换应用、窗口被关闭）时丢弃这次拖动，避免继续改大小
   window.on('blur', () => endResize(window))
   window.on('closed', () => endResize(window))

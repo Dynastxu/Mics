@@ -13,7 +13,7 @@
         "id": "download.modpack",
         "group": "download",
         "title": "整合包",
-        "icon": "archive",
+        "icon": "folder-zip",
         "order": 30
       }
     ]

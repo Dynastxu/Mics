@@ -10,7 +10,7 @@
   "dependencies": ["mics.kernel"],
   "permissions": ["shell:openExternal"],
   "contributes": {
-    "nav": [{ "id": "account", "title": "账户", "icon": "user", "order": 0 }],
+    "nav": [{ "id": "account", "title": "账户", "icon": "account", "order": 0 }],
     "configuration": {
       "title": "账户",
       "description": "与部署相关的登录参数。",

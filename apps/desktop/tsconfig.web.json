@@ -2,7 +2,13 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": {
+      "@mics/sdk": ["../../packages/sdk/src/index.ts"],
+      "@mics/sdk/renderer": ["../../packages/sdk/src/renderer.ts"],
+      "@mics/sdk/main": ["../../packages/sdk/src/main.ts"],
+      "@mics/ui": ["../../packages/ui/src/index.ts"]
+    }
   },
   "include": [
     "src/renderer/**/*.ts",
@@ -11,6 +17,8 @@
     "../../packages/sdk/src/index.ts",
     "../../packages/sdk/src/renderer.ts",
     "../../packages/sdk/src/contract/**/*.ts",
-    "../../packages/sdk/src/global.d.ts"
+    "../../packages/sdk/src/global.d.ts",
+    "../../packages/ui/src/**/*.ts",
+    "../../packages/ui/src/**/*.vue"
   ]
 }

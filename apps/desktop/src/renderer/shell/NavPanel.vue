@@ -9,7 +9,7 @@ import {
   type NavGroup,
   type NavItem
 } from '../runtime/store'
-import MicsIcon from './MicsIcon.vue'
+import { MicsIcon } from '@mics/ui'
 
 const roots = computed(() => navRoots())
 const width = computed(() => `${store.layout?.regions?.nav?.width ?? 232}px`)

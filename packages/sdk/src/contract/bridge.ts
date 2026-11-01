@@ -19,9 +19,17 @@ export interface MicsWindowResizeGesture {
   y: number
 }
 
-/** 窗口状态：标题栏据此在「最大化 / 还原」之间切换图标 */
+/** 窗口状态：标题栏据此在「最大化 / 还原」之间切换图标，渲染进程据此决定何时播放入场动画 */
 export interface MicsWindowState {
   maximized: boolean
+  /**
+   * 窗口是否真的显示在屏幕上。
+   *
+   * 窗口是 `show: false` 创建、`ready-to-show` 之后才显示的，这段时间里的
+   * `document.visibilityState` 并不可靠（Electron 默认会在隐藏时也绘制），
+   * 所以「是否可见」只能由主进程回答。
+   */
+  visible: boolean
 }
 
 /**
@@ -38,7 +46,7 @@ export interface MicsWindowControls {
   resizeWindow(gesture: MicsWindowResizeGesture): void
   /** 读取当前状态：渲染进程重载时事件可能早于监听，需要主动拉一次 */
   getState(): Promise<MicsWindowState>
-  /** 订阅最大化状态变化；返回取消订阅函数 */
+  /** 订阅窗口状态变化（最大化、显示 / 隐藏、最小化 / 还原）；返回取消订阅函数 */
   onStateChange(listener: (state: MicsWindowState) => void): () => void
 }
 
