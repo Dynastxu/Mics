@@ -264,6 +264,10 @@ function applyAccounts(snapshot: AccountSnapshot): void {
   }
 }
 
+async function refreshAll(): Promise<void> {
+  await Promise.all([load(), loadStatuses(), refreshState()])
+}
+
 async function loadAccounts(): Promise<void> {
   try {
     applyAccounts(await ctx.ipc.invoke<AccountSnapshot>('mics.account', 'accounts/list'))
@@ -458,7 +462,31 @@ onUnmounted(() => {
 
   <div v-else class="mics-page">
     <header class="mics-page__header">
-      <h1 class="mics-page__title">启动</h1>
+      <div class="launch__heading">
+        <h1 class="mics-page__title">启动</h1>
+        <button
+          class="launch__refresh"
+          type="button"
+          :title="'刷新'"
+          aria-label="刷新"
+          @click="refreshAll"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 12a9 9 0 1 1-3-6.7" />
+            <path d="M21 3v5h-5" />
+          </svg>
+        </button>
+      </div>
       <div class="mics-page__actions">
         <template v-if="accounts.length">
           <select
@@ -571,6 +599,32 @@ onUnmounted(() => {
 <style scoped>
 .launch__account {
   width: 180px;
+}
+
+.launch__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.launch__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  margin: 0;
+  color: var(--mics-fg-muted);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.launch__refresh:hover {
+  color: var(--mics-fg);
+  background: color-mix(in srgb, var(--mics-accent) 12%, transparent);
 }
 
 .launch__row {
