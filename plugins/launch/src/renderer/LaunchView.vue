@@ -86,6 +86,7 @@ function isRepairing(id: string): boolean {
 
 let offState: (() => void) | null = null
 let offAccounts: (() => void) | null = null
+let offViewActivated: (() => void) | null = null
 let statusTimer: ReturnType<typeof setInterval> | null = null
 
 function messageOf(cause: unknown): string {
@@ -407,6 +408,12 @@ onMounted(() => {
     const snapshot = payload as AccountSnapshot | undefined
     if (snapshot && Array.isArray(snapshot.accounts)) applyAccounts(snapshot)
   })
+  offViewActivated = ctx.on('ui/viewActivated', (viewId: string) => {
+    if (viewId !== 'launch') return
+    void load()
+    void loadStatuses()
+    void refreshState()
+  })
   void load()
   void loadStatuses()
   void refreshState()
@@ -422,6 +429,8 @@ onUnmounted(() => {
   offState = null
   offAccounts?.()
   offAccounts = null
+  offViewActivated?.()
+  offViewActivated = null
   if (statusTimer) {
     clearInterval(statusTimer)
     statusTimer = null
@@ -513,12 +522,6 @@ onUnmounted(() => {
           </div>
           <span class="launch__played">{{ formatPlayed(instance.lastPlayed) }}</span>
           <div class="launch__actions" @click.stop>
-            <button
-              class="mics-button mics-button--ghost mics-button--small"
-              @click="openDetail(instance)"
-            >
-              详情
-            </button>
             <button
               v-if="phases[instance.id] === 'incomplete'"
               class="mics-button mics-button--ghost mics-button--small"

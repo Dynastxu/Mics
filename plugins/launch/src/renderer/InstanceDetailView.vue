@@ -46,9 +46,9 @@ type DetailTab = 'overview' | 'logs' | 'mods' | 'saves'
 
 const TABS: Array<{ id: DetailTab; label: string }> = [
   { id: 'overview', label: '概览' },
-  { id: 'logs', label: '日志' },
+  { id: 'saves', label: '存档' },
   { id: 'mods', label: 'Mod' },
-  { id: 'saves', label: '存档' }
+  { id: 'logs', label: '日志' }
 ]
 
 const USAGE_LABELS: Record<string, string> = {
@@ -553,8 +553,25 @@ onMounted(() => {
   <div class="mics-page detail">
     <header class="mics-page__header detail__header">
       <div class="detail__identity">
-        <button class="detail__back" type="button" aria-label="返回实例列表" @click="goBack">
-          ←
+        <button
+            class="mics-button mics-button--ghost mics-button--small"
+            type="button"
+            @click="goBack"
+        >
+          <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+          >
+            <path d="m15 6-6 6 6 6" />
+          </svg>
+          返回
         </button>
         <span class="mics-avatar" :class="avatarClass">{{ instance.name.slice(0, 1) }}</span>
         <div class="detail__titles">

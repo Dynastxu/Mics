@@ -72,6 +72,9 @@ export interface MicsEvents {
 
   /** 通知：某能力的提供方发生变化（新增、撤销、被更高优先级顶替）。 */
   'capability/changed'(name: string, providers: CapabilityProviderInfo[]): void
+
+  /** 通知：导航切换到指定页面；插件可在页面重新可见时刷新数据。 */
+  'ui/viewActivated'(viewId: string): void
 }
 
 /**
@@ -87,7 +90,8 @@ export const EVENT_MODES = {
   'plugin/beforeActivate': 'bail',
   'ipc/before': 'waterfall',
   'ipc/after': 'emit',
-  'capability/changed': 'emit'
+  'capability/changed': 'emit',
+  'ui/viewActivated': 'emit'
 } as const satisfies Record<keyof MicsEvents, EventDispatchMode>
 
 export type MicsEventName = keyof MicsEvents

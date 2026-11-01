@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { navItemById, store, type NavItem } from '../runtime/store'
+import { getContext } from '../runtime/context'
 import PageHost from './PageHost.vue'
 
 const page = computed(() => navItemById(store.activeView))
@@ -34,6 +35,14 @@ watch(
     if (visited.value.every((id) => alive.has(id))) return
     visited.value = visited.value.filter((id) => alive.has(id))
   }
+)
+
+watch(
+  () => store.activeView,
+  (id) => {
+    if (id) getContext().emit('ui/viewActivated', id)
+  },
+  { immediate: true }
 )
 </script>
 
