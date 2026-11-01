@@ -11,10 +11,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Version comes from the "packageManager" field in package.json.
+      # Do not add a "version" input here: specifying both fails with
+      # "Multiple versions of pnpm specified".
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 12
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -31,8 +32,10 @@ jobs:
       - name: Upload build output
         uses: actions/upload-artifact@v4
         with:
-          name: nide-out
-          path: out
+          name: mics-out
+          path: |
+            apps/desktop/out
+            plugins/*/dist
           if-no-files-found: error
           retention-days: 7
 
