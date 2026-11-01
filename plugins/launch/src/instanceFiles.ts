@@ -440,7 +440,7 @@ export async function listInstanceSaves(userDataDir: string, id: string): Promis
     if (!entry.isDirectory() || !isPlainFileName(entry.name)) continue
     const worldDir = path.join(dir, entry.name)
 
-    let modified = 0
+    let modified: number
     try {
       modified = (await stat(path.join(worldDir, 'level.dat'))).mtimeMs
     } catch {
