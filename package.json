@@ -19,7 +19,13 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "vue-tsc --noEmit -p apps/desktop/tsconfig.web.json && tsc --noEmit -p apps/desktop/tsconfig.node.json && vue-tsc --noEmit -p plugins/tsconfig.json",
-    "start": "pnpm --filter @mics/desktop start"
+    "start": "pnpm --filter @mics/desktop start",
+    "pack": "pnpm --filter @mics/desktop pack",
+    "dist": "pnpm build && pnpm --filter @mics/desktop dist",
+    "dist:win": "pnpm build && pnpm --filter @mics/desktop dist:win",
+    "dist:mac": "pnpm build && pnpm --filter @mics/desktop dist:mac",
+    "dist:linux": "pnpm build && pnpm --filter @mics/desktop dist:linux",
+    "workflow:ci": "pnpm typecheck && pnpm lint && pnpm build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

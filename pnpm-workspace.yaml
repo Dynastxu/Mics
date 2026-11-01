@@ -5,4 +5,5 @@ packages:
   # 便于把只服务该插件的依赖限制在插件目录内
   - 'plugins/*'
 allowBuilds:
+  electron-winstaller: true
   esbuild: true

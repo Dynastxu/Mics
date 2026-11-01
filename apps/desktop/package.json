@@ -8,7 +8,12 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "start": "electron-vite preview"
+    "start": "electron-vite preview",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
     "@mics/plugin-loader": "workspace:*",
@@ -20,9 +25,51 @@
     "@types/node": "^24.13.4",
     "@vitejs/plugin-vue": "^6.0.10",
     "electron": "^45.0.0",
+    "electron-builder": "^26.0.0",
     "electron-vite": "^6.0.0",
     "typescript": "~6.0.3",
     "vite": "^8.3.5",
     "vue-tsc": "^3.3.13"
+  },
+  "build": {
+    "appId": "com.github.mics",
+    "productName": "MICS",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../plugins",
+        "to": "plugins",
+        "filter": ["**/dist/**", "**/plugin.json"]
+      },
+      {
+        "from": "../../boot.config.json",
+        "to": "boot.config.json"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "mac": {
+      "target": ["dmg"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"]
+    }
   }
 }

@@ -258,7 +258,7 @@ async function main() {
   console.log(
     watch
       ? `[plugins] 监听中（${plugins + examples} 个）…`
-      : `[plugins] 完成：${plugins} 个插件 + ${examples} 个示例 → out 就绪，可以 pnpm dev`
+      : `[plugins] 完成：${plugins} 个插件 + ${examples} 个示例 → out 就绪`
   )
   if (watch) await new Promise(() => {})
 }
