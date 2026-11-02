@@ -94,6 +94,17 @@ export class PluginFailureError extends Error {
   }
 }
 
+/**
+ * 选好目录后的安装预览。
+ *
+ * 主进程只负责「选目录 + 读清单」，确认由渲染端的内部确认框完成；确认后再用
+ * `dir` 调安装接口。这样安装说明、风险提示与其它确认走同一套 UI，不使用系统消息框。
+ */
+export type PluginInstallSelection =
+  | { status: 'selected'; dir: string; plugin: PluginInstallSummary }
+  | { status: 'cancelled' }
+  | { status: 'failed'; message: string }
+
 export type PluginInstallOutcome =
   | { status: 'installed'; plugin: PluginInstallSummary; upgraded: boolean }
   | { status: 'cancelled' }

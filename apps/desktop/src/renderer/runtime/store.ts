@@ -8,6 +8,7 @@ import type {
   NavGroupContribution,
   PluginInfo,
   RuntimeSnapshot,
+  SettingsSection,
   StatusBarContribution,
   ThemeContribution
 } from '@mics/sdk'
@@ -42,6 +43,8 @@ export interface WorkbenchStore {
   commands: CommandInfo[]
   themes: ThemeContribution[]
   runtimeStatus: StatusItem[]
+  /** 通用设置页的插件 section；由 ctx.ui.registerSettingsSection 写入 */
+  settingsSections: SettingsSection[]
   layout?: LayoutContribution
   themeId: string
   /** 当前页面对应的导航项 id */
@@ -64,6 +67,7 @@ export const store = reactive<WorkbenchStore>({
   commands: [],
   themes: [],
   runtimeStatus: [],
+  settingsSections: [],
   layout: undefined,
   themeId: '',
   activeView: '',
@@ -76,6 +80,34 @@ export const store = reactive<WorkbenchStore>({
 
 /** viewId -> Vue 组件；由插件通过 ctx.ui.registerView 写入 */
 export const viewComponents = shallowReactive<Record<string, Component>>({})
+
+const ACTIVE_VIEW_KEY = 'mics.activeView'
+
+/**
+ * 记住最后打开的页面。
+ *
+ * 低内存托盘模式会销毁窗口、恢复时重建渲染进程；重建的页面带 `restore=1`，
+ * 此时把上次页面恢复回来。正常启动不读它，仍然按布局的 defaultView 打开。
+ */
+export function rememberActiveView(id: string): void {
+  try {
+    window.localStorage.setItem(ACTIVE_VIEW_KEY, id)
+  } catch {
+    // localStorage 不可用（隐私模式 / 配额满）：保持默认页面
+  }
+}
+
+function restoreActiveView(): void {
+  if (new URLSearchParams(window.location.search).get('restore') !== '1') return
+  try {
+    const saved = window.localStorage.getItem(ACTIVE_VIEW_KEY)
+    if (saved) store.activeView = saved
+  } catch {
+    // 读取失败：按默认页面
+  }
+}
+
+restoreActiveView()
 
 function byOrder(a: { order?: number; id: string }, b: { order?: number; id: string }): number {
   return (a.order ?? 100) - (b.order ?? 100) || a.id.localeCompare(b.id)

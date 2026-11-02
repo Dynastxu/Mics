@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
 
 const ctx = usePluginContext()
@@ -8,6 +8,13 @@ const app = ctx.plugins.snapshot().app
 const themes = ctx.theme.available()
 const themeId = ref(ctx.theme.current() ?? themes[0]?.id ?? '')
 const language = ref('zh-CN')
+
+/** 其它插件注册到通用设置页的 section；按 order 稳定排序 */
+const sections = computed(() =>
+  [...ctx.ui.settingsSections()].sort(
+    (left, right) => (left.order ?? 100) - (right.order ?? 100) || left.id.localeCompare(right.id)
+  )
+)
 
 function changeTheme(event: Event): void {
   themeId.value = (event.target as HTMLSelectElement).value
@@ -44,6 +51,11 @@ function changeTheme(event: Event): void {
           </div>
         </div>
       </div>
+    </section>
+
+    <section v-for="section in sections" :key="section.id" class="mics-section">
+      <h2 v-if="section.title" class="mics-section__title">{{ section.title }}</h2>
+      <component :is="section.component" v-bind="section.props" />
     </section>
 
     <section class="mics-section">

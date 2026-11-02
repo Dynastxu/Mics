@@ -1,20 +1,26 @@
 import type { Context } from 'cordis'
 import { Service } from 'cordis'
-import type { Component } from 'vue'
-import type { Disposable, PluginId, RendererStatusBarItem } from '@mics/sdk'
+import { markRaw, type Component } from 'vue'
+import type {
+  Disposable,
+  PluginId,
+  RendererStatusBarItem,
+  SettingsSection
+} from '@mics/sdk'
 import { pluginIdOf } from '@mics/sdk'
 import { navItemById, store, viewComponents } from '../store'
 
 /**
- * 渲染进程 UI 服务：导航页面与状态栏的注册表。
+ * 渲染进程 UI 服务：导航页面、状态栏与通用设置 section 的注册表。
  * 注册调用发生在插件 fiber 内，因此 dispose 插件即可把 UI 一并摘掉。
  *
- * 最小隔离：注册表按插件 id 记录归属，跨插件覆盖同一个 view / 状态栏 id
+ * 最小隔离：注册表按插件 id 记录归属，跨插件覆盖同一个 view / 状态栏 / section id
  * 会直接失败。完整 iframe / utility process 沙箱仍在 M3。
  */
 export class UiService extends Service {
   private readonly viewOwners = new Map<string, PluginId>()
   private readonly statusOwners = new Map<string, PluginId>()
+  private readonly settingsOwners = new Map<string, PluginId>()
 
   constructor(ctx: Context) {
     super(ctx, 'ui')
@@ -32,6 +38,30 @@ export class UiService extends Service {
       if (viewComponents[viewId] === component) delete viewComponents[viewId]
       if (owner && this.viewOwners.get(viewId) === owner) this.viewOwners.delete(viewId)
     })
+  }
+
+  registerSettingsSection(section: SettingsSection): Disposable {
+    const owner = pluginIdOf(this.ctx)
+    const existing = this.settingsOwners.get(section.id)
+    if (existing && existing !== owner) {
+      throw new Error(
+        `通用设置区块 ${section.id} 已由插件 ${existing} 注册，${owner ?? '当前插件'} 不能覆盖`
+      )
+    }
+    if (owner) this.settingsOwners.set(section.id, owner)
+    // section 里有 Vue 组件与插件 Context：markRaw 避免被 reactive 深度代理
+    store.settingsSections.push(markRaw(section))
+    return this.ctx.effect(() => () => {
+      const index = store.settingsSections.indexOf(section)
+      if (index >= 0) store.settingsSections.splice(index, 1)
+      if (owner && this.settingsOwners.get(section.id) === owner) {
+        this.settingsOwners.delete(section.id)
+      }
+    })
+  }
+
+  settingsSections(): SettingsSection[] {
+    return store.settingsSections
   }
 
   registerStatusBarItem(item: RendererStatusBarItem): Disposable {

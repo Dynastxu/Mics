@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { navItemById, store, type NavItem } from '../runtime/store'
+import { navItemById, rememberActiveView, store, type NavItem } from '../runtime/store'
 import { getContext } from '../runtime/context'
 import PageHost from './PageHost.vue'
 
@@ -40,7 +40,9 @@ watch(
 watch(
   () => store.activeView,
   (id) => {
-    if (id) getContext().emit('ui/viewActivated', id)
+    if (!id) return
+    rememberActiveView(id)
+    getContext().emit('ui/viewActivated', id)
   },
   { immediate: true }
 )

@@ -14,7 +14,8 @@
 │   ├─ IpcService         mics:rpc 路由、mics:event 广播、调用方追踪           │
 │   ├─ CommandsService    声明式命令 + 实现注册，执行前按需激活                │
 │   ├─ StorageService     按 pluginId 隔离的 JSON 存储                        │
-│   └─ PermissionsService 清单权限校验                                        │
+│   ├─ PermissionsService 清单权限校验                                        │
+│   ├─ MainWindowService  主窗口生命周期（销毁 / 重建，低内存托盘）            │
 │   └─ 其余插件由 PluginsService 逐个 ctx.plugin() 挂载                        │
 └──────────────────────────────┬─────────────────────────────────────────────┘
                                │ preload contextBridge（唯一通道）
@@ -40,17 +41,17 @@
 
 ## 2. Cordis 映射
 
-| Cordis 概念                      | 在本项目中的职责                                                                                                                                    |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Context`                        | 一切服务的容器；渲染进程也有一棵独立的 Context 树                                                                                                   |
-| `ctx.plugin(plugin, config)`     | 插件激活；返回 `Fiber`，await 即等待激活完成                                                                                                        |
-| `ctx.effect(() => cleanup)`      | 注册页面/命令/IPC 时的回收钩子；插件卸载自动执行                                                                                                    |
-| `ctx.inject(deps, cb)`           | 依赖多个服务后再执行（内核注册系统 RPC 时用到）；服务缺失时插件停在 waiting                                                                         |
-| `ctx.waterfall('ipc/before', …)` | RPC 派发前的拦截链：权限、审计、二次确认挂在插件侧，内核不再逐条加 if                                                                               |
-| `Service` 子类                   | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions` / `capabilities` / `configuration`；插件也能提供（`mics.logger` → `ctx.logs`） |
-| `ctx.isolate()`                  | 后续用于单插件服务隔离（例如独立日志命名空间）                                                                                                      |
-| `ctx.on/emit`                    | 主进程内部事件；每个 Mics 事件在 `@mics/sdk` 的 `EVENT_MODES` 里声明派发模式，见下文「事件派发模式」                                                |
-| `ctx.registry`                   | 插件面板可据此列出所有 fiber（后续扩展点）                                                                                                          |
+| Cordis 概念                      | 在本项目中的职责                                                                                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Context`                        | 一切服务的容器；渲染进程也有一棵独立的 Context 树                                                                                                                  |
+| `ctx.plugin(plugin, config)`     | 插件激活；返回 `Fiber`，await 即等待激活完成                                                                                                                       |
+| `ctx.effect(() => cleanup)`      | 注册页面/命令/IPC 时的回收钩子；插件卸载自动执行                                                                                                                   |
+| `ctx.inject(deps, cb)`           | 依赖多个服务后再执行（内核注册系统 RPC 时用到）；服务缺失时插件停在 waiting                                                                                        |
+| `ctx.waterfall('ipc/before', …)` | RPC 派发前的拦截链：权限、审计、二次确认挂在插件侧，内核不再逐条加 if                                                                                              |
+| `Service` 子类                   | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions` / `capabilities` / `configuration` / `mainWindow`；插件也能提供（`mics.logger` → `ctx.logs`） |
+| `ctx.isolate()`                  | 后续用于单插件服务隔离（例如独立日志命名空间）                                                                                                                     |
+| `ctx.on/emit`                    | 主进程内部事件；每个 Mics 事件在 `@mics/sdk` 的 `EVENT_MODES` 里声明派发模式，见下文「事件派发模式」                                                               |
+| `ctx.registry`                   | 插件面板可据此列出所有 fiber（后续扩展点）                                                                                                                         |
 
 ### 事件派发模式
 
@@ -80,7 +81,8 @@ Cordis 的 Service 方法在被插件调用时，`this.ctx` 会指向**调用方
 
 - `ctx.storage.get('k')` 自动落到调用方插件自己的 JSON 文件；
 - `ctx.ipc.handle('x', fn)` 自动登记到调用方插件 id 下，并在其卸载时移除；
-- `ctx.ui.registerView(...)` 注册的页面会随插件 fiber dispose 一起消失。
+- `ctx.ui.registerView(...)` 注册的页面会随插件 fiber dispose 一起消失；
+  `ctx.ui.registerSettingsSection(...)` 同理。
 
 这就是为什么插件里不需要手写 `pluginId` 参数。
 
@@ -185,6 +187,11 @@ app.whenReady()
   已挂载页面间保持唯一。
 - 插件可以调用 `ctx.ui.navigate(viewId)` 切到任意已注册页面（例如安装受理后跳到下载进度）；
   目标页面不存在（插件缺失或被禁用）时返回 `false`，由调用方决定如何提示。
+- 需要在「设置 → 通用」里追加配置区块的插件，调用
+  `ctx.ui.registerSettingsSection({ id, title, order, component, props })`。区块带自己的
+  `order`，设置页只负责按序渲染——设置页不 import 任何具体插件，插件也不依赖设置页存在。
+  `props` 在注册时固定（通常是插件自己的 `ctx`），因为设置页的 `usePluginContext()` 拿到的是
+  `mics.settings` 的上下文，不能代表注册方。
 
 ## 5. IPC 协议
 
@@ -219,6 +226,7 @@ app.whenReady()
 | 最大化状态 | 主进程监听 `maximize` / `unmaximize` 推给渲染进程，标题栏据此在「最大化 / 还原」之间切换图标                                                           |
 | 窗口可见性 | 主进程按 `isVisible() && !isMinimized()` 推 `visible`；图标入场动画等它为 true 才播放。隐藏窗口里 Electron 仍在绘制，`document.visibilityState` 不可信 |
 | 窗口尺寸   | `main/windowSizing.ts`：最小 640×420，启动尺寸不超过当前工作区；状态栏「命令」右侧有一个拖动区，按住拖动即可缩放窗口（左上角固定，只受最小尺寸限制）   |
+| 关闭行为   | `plugins/close-behavior` 拦截 `BrowserWindow` 的 `close`：按设置询问（带「不再提示」）/ 直接退出 / 隐藏到托盘；托盘菜单提供恢复与退出                  |
 
 壳专用的 IPC 通道：
 
@@ -230,7 +238,31 @@ app.whenReady()
 - `mics:window-state`：主 → 渲染，`{ maximized, visible }`；最大化、显示 / 隐藏、最小化 / 还原
   都会推，渲染进程挂载时再 `invoke` 拉一次，因为窗口重载时状态事件可能早于监听。
 
-窗口装饰和导航容器、状态栏一样属于外壳，不作为插件贡献点。
+窗口装饰和导航容器、状态栏一样属于外壳，不作为插件贡献点。**关闭策略是行为而不是装饰**：
+`mics.close-behavior` 通过内核的 `ctx.mainWindow` 服务注册关闭拦截器，不直接
+`new BrowserWindow()`。主窗口的创建配置（无边框、preload、导航拦截、窗口状态跟踪）
+只在 bootstrap 的 `MainWindowHost` / `createMainWindow` 里维护一份；插件只能请求
+「显示 / 隐藏 / 销毁 / 重建」，窗口生命周期仍归外壳。
+
+确认框不是系统消息框，而是 `@mics/ui` 的 `ConfirmDialog`（与删除实例、安装插件等共用）。
+主进程拦截 `close` 后先把主窗口恢复并聚焦（从任务栏关闭、窗口最小化时确认框不能渲染在
+看不见的后台窗口里），再广播 prompt request；渲染端的全局确认框宿主显示后回 ack；用户选择
+后再经 `prompt/respond` RPC 把结果交回主进程——确认框可以带「不再提示」复选框，勾选后把
+这次选择写回 `ctx.storage`，与「设置 → 通用 → 关闭与托盘」读写同一个值。渲染端没有在显示时限内
+ack（例如渲染进程未就绪）时，主进程按最小化至托盘处理；隐藏后仍可从托盘菜单退出，不会把
+应用锁死在无法关闭的状态。托盘创建失败时保持窗口可见，避免应用失去唯一入口。
+
+### 低内存托盘
+
+「设置 → 通用 → 关闭与托盘」里的低内存托盘模式默认开启。选择「最小化至托盘区」时，插件先创建托盘，
+再调用 `mainWindow.destroy({ keepAlive: true })`：主窗口与渲染进程被销毁、内存归还；
+`window-all-closed` 因为 `keepAlive` 不退出应用。托盘菜单「显示主界面」调用
+`mainWindow.show()`，宿主用同一份窗口配置重建窗口，并恢复上次的尺寸 / 位置与最大化状态；
+渲染端带 `restore=1` 启动，从 `localStorage` 恢复上次页面。`before-quit` 会清掉
+`keepAlive`，真正退出时仍走正常退出流程。
+
+代价是页面状态会丢：页面栈里未提交的表单、打开的弹窗、滚动位置不会保留；下载、启动等
+主进程任务不受影响。需要即时恢复完整页面状态时，可以在「设置 → 通用 → 关闭与托盘」里关掉这个模式。
 
 ## 7. 信任与权限模型（当前阶段）
 
@@ -272,16 +304,17 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 
 ## 9. 共享 UI 组件（@mics/ui）
 
-下载页里的「筛选按钮 / 筛选面板 / 通用列表」是跨页面的通用件，独立成
+下载页的筛选 / 列表与各插件的确认框是跨页面通用件，独立成
 `packages/ui`（`@mics/ui`）：
 
-| 组件           | 职责                                                                                                                                       |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `FilterButton` | 漏斗按钮 + 非默认筛选圆点，`v-model:open` 控制面板                                                                                         |
-| `FilterPanel`  | 按 `FilterGroup[]` 渲染分组胶囊；`single` 单选、`multi` 多选，`exclusive` 选项（「全部」）与其它互斥                                       |
-| `DataList`     | 通用行渲染（主文本 + 徽标 + 次要文本）；`role="button"` 整行进入，`role="radio"` 单选并显示勾，`role="static"` 仅展示；`#row` 插槽自定义行 |
-| `DataBrowser`  | 搜索 + 筛选 + 计数标题 + `DataList`；内部持有查询与筛选状态，调用方只给 `items` 与 `@select`                                               |
-| `ToggleSwitch` | 开关按钮，`v-model` 布尔值；用 `role="switch"` 与 `aria-checked` 表达状态                                                                  |
+| 组件            | 职责                                                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FilterButton`  | 漏斗按钮 + 非默认筛选圆点，`v-model:open` 控制面板                                                                                         |
+| `FilterPanel`   | 按 `FilterGroup[]` 渲染分组胶囊；`single` 单选、`multi` 多选，`exclusive` 选项（「全部」）与其它互斥                                       |
+| `DataList`      | 通用行渲染（主文本 + 徽标 + 次要文本）；`role="button"` 整行进入，`role="radio"` 单选并显示勾，`role="static"` 仅展示；`#row` 插槽自定义行 |
+| `DataBrowser`   | 搜索 + 筛选 + 计数标题 + `DataList`；内部持有查询与筛选状态，调用方只给 `items` 与 `@select`                                               |
+| `ToggleSwitch`  | 开关按钮，`v-model` 布尔值；用 `role="switch"` 与 `aria-checked` 表达状态                                                                  |
+| `ConfirmDialog` | 内部确认框：两个可配样式的按钮 + 可选「不再提示」复选框、`busy` 状态；关闭确认 / 删除实例 / 安装卸载插件共用，不弹系统消息框               |
 
 为什么是包而不是「组件插件」：插件各自独立打包，运行时组件注册表拿不到 props 类型，
 也保证不了加载顺序；静态引入让编译期就能校验，每个插件也只打包用到的组件。

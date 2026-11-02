@@ -5,6 +5,7 @@ import { CapabilitiesService } from './services/capabilities'
 import { CommandsService } from './services/commands'
 import { ConfigurationService } from './services/configuration'
 import { IpcService } from './services/ipc'
+import { MainWindowService } from './services/mainWindow'
 import { PermissionsService } from './services/permissions'
 import { PluginsService } from './services/plugins'
 import { StorageService } from './services/storage'
@@ -18,7 +19,7 @@ export const name = 'mics.kernel'
  *
  * 它和普通插件一样由 bootstrap 通过 `ctx.plugin()` 挂载；
  * 区别只在于它负责把「插件」这件事本身做成服务：
- *   plugins / ipc / commands / storage / permissions / capabilities
+ *   plugins / ipc / commands / storage / permissions / capabilities / mainWindow
  * 其余插件则挂在它下面，由 cordis 负责依赖注入与生命周期。
  */
 export function apply(ctx: Context, config: KernelConfig): void {
@@ -41,12 +42,13 @@ export function apply(ctx: Context, config: KernelConfig): void {
   ctx.plugin(StorageService, config)
   ctx.plugin(PermissionsService, config)
   ctx.plugin(CapabilitiesService)
+  ctx.plugin(MainWindowService, config.host?.mainWindow)
   ctx.plugin(PluginsService, config)
   ctx.plugin(ConfigurationService)
   ctx.plugin(CommandsService)
   ctx.plugin(IpcService)
   log.debug(
-    '内核服务已注册：storage / permissions / capabilities / plugins / configuration / commands / ipc'
+    '内核服务已注册：storage / permissions / capabilities / mainWindow / plugins / configuration / commands / ipc'
   )
 
   // 等内核服务就绪后，再对外暴露系统 RPC 并启动开机插件

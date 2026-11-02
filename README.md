@@ -56,8 +56,19 @@ pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
 每一个叶子节点都是一个 `nav` 贡献，对应一个页面。分组本身由 `navGroups` 声明，
 子项由各插件独立挂载——新增一个下载分类只需要新增一个插件目录。
 
+「通用」页里还包含「关闭与托盘」区块，它不是独立页面，而是由 `mics.close-behavior`
+通过 `ctx.ui.registerSettingsSection()` 注册的设置区块——设置页不硬编码任何具体插件。
+
 窗口是无边框的：顶部标题栏（品牌 + 最小化/最大化/关闭）、左侧导航容器与底部状态栏
 都由 shell 绘制，没有系统菜单栏（`Menu.setApplicationMenu(null)`）。
+
+关闭主窗口时弹出应用内确认框，询问「退出应用 / 最小化至托盘区」；勾选「不再提示」会记住
+这次选择，之后可在「设置 → 通用 → 关闭与托盘」里改回每次询问。最小化后托盘图标提供
+「显示主界面 / 退出应用」。
+
+默认开启**低内存托盘模式**：最小化时销毁主窗口以释放渲染进程内存，恢复时重建窗口、恢复
+上次的尺寸 / 位置与页面；下载、启动等主进程任务不受影响。代价是未提交的页面表单、弹窗与
+滚动位置会丢，可在「设置 → 通用 → 关闭与托盘」里关掉。
 
 ## 目录结构
 
@@ -84,6 +95,7 @@ mics/
 │  ├─ download-resourcepack/# 资源包目录
 │  ├─ download-shader/      # 光影包目录
 │  ├─ notifications/        # 右下角通知服务（ctx.notifications + toast 宿主）
+│  ├─ close-behavior/       # 关闭行为：询问退出 / 最小化至托盘 + 托盘菜单
 │  ├─ settings/             # 设置分组 + 通用设置页
 │  ├─ plugin-inspector/     # 插件管理页（安装 / 启用 / 禁用 / 重载 / 卸载）
 │  └─ logger/               # 按启动分文件的日志服务 + 日志设置
@@ -252,13 +264,14 @@ export default defineMainPlugin({
 
 ## 通用组件
 
-下载页里的「筛选按钮 / 筛选面板 / 通用列表」是同一种 UI，抽在 `@mics/ui`：
+下载页的筛选 / 列表与各插件的确认框是同一种 UI，抽在 `@mics/ui`：
 
 ```ts
 import {
   BackToTop,
   CatalogBrowser,
   CatalogCard,
+  ConfirmDialog,
   DataBrowser,
   DataList,
   Dialog,
@@ -281,6 +294,8 @@ import type { CatalogVersion, FilterGroup, FilterSelection, ListRow } from '@mic
 - `ListPager`：目录分页条，`page` / `page-count` + `@change`；
 - `BackToTop`：右下角悬浮「返回顶部」按钮；
 - `Dialog`：Teleport 到 body 的通用模态框，统一遮罩、标题、副标题与 footer 插槽；
+- `ConfirmDialog`：内部确认框，两个按钮的文案 / 样式 / 默认焦点可配，可带「不再提示」复选框与
+  `busy` 状态；关闭应用、删除实例 / Mod、安装卸载插件共用，避免各页各写一套遮罩与按钮；
 - `InstanceNameField`：实例名输入与即时校验，本地规则 + 可选的主进程重名检查，`validate()` 可在提交前再确认；
 - `InstanceInstallDialog`：整合包这类「新建实例」的安装弹窗，默认名、重名阻断、版本信息与错误展示都已收口；
 - `PackInstallDialog`：资源包 / 光影包 / 数据包的实例选择弹窗；数据包自动切换成「单实例 + 单存档」，存档列表由页面注入；

@@ -184,7 +184,8 @@ dev server 会把 `v=` 当成依赖版本、回一年期 `immutable` 缓存，�
 | -------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | 三态 / 内置保护 / 安装 / 卸载 / 持久化 | 内核 `PluginsService`                                                                   | `plugins/kernel/src/services/plugins.ts`                                                  |
 | 页面与样式卸载、缓存绕过               | 渲染端 `PluginsService`                                                                 | `apps/desktop/src/renderer/runtime/services/plugins.ts`                                   |
-| 选文件夹、确认框、风险提示             | 插件管理页主进程部分                                                                    | `plugins/plugin-inspector/src/main.ts`                                                    |
+| 选文件夹（系统文件选择器）、安装预览   | 插件管理页主进程部分                                                                    | `plugins/plugin-inspector/src/main.ts`                                                    |
+| 确认框、风险提示                       | 插件管理页渲染端（`@mics/ui` ConfirmDialog）                                            | `plugins/plugin-inspector/src/renderer/InspectorView.vue`                                 |
 | 安装事务（暂存 / 原子替换 / 校验）     | `@mics/plugin-loader`                                                                   | `packages/plugin-loader/src/install.ts`                                                   |
 | 卸载脚本执行与超时                     | `@mics/plugin-loader`                                                                   | `packages/plugin-loader/src/uninstall.ts`                                                 |
 | `mics-plugin://` id → 目录映射         | bootstrap                                                                               | `apps/desktop/src/main/protocol.ts`                                                       |
@@ -340,7 +341,7 @@ pnpm dev
 
 1. 打开 **设置 → 插件管理**：只列出已安装插件，没有「未安装」行。
 2. 内置插件（例如「日志」）没有卸载按钮；普通内置可以禁用；内核 / 插件管理 / 日志的开关是灰的。
-3. 点「安装插件」选 `examples/hello-tool` → 确认框显示 id、版本、作者、能力与风险 → 列表出现，
+3. 点「安装插件」选 `examples/hello-tool` → 应用内确认框显示 id、版本、作者、能力与风险 → 列表出现，
    状态「已禁用」。
 4. 打开开关 → 左侧出现「示例插件」页；页面显示页面/后台版本号，能写入并读回 note.txt。
    选中该插件 → 详情里的「设置」直接渲染「笔记文件名」；改成 `memo.txt` 后写入的文件随之改名。

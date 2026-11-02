@@ -8,6 +8,7 @@ import type { KernelConfig, KernelModule } from '@mics/sdk'
 import type { PluginRoot } from '@mics/plugin-loader'
 import { importPluginEntry, scanPlugins } from '@mics/plugin-loader'
 import { createAppInfo, loadBootConfig, loadProfile, resolvePluginRoots } from './config'
+import { MainWindowHost } from './mainWindowHost'
 import { registerPluginProtocol, registerPrivilegedSchemes } from './protocol'
 import { createMainWindow, loadRenderer } from './window'
 import { registerWindowControls } from './windowControls'
@@ -46,16 +47,25 @@ async function start(): Promise<void> {
   const root = new Context()
   const log = root.logger('mics')
   bootstrapLog = log
+  const windowHost = new MainWindowHost({ createWindow: createMainWindow, loadRenderer })
 
   // 窗口装饰（标题栏 / 菜单栏 / 窗口按钮）全部由渲染器自绘，不要系统菜单
   Menu.setApplicationMenu(null)
   registerWindowControls()
 
   app.on('window-all-closed', () => {
+    // 销毁旧窗口与创建新窗口可能落在同一轮事件里：已有新窗口时不能退出
+    if (windowHost.state().exists) return
+    // 低内存托盘模式销毁了最后一个窗口：应用留在后台，托盘菜单负责恢复 / 退出
+    if (windowHost.shouldKeepAlive()) {
+      log.info('主窗口已销毁，应用保持后台运行')
+      return
+    }
     log.info('所有窗口已关闭，退出应用')
     app.quit()
   })
   app.on('before-quit', () => {
+    windowHost.prepareQuit()
     log.info('应用即将退出')
   })
   app.on('render-process-gone', (_event, _contents, details) => {
@@ -156,7 +166,11 @@ async function start(): Promise<void> {
     // 首次扫描失败的目录带进内核，诊断报告里能一并展示清单错误
     scanErrors: scan.errors,
     // 安装 / 卸载之后内核会回调这里，让 mics-plugin:// 立刻认识新目录
-    host: { syncPluginDirs: (dirs) => protocol.sync(dirs) }
+    // mainWindow 把窗口生命周期交给内核的 mainWindow 服务（低内存托盘用）
+    host: {
+      syncPluginDirs: (dirs) => protocol.sync(dirs),
+      mainWindow: windowHost
+    }
   }
 
   // 内核插件自己的作用域：pluginId 会向下继承给内核提供的所有服务
@@ -164,9 +178,9 @@ async function start(): Promise<void> {
   await kernelScope.plugin(kernel, config)
   log.info('内核已挂载，启动插件将在后台激活')
 
-  const window = createMainWindow()
-  log.info('主窗口已创建，正在加载渲染进程')
-  await loadRenderer(window)
+  log.info('正在创建主窗口')
+  // 首次启动按布局的 defaultView 打开；从托盘恢复时才带 restore=1
+  await windowHost.show({ restore: false })
   log.info('主界面已加载')
 }
 

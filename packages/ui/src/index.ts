@@ -11,6 +11,7 @@
 export { default as BackToTop } from './BackToTop.vue'
 export { default as CatalogBrowser } from './CatalogBrowser.vue'
 export { default as CatalogCard } from './CatalogCard.vue'
+export { default as ConfirmDialog } from './ConfirmDialog.vue'
 export { default as CountBadge } from './CountBadge.vue'
 export { default as DataBrowser } from './DataBrowser.vue'
 export { default as DataList } from './DataList.vue'

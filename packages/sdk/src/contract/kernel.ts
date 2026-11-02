@@ -1,6 +1,7 @@
 import type { AppInfo } from './runtime'
 import type { PluginId, PluginManifest } from './manifest'
 import type { PluginSource } from './plugins'
+import type { MainWindowHostApi } from './window'
 
 /** 内核 id；bootstrap 依据 boot.config.json 找到它 */
 export const KERNEL_ID = 'mics.kernel'
@@ -40,6 +41,13 @@ export interface ScanResult {
  */
 export interface PluginHostBridge {
   syncPluginDirs(dirs: Record<PluginId, string>): void
+  /**
+   * 主窗口生命周期；缺省表示宿主不支持「销毁 / 重建主窗口」。
+   *
+   * 低内存托盘模式依赖它：窗口由 bootstrap 创建，插件只能通过这个桥接销毁
+   * 主窗口并在恢复时重建，同时由宿主协调 `window-all-closed`。
+   */
+  mainWindow?: MainWindowHostApi
 }
 
 /**

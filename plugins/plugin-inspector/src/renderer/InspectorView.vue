@@ -13,11 +13,13 @@ import type {
   PluginId,
   PluginInfo,
   PluginInstallOutcome,
+  PluginInstallSelection,
+  PluginInstallSummary,
   PluginProvideRef,
   PluginStatus,
   PluginUninstallOutcome
 } from '@mics/sdk'
-import { DataBrowser, ToggleSwitch } from '@mics/ui'
+import { ConfirmDialog, DataBrowser, ToggleSwitch } from '@mics/ui'
 import type { FilterGroup, ListRow } from '@mics/ui'
 import PluginSettingsPanel from './PluginSettingsPanel.vue'
 
@@ -28,6 +30,10 @@ const installing = ref(false)
 const error = ref('')
 const busy = ref<Record<string, boolean>>({})
 const failure = ref<Extract<PluginUninstallOutcome, { status: 'failed' }> | undefined>()
+/** 选好目录后的安装预览；有值时显示内部确认框 */
+const installCandidate = ref<Extract<PluginInstallSelection, { status: 'selected' }> | null>(null)
+/** 待确认的卸载目标；force 走失败提示里的「强制卸载」，不再二次确认 */
+const uninstallCandidate = ref<{ plugin: PluginInfo; force: boolean } | null>(null)
 const graph = ref<PluginGraphReport>()
 const graphError = ref('')
 const selectedId = ref<PluginId>('')
@@ -56,6 +62,36 @@ const scanIssues = computed(() => graph.value?.scanIssues ?? [])
 const unmetOfSelected = computed(() =>
   (graph.value?.unmet ?? []).filter((item) => item.neededBy.includes(selectedId.value))
 )
+
+const installLines = computed<string[]>(() => {
+  const candidate = installCandidate.value
+  if (!candidate) return []
+  const plugin = candidate.plugin
+  return [
+    `${plugin.id} · v${plugin.version}`,
+    plugin.author ? `作者：${plugin.author}` : '',
+    `能力：${capabilityLabel(plugin)}`,
+    plugin.hasUninstall ? '包含卸载脚本（卸载时会清理插件自己创建的内容）' : '',
+    plugin.installedVersion
+      ? `将替换已安装的 v${plugin.installedVersion}，安装后保持禁用`
+      : '安装后默认禁用，需要手动启用',
+    plugin.hasMain
+      ? '风险提示：主进程插件拥有与 Mics 相同的权限，可以读写文件、联网与执行命令。'
+      : '',
+    ...plugin.warnings.map((warning) => `注意：${warning}`)
+  ].filter(Boolean)
+})
+
+const uninstallLines = computed<string[]>(() => {
+  const candidate = uninstallCandidate.value
+  if (!candidate) return []
+  return [
+    '插件目录、插件存储与启用记录都会被删除，之后不会再出现在插件列表中。',
+    candidate.plugin.hasUninstall
+      ? '确认后会先执行插件的卸载脚本，清理它在插件目录之外创建的内容。'
+      : '这个插件没有声明卸载脚本：宿主只删除插件本体，它在插件目录之外创建的内容会保留。'
+  ]
+})
 
 const FILTERS: FilterGroup[] = [
   {
@@ -164,6 +200,13 @@ function statusLabelOf(status?: PluginStatus): string {
 function failureText(plugin: PluginInfo): string {
   if (!plugin.failure) return ''
   return `失败（${STAGE_LABELS[plugin.failure.stage]}）：${plugin.failure.message}`
+}
+
+function capabilityLabel(plugin: PluginInstallSummary): string {
+  if (plugin.hasMain && plugin.hasRenderer) return '页面 + 后台'
+  if (plugin.hasMain) return '仅后台'
+  if (plugin.hasRenderer) return '仅页面'
+  return '仅清单'
 }
 
 function failureHint(stage: PluginFailureStage): string {
@@ -326,13 +369,14 @@ async function reload(id: string): Promise<void> {
 }
 
 async function install(): Promise<void> {
+  if (installing.value) return
   installing.value = true
   error.value = ''
   failure.value = undefined
   try {
-    const outcome = await invoke<PluginInstallOutcome>('plugin-manager/install')
-    if (outcome.status === 'failed') error.value = outcome.message
-    await refresh()
+    const selection = await invoke<PluginInstallSelection>('plugin-manager/select')
+    if (selection.status === 'failed') error.value = selection.message
+    else if (selection.status === 'selected') installCandidate.value = selection
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
@@ -340,21 +384,63 @@ async function install(): Promise<void> {
   }
 }
 
+async function confirmInstall(): Promise<void> {
+  const candidate = installCandidate.value
+  if (!candidate || installing.value) return
+
+  installing.value = true
+  error.value = ''
+  try {
+    const outcome = await invoke<PluginInstallOutcome>('plugin-manager/install', {
+      dir: candidate.dir
+    })
+    installCandidate.value = null
+    if (outcome.status === 'failed') error.value = outcome.message
+    await refresh()
+  } catch (cause) {
+    installCandidate.value = null
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    installing.value = false
+  }
+}
+
+function cancelInstall(): void {
+  if (installing.value) return
+  installCandidate.value = null
+}
+
 /**
  * 卸载是「先卸页面，再让主进程删文件」：
  * 顺序反过来会让页面短暂指向一个已经不存在的目录。
+ *
+ * 确认在渲染端完成：普通卸载先弹内部确认框；失败提示里的「强制卸载」是明确的
+ * 二次动作，直接执行，不再重复确认。
  */
-async function uninstall(id: PluginId, force = false): Promise<void> {
+function requestUninstall(id: PluginId, force = false): void {
+  const plugin = pluginOf(id)
+  if (!plugin) return
+  if (force) {
+    void performUninstall(id, true)
+    return
+  }
+  uninstallCandidate.value = { plugin, force: false }
+}
+
+async function confirmUninstall(): Promise<void> {
+  const candidate = uninstallCandidate.value
+  if (!candidate) return
+  uninstallCandidate.value = null
+  await performUninstall(candidate.plugin.id, candidate.force)
+}
+
+async function performUninstall(id: PluginId, force = false): Promise<void> {
+  if (busy.value[id]) return
   await run(id, async () => {
     failure.value = undefined
     await ctx.plugins.unload?.(id)
     const outcome = await invoke<PluginUninstallOutcome>('plugin-manager/uninstall', { id, force })
-    if (outcome.status === 'failed') {
-      failure.value = outcome
-    } else if (outcome.status === 'cancelled' && !force) {
-      // 用户在确认框里点了取消：刚刚卸掉的页面要装回去
-      await ctx.plugins.activate?.(id).catch(() => {})
-    }
+    if (outcome.status === 'failed') failure.value = outcome
     await refresh()
   })
 }
@@ -417,14 +503,14 @@ onBeforeUnmount(() => {
       <span class="inspector__failure-actions">
         <button
           class="mics-button mics-button--ghost mics-button--small"
-          @click="uninstall(failure.id)"
+          @click="requestUninstall(failure.id)"
         >
           重试
         </button>
         <button
           v-if="failure.retryable"
           class="mics-button mics-button--danger mics-button--small"
-          @click="uninstall(failure.id, true)"
+          @click="requestUninstall(failure.id, true)"
         >
           强制卸载
         </button>
@@ -463,7 +549,7 @@ onBeforeUnmount(() => {
             class="mics-button mics-button--danger mics-button--small"
             :disabled="busyOf(item.id)"
             title="卸载插件"
-            @click="uninstall(item.id)"
+            @click="requestUninstall(item.id)"
           >
             卸载
           </button>
@@ -503,7 +589,7 @@ onBeforeUnmount(() => {
             class="mics-button mics-button--danger mics-button--small"
             :disabled="busyOf(selectedId)"
             title="卸载插件"
-            @click="uninstall(selectedId)"
+            @click="requestUninstall(selectedId)"
           >
             卸载
           </button>
@@ -657,6 +743,39 @@ onBeforeUnmount(() => {
         </ul>
       </div>
     </section>
+
+    <ConfirmDialog
+      :open="installCandidate !== null"
+      title="安装插件"
+      :message="installCandidate ? `安装 ${installCandidate.plugin.name}？` : ''"
+      confirm-label="安装"
+      :busy="installing"
+      busy-label="安装中…"
+      default-focus="cancel"
+      width="520px"
+      @confirm="confirmInstall"
+      @cancel="cancelInstall"
+    >
+      <ul v-if="installLines.length" class="inspector__dialog-lines">
+        <li v-for="line in installLines" :key="line">{{ line }}</li>
+      </ul>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      :open="uninstallCandidate !== null"
+      title="卸载插件"
+      :message="uninstallCandidate ? `卸载 ${uninstallCandidate.plugin.name}？` : ''"
+      confirm-label="卸载"
+      confirm-variant="danger"
+      default-focus="cancel"
+      width="480px"
+      @confirm="confirmUninstall"
+      @cancel="uninstallCandidate = null"
+    >
+      <ul class="inspector__dialog-lines">
+        <li v-for="line in uninstallLines" :key="line">{{ line }}</li>
+      </ul>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -676,6 +795,21 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.inspector__dialog-lines {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 320px;
+  overflow: auto;
+  color: var(--mics-fg-muted);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.inspector__dialog-lines li + li {
+  margin-top: 4px;
 }
 
 .inspector__failure-actions {

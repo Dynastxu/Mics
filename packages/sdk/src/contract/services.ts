@@ -14,6 +14,7 @@ import type {
   RuntimeEventEnvelope,
   RuntimeSnapshot
 } from './runtime'
+import type { MainWindowServiceApi } from './window'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -184,11 +185,30 @@ export interface RendererStatusBarItem {
   command?: string
 }
 
+/**
+ * 通用设置页里的一个 section。
+ *
+ * 插件在渲染端 `apply()` 里注册；通用设置页只负责包一层 `mics-section` 并按
+ * `order` 渲染。`props` 用来把注册方自己的 cordis Context 传进组件，避免 section
+ * 误用通用设置页所属插件的上下文。
+ */
+export interface SettingsSection {
+  id: string
+  title?: string
+  order?: number
+  component: Component
+  props?: Record<string, unknown>
+}
+
 export interface UiServiceApi {
   /** 注册导航项对应的页面组件；viewId 与清单里 contributes.nav[].id 一致 */
   registerView(viewId: string, component: Component): Disposable
+  /** 向通用设置页注册一个 section；插件卸载时自动移除 */
+  registerSettingsSection(section: SettingsSection): Disposable
   registerStatusBarItem(item: RendererStatusBarItem): Disposable
   componentOf(viewId: string): Component | undefined
+  /** 通用设置页用；返回的数组是响应式的，注册 / 卸载会触发更新 */
+  settingsSections(): SettingsSection[]
   /** 切换到清单里已注册的导航页面；页面不存在（插件缺失或被禁用）时返回 false */
   navigate(viewId: string): boolean
 }
@@ -231,6 +251,8 @@ declare module 'cordis' {
     capabilities: CapabilitiesServiceApi
     /** 配置 schema 与当前值；设置页与 agent 共用 */
     configuration: ConfigurationServiceApi
+    /** 主窗口生命周期（销毁 / 重建）；由内核包装宿主桥接提供 */
+    mainWindow: MainWindowServiceApi
     /** 由 mics.logger 插件提供；其它插件通过 inject: ['logs'] 使用 */
     logs: LogsServiceApi
     ui: UiServiceApi

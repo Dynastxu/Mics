@@ -1,0 +1,36 @@
+{
+  "id": "mics.close-behavior",
+  "name": "关闭行为",
+  "version": "0.1.0",
+  "description": "在通用设置里提供关闭行为与低内存托盘：关闭主窗口时询问退出应用还是最小化至托盘区，托盘图标可恢复窗口或退出。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "activation": ["onStartup"],
+  "dependencies": ["mics.kernel"],
+  "contributes": {
+    "configuration": {
+      "title": "关闭与托盘",
+      "description": "关闭主窗口时的行为与低内存托盘模式",
+      "properties": {
+        "closeAction": {
+          "type": "enum",
+          "title": "关闭主窗口时",
+          "default": "ask",
+          "options": [
+            { "value": "ask", "label": "每次询问" },
+            { "value": "quit", "label": "退出应用" },
+            { "value": "tray", "label": "最小化至托盘区" }
+          ]
+        },
+        "lowMemoryTray": {
+          "type": "boolean",
+          "title": "低内存托盘模式",
+          "description": "最小化到托盘时销毁主窗口以释放界面内存；恢复时重新创建窗口并恢复上次页面",
+          "default": true
+        }
+      }
+    }
+  }
+}
