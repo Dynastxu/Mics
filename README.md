@@ -6,7 +6,7 @@ Minecraft Integrated Control Software 的桌面 UI 骨架：**左侧导航、每
 - 外壳：Electron `^45.0.0` + electron-vite 6 + Vite 8 + Vue 3.5 + TypeScript 6
 - 包管理：pnpm workspace
 
-当前阶段账户（离线可用；正版设备码暂时借用官方 Live id，见下文 TODO）与启动已经可用；下载管线支持原版 / 加载器安装、Mod 多实例安装、整合包安装，以及资源包 / 光影包 / 数据包安装到实例目录。
+当前阶段账户与启动已经可用；下载管线支持原版 / 加载器安装、Mod 多实例安装、整合包安装，以及资源包 / 光影包 / 数据包安装到实例目录。
 账户与启动之间的契约是 `auth.credentials` 能力：启动页只消费凭据，不关心登录方式。
 
 ## 快速开始
@@ -196,18 +196,6 @@ interface LaunchCredentials {
   jvmArgs?: string[]
 }
 ```
-
-部署参数在账户插件的 `contributes.configuration`（插件管理 → 账户）的 `microsoftClientId`：
-
-- **当前默认值是临时占位**：官方启动器的 Live 应用 id（`00000000402b5328`），授权页会显示
-  Minecraft Launcher，只用于注册完成前联调；代码里标了 `TODO(account)`。
-- 正式发布前注册名为 `Mics` 的 Azure 应用，把 client id 替换成它的 GUID：
-  1. Azure Portal → 应用注册 → 新注册：名称 `Mics`，账户类型选「仅个人 Microsoft 账户」；
-  2. 身份验证 → 高级设置 → 允许公共客户端流（设备代码流程）；
-  3. 把「应用程序（客户端）ID」填到 插件管理 → 账户 → Microsoft 应用 client id。
-- client id 不是密钥，可以随源码分发；设备码流程不需要 client secret。
-- 填的是 GUID 时自动切到 Entra 端点，数字串则使用 Live 端点，不需要额外开关。
-- 清空该设置后正版登录不可用，账户页会提示先填 client id。
 
 ## 下载、Mod 与整合包
 
