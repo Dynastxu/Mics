@@ -15,10 +15,8 @@ import {
  * 流程与官方启动器一致：
  *   设备码 → MSA access token → Xbox Live → XSTS → Minecraft access token → 玩家档案
  *
- * TODO(account): 当前默认 client id 是临时占位——官方启动器的 Live 应用 id，
- * 授权页会显示 Minecraft Launcher。正式发布前注册名为 `Mics` 的 Azure 应用，
- * 把「插件管理 → 账户」里的 client id 换成该应用的 GUID 即可自动切到 Entra 端点，
- * 不需要改代码。注册步骤见 README「账户与启动」。
+ * client id 已硬编码为 Mics 注册的 Azure 应用 GUID（见 MICROSOFT_CLIENT_ID），
+ * GUID 形态会自动切到 Entra 端点；若替换为 Live 应用 id（数字串）会退回 login.live.com。
  *
  * 两套端点按 client id 形态自动选择：
  *   - Live 应用 id（数字串，例如官方启动器的 id）→ login.live.com；
@@ -103,22 +101,17 @@ export interface MinecraftIdentity {
   name: string
 }
 
-export class MicrosoftAuth {
-  constructor(private readonly clientId: () => string) {}
+/** Mics 在 Azure（Entra 个人账户）注册的应用 client id */
+const MICROSOFT_CLIENT_ID = '6a84cdcd-c2f8-47d3-94eb-769bc10cefed'
 
-  /** 是否已配置 Azure 应用；账户页据此提示先填 client id */
+export class MicrosoftAuth {
+  /** 已注册 Mics 的 Azure 应用（Entra 个人账户），登录总是可用 */
   configured(): boolean {
-    return this.clientId().trim().length > 0
+    return true
   }
 
   private requireClientId(): string {
-    const id = this.clientId().trim()
-    if (!id) {
-      throw new Error(
-        '正版登录尚未配置：请在「插件管理 → 账户」填写以 Mics 注册的 Azure 应用 client id'
-      )
-    }
-    return id
+    return MICROSOFT_CLIENT_ID
   }
 
   async startDeviceCode(): Promise<DeviceCodeInfo> {

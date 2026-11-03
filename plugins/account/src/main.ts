@@ -44,7 +44,7 @@ export function apply(ctx: Context): void {
     ctx.ipc.broadcast(ACCOUNT_CHANGED_TOPIC, store.snapshot(), name)
   })
 
-  const microsoft = new MicrosoftAuth(() => String(ctx.storage.get('microsoftClientId', '') ?? ''))
+  const microsoft = new MicrosoftAuth()
   const flows = new Map<string, DeviceFlow>()
   ctx.effect(() => () => flows.clear())
 
