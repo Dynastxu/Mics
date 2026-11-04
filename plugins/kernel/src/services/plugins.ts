@@ -1,15 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { Context, Fiber, Plugin } from 'cordis'
 import { Service } from 'cordis'
 import {
+  buildPluginTree,
   importPluginEntry,
   installPluginFromDirectory,
   readPluginDirectory,
   removePluginFiles,
   runUninstallScript,
   scanPlugins,
-  UNINSTALL_TIMEOUT_MS
+  UNINSTALL_TIMEOUT_MS,
+  type PluginTreeEntry
 } from '@mics/plugin-loader'
 import type {
   CapabilitiesServiceApi,
@@ -26,6 +29,7 @@ import type {
   PluginId,
   PluginInfo,
   PluginInstallSummary,
+  PluginManifest,
   PluginRecord,
   PluginState,
   PluginStatus,
@@ -39,6 +43,7 @@ import {
   bailEvent,
   emitEvent,
   FIBER_ACTIVE,
+  FIBER_DISPOSED,
   FIBER_FAILED,
   FIBER_PENDING,
   PLUGIN_ID,
@@ -52,6 +57,7 @@ import {
   snapshotIpcRegistrations,
   type IpcRegistrationSnapshot
 } from '../cleanupAudit'
+import { readTreeFile, writeTreeFile } from './treeFile'
 
 /** 等插件真正停下来的上限；超过就认为它没救，交给失败态与用户重试 */
 const STOP_TIMEOUT_MS = 10_000
@@ -63,12 +69,42 @@ interface Entry {
   /** 停止超时过：旧代码可能仍在跑，重启应用前拒绝再次激活 */
   restartRequired?: boolean
   fiber?: Fiber
+  /** fiber 是由 Cordis Loader 的 entry 建立的：停用时必须一并移除树节点 */
+  loaderEntry?: boolean
   /** 清单依赖的问题（缺失 / 自依赖 / 循环），激活前就能确定 */
   issues?: string[]
   /** 正在等待的服务名，只在 state === 'waiting' 时有值 */
   waitingFor?: string[]
   /** 本次激活开始的时间；用于日志里的耗时 */
   startedAt?: number
+}
+
+/**
+ * 内核用到的 Loader 面。用结构类型而不是依赖它的包类型：
+ * 插件产物会被单独分发，不该为了类型去引入框架包。
+ */
+interface LoaderEntryNode {
+  /** entry 自己的 fiber；Loader 内部按 outer/inner 区分，对外只暴露这一个 */
+  fiber?: Fiber
+  /** 文件里记录的禁用状态 */
+  disabled?: boolean
+  options?: { id: string; name: string }
+}
+
+interface LoaderLike {
+  create(options: {
+    id: string
+    name: string
+    config?: unknown
+    disabled?: boolean
+    isolate?: Record<string, true | string>
+  }): Promise<string>
+  update?(id: string, options: { name?: string; disabled?: boolean }): Promise<unknown>
+  resolve(id: string): LoaderEntryNode
+  remove(id: string): void
+  entries?(): Iterable<{ options: { id: string; name: string } }>
+  /** 等整棵树静默到稳定；dsh 启动链在 self-created entries 之后用它 */
+  await?(): Promise<void>
 }
 
 /** 能力注册表里只给内核用的生命周期钩子 */
@@ -93,6 +129,21 @@ async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Pr
     ])
   } finally {
     if (timer) clearTimeout(timer)
+  }
+}
+
+/** 把生成器的结果转成 Include 的 entry 选项 */
+function toTreeOptions(entry: PluginTreeEntry): {
+  id: string
+  name: string
+  config: unknown
+  disabled?: boolean
+} {
+  return {
+    id: entry.id,
+    name: entry.name,
+    config: entry.config,
+    ...(entry.disabled ? { disabled: true } : {})
   }
 }
 
@@ -147,6 +198,10 @@ export class PluginsService extends Service {
   private readonly starting = new Map<PluginId, Promise<void>>()
   /** dev 清理审计：每个插件上一次重载后的 ipcMain 注册快照 */
   private readonly ipcAuditBaselines = new Map<PluginId, IpcRegistrationSnapshot>()
+  /** mountPlugins 只跑一次：重复调用共享同一个 promise */
+  private mounting?: Promise<void>
+  /** 开发期产物监视只安装一次 */
+  private watchingArtifacts = false
   private mutations: Promise<unknown> = Promise.resolve()
 
   constructor(ctx: Context, config: KernelConfig) {
@@ -155,7 +210,24 @@ export class PluginsService extends Service {
     this.config = config
   }
 
-  [Service.init](): void {
+  async [Service.init](): Promise<void> {
+    /**
+     * Loader 在建立 fiber 之前会派发 `loader/patch-context`，此时 entry 的上下文已经存在。
+     * 插件身份（PLUGIN_ID）必须在这里写进去：Loader 自己不认识 mics 的插件 id，
+     * 而 storage / ipc / ui 的「按插件隔离」全部依赖它。
+     */
+    const onPatchContext = this.baseCtx.on as unknown as (
+      name: string,
+      listener: (
+        entry: { ctx: Context; options: { id: string } },
+        next: () => unknown
+      ) => unknown
+    ) => () => void
+    onPatchContext('loader/patch-context', (entry, next) => {
+      ;(entry.ctx as unknown as Record<symbol, string>)[PLUGIN_ID] = entry.options.id
+      return next()
+    })
+
     this.scanIssues = [...(this.config.scanErrors ?? [])]
     for (const record of this.config.plugins) {
       const id = record.manifest.id
@@ -207,6 +279,77 @@ export class PluginsService extends Service {
 
     this.persistDisabled()
     this.syncHost()
+  }
+
+  /**
+   * 挂载整棵插件树。
+   *
+   * 与 dsh 的 `entries.start()` 同一模型：**启动代码自己创建每个 entry**，
+   * 然后 `await loader.await()`。这样 await 时 entry 与 init 任务都已存在，
+   * 不需要任何轮询或延时去补「文件还没解析完」的空窗。
+   *
+   * 必须在内核服务全部就绪之后调用（插件会 inject ipc 等），否则等的是
+   * 永远 pending 的 fiber —— 会死锁。
+   */
+  async mountPlugins(): Promise<void> {
+    this.mounting ??= this.syncTree()
+    await this.mounting
+    // 开发期：产物一变就自动重载；分发版本不会安装这段监视
+    if (this.config.app.isDev && !this.watchingArtifacts) {
+      this.watchingArtifacts = true
+      this.watchPluginArtifacts()
+    }
+  }
+
+  /**
+   * 开发期自动重载：插件产物（dist/main.mjs）一变就重载对应插件。
+   *
+   * 不走 Cordis HMR 的 Node 内部加载器（Electron 里拿不到），而是复用现有的
+   * reload 路径（remove + create），行为与手动点「重载」完全一致。
+   * 监视句柄挂在根上下文上，只负责清掉等待中的防抖定时器。
+   */
+  private watchPluginArtifacts(): void {
+    // TODO(HMR): HMR 目前因 addon 不支持 Electron 45.0.0 stable 而不可用；
+    // 等它可用后确认这里不会与 HMR 重复重载（现在 HMR 存在时直接让位）。
+    // 真 HMR 在跑时交给它：两套监视同时生效会重复重载
+    if (this.baseCtx.get('hmr')) return
+    const fs = this.baseCtx.get('fs') as
+      | { watch?(file: string, listener: (file: string) => void): unknown }
+      | undefined
+    if (!fs?.watch) {
+      this.baseCtx.logger('plugins').debug('fs 服务不可用，插件产物自动重载未启用')
+      return
+    }
+    const log = this.baseCtx.logger('plugins')
+    const timers = new Map<PluginId, ReturnType<typeof setTimeout>>()
+    for (const record of this.treeRecords()) {
+      const file = record.entryMain
+      if (!file) continue
+      const id = record.manifest.id
+      try {
+        fs.watch(file, () => {
+          const existing = timers.get(id)
+          if (existing) clearTimeout(existing)
+          // 一次构建会连续写多个文件：防抖后再重载
+          timers.set(
+            id,
+            setTimeout(() => {
+              timers.delete(id)
+              log.info('检测到 %s 的产物更新，自动重载', id)
+              void this.reload(id).catch((error) =>
+                log.warn('自动重载 %s 失败：%s', id, toMessage(error))
+              )
+            }, 300)
+          )
+        })
+      } catch (error) {
+        log.debug('无法监视 %s：%s', file, toMessage(error))
+      }
+    }
+    this.baseCtx.effect(() => () => {
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+    })
   }
 
   list(): PluginInfo[] {
@@ -467,7 +610,14 @@ export class PluginsService extends Service {
   }
 
   activate(id: PluginId): Promise<void> {
-    return this.serialize(id, () => this.doStart(this.require(id)))
+    return this.serialize(id, async () => {
+      const entry = this.require(id)
+      // 插件在启动时已由 syncTree 挂载；这里只处理「失败后重试」。
+      // 内核自己由 bootstrap 挂载，绝不能进树。
+      if (id === this.config.kernel) return
+      if (entry.fiber) return
+      if (entry.state === 'failed') await this.remountEntry(entry)
+    })
   }
 
   /** 禁用：持久化 + 卸载，之后不会再被自动激活 */
@@ -488,6 +638,22 @@ export class PluginsService extends Service {
       this.userDisabled.add(id)
       this.rebuildEffectiveDisabled()
       this.persistDisabled()
+
+      const loader = this.loaderService()
+      if (loader?.update) {
+        // 树是真相：改 entry 的 disabled 会卸载，再写回 cordis.yml
+        await loader.update(id, { disabled: true })
+        await loader.await?.()
+        entry.fiber = undefined
+        entry.state = 'disabled'
+        entry.failure = undefined
+        this.persistTree()
+        this.notify()
+        emitEvent(this.baseCtx, 'plugin/deactivated', id)
+        this.baseCtx.logger('plugins').info('插件 %s 已禁用', id)
+        return
+      }
+
       const timedOut = await this.stop(entry)
       if (timedOut) {
         // 停不下来就不能说「已禁用」：保留 failed + timeout，用户重试或重启应用
@@ -513,6 +679,16 @@ export class PluginsService extends Service {
       this.rebuildEffectiveDisabled()
       this.persistDisabled()
       entry.failure = undefined
+      const loader = this.loaderService()
+      if (loader?.update) {
+        await loader.update(id, { disabled: false })
+        await loader.await?.()
+        this.bindEntryFiber(id)
+        this.persistTree()
+        this.notify()
+        this.baseCtx.logger('plugins').info('插件 %s 已启用', id)
+        return
+      }
       await this.doStart(entry)
       this.notify()
       this.baseCtx.logger('plugins').info('插件 %s 已启用', id)
@@ -526,6 +702,12 @@ export class PluginsService extends Service {
       if (this.disabled.has(id)) throw new Error(`插件 ${id} 已禁用，请先启用再重载`)
       const log = this.baseCtx.logger('plugins')
       log.info('正在重载插件 %s', id)
+      // 重载 = 移除后用带查询串的 entry 重建，强制重新 import
+      await this.remountEntry(entry)
+      this.persistTree()
+      this.notify()
+      log.info('插件 %s 已重载', id)
+      return
       // 只在 dev 记录 ipcMain 注册；第一次重载建立基线，第二次开始比较
       const audit = this.config.app.isDev ? snapshotIpcRegistrations() : undefined
       try {
@@ -534,6 +716,7 @@ export class PluginsService extends Service {
           this.setState(entry, 'failed')
           throw new PluginFailureError('timeout', entry.failure?.message ?? `插件 ${id} 停止超时`)
         }
+        // 重载：挂载时会给入口 URL 换查询串，因此这里拿到的就是新代码
         entry.state = 'discovered'
         entry.failure = undefined
         await this.doStart(entry)
@@ -816,6 +999,22 @@ export class PluginsService extends Service {
       }
 
       if (entry.record.entryMain) {
+        // 优先交给 Cordis Loader：插件树、fiber 建立与卸载都由它负责，
+        // 内核只保留清单、依赖闭包与状态映射。Loader 不可用时退回直接挂载。
+        const loader = this.loaderService()
+        if (loader) {
+          const node = await this.mountViaLoader(loader, entry, manifest)
+          const fiber = node.fiber
+          if (!fiber) {
+            throw new PluginFailureError('apply', `插件 ${id} 的 Loader 入口没有建立 fiber`)
+          }
+          entry.fiber = fiber
+          entry.loaderEntry = true
+          this.watchFiber(entry, fiber)
+          this.applyFiberState(entry)
+          return
+        }
+
         let module: Record<string, unknown>
         try {
           module = await importPluginEntry(entry.record.entryMain)
@@ -867,11 +1066,10 @@ export class PluginsService extends Service {
     if (!fiber) return false
     const id = entry.record.manifest.id
     try {
-      await withTimeout(
-        Promise.resolve(fiber.dispose()),
-        STOP_TIMEOUT_MS,
-        `插件 ${id} 停止超时（${STOP_TIMEOUT_MS}ms）`
-      )
+      const task = entry.loaderEntry
+        ? this.disposeLoaderEntry(entry, fiber)
+        : Promise.resolve(fiber.dispose())
+      await withTimeout(task, STOP_TIMEOUT_MS, `插件 ${id} 停止超时（${STOP_TIMEOUT_MS}ms）`)
       this.baseCtx.logger('plugins').debug('插件 %s 已停止', id)
       return false
     } catch (error) {
@@ -885,6 +1083,298 @@ export class PluginsService extends Service {
       const capabilities = this.baseCtx.get('capabilities') as CapabilitiesDiagnostics | undefined
       capabilities?.forget?.(id)
     }
+  }
+
+  /** Loader 的 entry 必须从树里移除，否则同一 id 没法再次挂载 */
+  private async disposeLoaderEntry(entry: Entry, fiber: Fiber): Promise<void> {
+    entry.loaderEntry = false
+    const id = entry.record.manifest.id
+    try {
+      this.loaderService()?.remove(id)
+    } catch (error) {
+      this.baseCtx.logger('plugins').warn('移除 Loader 条目 %s 失败：%s', id, toMessage(error))
+    }
+    // remove() 内部已经调用过 dispose：这里等同一个 dispose 完成，超时判定依然有效
+    await Promise.resolve(fiber.dispose())
+  }
+
+  /**
+   * 重新挂载一个插件（激活重试与重载共用）。
+   *
+   * 不能只改 entry 的 `name`：Entry 重挂载时 innerFiber 的清理不完整，改完仍是旧
+   * fiber。可靠路径是「移除 → 用带查询串的新 entry 重建」，强制重新 import。
+   * 查询串只存在于内存中的 entry，`persistTree()` 写回文件时用干净 URL。
+   */
+  private async remountEntry(entry: Entry): Promise<void> {
+    const loader = this.loaderService()
+    const id = entry.record.manifest.id
+    const main = entry.record.entryMain
+    if (id === this.config.kernel) return
+    if (!loader) throw new PluginFailureError('import', `Loader 不可用，无法挂载 ${id}`)
+    if (!main) throw new PluginFailureError('import', `插件 ${id} 没有主进程入口`)
+    try {
+      loader.remove(id)
+    } catch {
+      // 不在树里：直接创建
+    }
+    // TODO(HMR): HMR 可用后，重载应改走它的模块替换，而不是这里的 remove + create；
+    // 稳定 URL 只是让 HMR 能识别模块身份。
+    // dev 下有 HMR 时用稳定 URL：HMR 靠模块身份追踪改动，查询串会让它认不出来。
+    // 没有 HMR 时仍用查询串破缓存（生产 / 回退路径）。
+    const suffix = this.baseCtx.get('hmr') ? '' : `?mics=${Date.now()}`
+    await loader.create({
+      id,
+      name: `${pathToFileURL(main).href}${suffix}`,
+      config: { pluginId: id }
+    })
+    await loader.await?.()
+    this.bindEntryFiber(id)
+    if (!entry.fiber) {
+      throw new PluginFailureError('import', `插件 ${id} 重新挂载后没有 fiber`)
+    }
+  }
+
+  /** 取根上下文挂载的 Cordis Loader；没有就是没装，退回直接挂载 */
+  private loaderService(): LoaderLike | undefined {
+    return this.baseCtx.get('loader') as LoaderLike | undefined
+  }
+
+  /**
+   * 交给 Loader 挂载一个插件。
+   *
+   * 插件身份（PLUGIN_ID）由 `loader/patch-context` 注入——entry 的上下文在
+   * fiber 建立之前就存在，这是官方缝隙；清单则随 entry 的 config 传给 apply。
+   */
+  private async mountViaLoader(
+    loader: LoaderLike,
+    entry: Entry,
+    manifest: PluginManifest
+  ): Promise<LoaderEntryNode> {
+    const id = manifest.id
+    const main = entry.record.entryMain
+    if (!main) throw new PluginFailureError('import', `插件 ${id} 没有主进程入口`)
+    const url = pathToFileURL(main).href
+    // 每次挂载都换查询串：与旧路径（importPluginEntry 的 ?mics=时间戳）一致，
+    // 保证「停用后再启用」拿到的永远是磁盘上的最新代码。
+    const name = `${url}?mics=${Date.now()}`
+    try {
+      const created = await loader.create({
+        id,
+        name,
+        config: { pluginId: id, manifest }
+      })
+      return loader.resolve(created)
+    } catch (error) {
+      // 半途建立的 entry 不能留在树里，否则下一次激活会撞 id
+      try {
+        loader.remove(id)
+      } catch {
+        // 没建成，忽略
+      }
+      throw new PluginFailureError('import', `Loader 挂载 ${id} 失败：${toMessage(error)}`)
+    }
+  }
+
+  /** 让 Loader 树与当前 entries 一致：建行 → 等静默 → 绑 fiber → 落盘 */
+  private async syncTree(): Promise<void> {
+    const loader = this.loaderService()
+    const log = this.baseCtx.logger('plugins')
+    if (!loader) {
+      log.warn('Loader 不可用，插件无法挂载')
+      return
+    }
+
+    this.adoptTreeFile()
+
+    // 1) 目录已消失的插件：从树里移除
+    const wanted = new Set(this.treeRecords().map((record) => record.manifest.id))
+    for (const node of loader.entries?.() ?? []) {
+      const id = node.options.id
+      if (wanted.has(id)) continue
+      try {
+        loader.remove(id)
+      } catch (error) {
+        log.warn('从插件树移除 %s 失败：%s', id, toMessage(error))
+      }
+    }
+
+    // 2) 扫描到的插件：补齐缺失的 entry，同步 disabled
+    for (const record of this.treeRecords()) {
+      const entry = this.entries.get(record.manifest.id)
+      if (!entry) continue
+      try {
+        await this.ensureTreeEntry(loader, record)
+      } catch (error) {
+        this.recordFailure(
+          entry,
+          new PluginFailureError(
+            'import',
+            `挂载 ${record.manifest.id} 失败：${toMessage(error)}`
+          )
+        )
+      }
+    }
+
+    // 3) dsh 同款：等整棵树静默到稳定，再绑定 fiber
+    await loader.await?.()
+    this.bindTreeFibers()
+    this.persistTree()
+    this.logStateSummary()
+  }
+
+  /** 一个插件一行：存在就同步禁用状态，不存在就创建 */
+  private async ensureTreeEntry(loader: LoaderLike, record: PluginRecord): Promise<void> {
+    const id = record.manifest.id
+    const main = record.entryMain
+    if (!main) return
+    const disabled = this.disabled.has(id)
+    const existing = this.resolveRootEntry(id)
+    if (existing) {
+      if (Boolean(existing.disabled) !== disabled) await loader.update?.(id, { disabled })
+      return
+    }
+    await loader.create({
+      id,
+      name: pathToFileURL(main).href,
+      config: { pluginId: id },
+      // 第三方插件被隔离掉 `plugins` 服务：它们不能禁用/重载别的插件。
+      // 这是 isolate / realm 的实际用途（同一服务名在该子树里有独立命名空间）。
+      ...(record.source === 'user' ? { isolate: { plugins: true } } : {}),
+      ...(disabled ? { disabled: true } : {})
+    })
+  }
+
+  /** 按 id 取根树里的 entry；不存在时返回 undefined 而不是抛错 */
+  private resolveRootEntry(id: PluginId): LoaderEntryNode | undefined {
+    try {
+      return this.loaderService()?.resolve(id)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** 把 entry 的 fiber 绑到插件条目上，并开始跟踪状态 */
+  private bindEntryFiber(id: PluginId, fiber?: Fiber): void {
+    const entry = this.entries.get(id)
+    const target = fiber ?? this.resolveRootEntry(id)?.fiber
+    if (!entry || !target) return
+    // 已销毁的 fiber 仍挂在 entry 上（Entry.dispose 不清 innerFiber）：不能当运行中
+    if (target.state === FIBER_DISPOSED) return
+    if (entry.fiber !== target) {
+      entry.fiber = target
+      entry.loaderEntry = true
+      this.watchFiber(entry, target)
+    }
+    this.applyFiberState(entry)
+  }
+
+  /** 静默完成后统一绑定：有 fiber 的跟踪状态，没有的判定 import 失败 */
+  private bindTreeFibers(): void {
+    for (const record of this.treeRecords()) {
+      const id = record.manifest.id
+      // 纯渲染插件没有主进程入口，不进树：绝不能按「没有 fiber」判 import 失败
+      if (!record.entryMain) continue
+      const entry = this.entries.get(id)
+      if (!entry) continue
+      const node = this.resolveRootEntry(id)
+      if (!node?.fiber || node.fiber.state === FIBER_DISPOSED) {
+        if (this.disabled.has(id)) {
+          entry.state = 'disabled'
+          continue
+        }
+        if (entry.state !== 'failed') {
+          this.recordFailure(
+            entry,
+            new PluginFailureError('import', `插件 ${id} 加载失败，详见启动日志`)
+          )
+        }
+        continue
+      }
+      this.bindEntryFiber(id, node.fiber)
+    }
+
+    // 纯渲染插件没有主进程半边：没有 fiber 可等，启用即视为 active
+    for (const entry of this.entries.values()) {
+      const id = entry.record.manifest.id
+      if (entry.record.entryMain) continue
+      if (id === this.config.kernel) continue
+      entry.state = this.disabled.has(id) ? 'disabled' : 'active'
+    }
+  }
+
+  /** 读 cordis.yml：文件里记录的 disabled 覆盖用户集合（文件是部署真相） */
+  private adoptTreeFile(): void {
+    const file = this.config.treeFile
+    if (!file) return
+    const state = readTreeFile(file, (message) => this.baseCtx.logger('plugins').warn(message))
+    let changed = false
+    const known = new Set(state.entries.map((row) => row.id))
+    for (const entry of this.entries.values()) {
+      const id = entry.record.manifest.id
+      if (!known.has(id)) continue
+      if (state.disabled.has(id)) {
+        if (!this.userDisabled.has(id)) {
+          this.userDisabled.add(id)
+          changed = true
+        }
+      } else if (this.userDisabled.delete(id)) {
+        changed = true
+      }
+    }
+    this.rebuildEffectiveDisabled()
+    // core / essential 不允许禁用：宁可忽略记录，也不能把界面锁死
+    for (const [id, entry] of this.entries) {
+      if (!this.disabled.has(id) || !this.isLocked(entry)) continue
+      this.disabled.delete(id)
+      this.userDisabled.delete(id)
+    }
+    if (changed) this.persistDisabled()
+  }
+
+  /** 把当前树写回 cordis.yml；查询串一律不落盘 */
+  private persistTree(): void {
+    const file = this.config.treeFile
+    if (!file) return
+    try {
+      writeTreeFile(file, buildPluginTree(this.treeRecords(), { disabled: this.disabled }))
+    } catch (error) {
+      this.baseCtx.logger('plugins').warn('写入插件树失败：%s', toMessage(error))
+    }
+  }
+
+  /** 打一份插件状态汇总，标明谁在等什么、谁失败 */
+  private logStateSummary(): void {
+    const active: PluginId[] = []
+    const waiting: string[] = []
+    const failed: string[] = []
+    const other: string[] = []
+    for (const [id, entry] of this.entries) {
+      if (id === this.config.kernel) continue
+      if (entry.state === 'active') {
+        active.push(id)
+        continue
+      }
+      if (entry.state === 'waiting') {
+        waiting.push(`${id}（等 ${entry.waitingFor?.join('、') || '未知'}）`)
+        continue
+      }
+      if (entry.state === 'failed') {
+        failed.push(`${id}（${entry.failure?.message ?? '未知'}）`)
+        continue
+      }
+      other.push(`${id}:${entry.state}`)
+    }
+    const log = this.baseCtx.logger('plugins')
+    log.info(
+      '插件状态汇总：active %d、waiting %d、failed %d、其他 %d',
+      active.length,
+      waiting.length,
+      failed.length,
+      other.length
+    )
+    if (waiting.length) log.info('等待中：%s', waiting.join('；'))
+    if (failed.length) log.warn('失败：%s', failed.join('；'))
+    if (other.length) log.info('其他：%s', other.join('；'))
   }
 
   /** 记录失败并切到 failed；只在这里写 failure，避免 stage 与消息不同步 */
@@ -939,6 +1429,7 @@ export class PluginsService extends Service {
     entry.state = next
     this.notify()
     if (next === 'active') {
+      this.baseCtx.logger('plugins').info('插件 %s 已就绪', entry.record.manifest.id)
       this.announceActivated(entry)
       emitEvent(this.baseCtx, 'plugin/activated', entry.record.manifest.id)
     } else if (next === 'waiting') {
@@ -1085,6 +1576,9 @@ export class PluginsService extends Service {
     }
 
     this.validateGraph()
+    // include 引擎：目录集合变了，把新增 / 删除 / 禁用状态同步进插件树
+    // 目录集合变了：让 Loader 树与 entries 对齐并落盘
+    await this.syncTree()
     this.persistDisabled()
     this.syncHost()
     this.notify()
@@ -1105,6 +1599,21 @@ export class PluginsService extends Service {
     return [...this.entries.values()]
       .filter((entry) => entry.record.source === 'builtin')
       .map((entry) => entry.record.manifest.id)
+  }
+
+  /** 当前 entries 对应的扫描记录（rescan 之后 config.plugins 会过期，不能直接读它） */
+  private records(): PluginRecord[] {
+    return [...this.entries.values()].map((entry) => entry.record)
+  }
+
+  /**
+   * 进入插件树的记录。
+   *
+   * 内核自己由 bootstrap 直接挂载，绝不能再进树——否则会有两个 kernel fiber，
+   * 服务重复注册。
+   */
+  private treeRecords(): PluginRecord[] {
+    return this.records().filter((record) => record.manifest.id !== this.config.kernel)
   }
 
   private forgetStorage(id: PluginId): void {

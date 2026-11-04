@@ -4,7 +4,7 @@ import { defineRendererPlugin } from '@mics/sdk/renderer'
 import CloseBehaviorSection from './CloseBehaviorSection.vue'
 import ClosePromptHost from './ClosePromptHost.vue'
 import { closePrompt, resetClosePrompt, setResponder } from './state'
-import { CLOSE_PROMPT_DISMISS, CLOSE_PROMPT_REQUEST, type ClosePromptRequest } from '../shared'
+import { CLOSE_PROMPT_DISMISS, CLOSE_PROMPT_REQUEST } from '../shared'
 
 export const name = 'mics.close-behavior'
 export const inject = ['ui', 'ipc']
@@ -29,8 +29,7 @@ export function apply(ctx: Context): void {
     })
   })
 
-  const offRequest = ctx.ipc.on(CLOSE_PROMPT_REQUEST, (payload) => {
-    const request = payload as Partial<ClosePromptRequest> | undefined
+  const offRequest = ctx.on(CLOSE_PROMPT_REQUEST, (request) => {
     if (typeof request?.id !== 'string') return
     const id = request.id
 
@@ -48,9 +47,8 @@ export function apply(ctx: Context): void {
       .catch(() => {})
   })
 
-  const offDismiss = ctx.ipc.on(CLOSE_PROMPT_DISMISS, (payload) => {
-    const id = (payload as { id?: unknown } | undefined)?.id
-    if (id === closePrompt.id) closePrompt.open = false
+  const offDismiss = ctx.on(CLOSE_PROMPT_DISMISS, (payload) => {
+    if (payload?.id === closePrompt.id) closePrompt.open = false
   })
 
   // 确认框宿主挂到 body：关闭时不一定停在设置页，不能依赖页面挂载

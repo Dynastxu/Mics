@@ -10,7 +10,7 @@ import type {
   RpcResponse,
   RuntimeEventEnvelope
 } from '@mics/sdk'
-import { emitEvent, pluginIdOf, waterfallEvent } from '@mics/sdk'
+import { emitEvent, emitRuntime, isRuntimeTopic, pluginIdOf, waterfallEvent } from '@mics/sdk'
 
 type Handler = (params: unknown, meta: IpcMeta) => MaybePromise<unknown>
 type Listener = (payload: unknown, envelope: RuntimeEventEnvelope) => void
@@ -44,6 +44,11 @@ export class IpcService extends Service {
     ipcMain.handle('mics:rpc', this.onRpc)
     ipcMain.removeAllListeners('mics:event:emit')
     ipcMain.on('mics:event:emit', this.onEventEmit)
+    // 渲染进程启动时问一次自己的窗口 id（同步：早于任何插件加载）
+    ipcMain.removeAllListeners('mics:window-id')
+    ipcMain.on('mics:window-id', (event) => {
+      event.returnValue = event.sender.id
+    })
     this.baseCtx.logger('ipc').info('IPC 服务已就绪：mics:rpc / mics:event')
     yield () => {
       ipcMain.removeHandler('mics:rpc')
@@ -98,14 +103,19 @@ export class IpcService extends Service {
     this.broadcast(topic, payload, pluginIdOf(this.ctx))
   }
 
-  broadcast(topic: string, payload?: unknown, source?: PluginId): void {
-    const envelope: RuntimeEventEnvelope = { topic, source, payload, ts: Date.now() }
+  broadcast(topic: string, payload?: unknown, source?: PluginId, target?: number): void {
+    const envelope: RuntimeEventEnvelope = { topic, source, payload, ts: Date.now(), target }
     for (const contents of webContents.getAllWebContents()) {
-      if (!contents.isDestroyed()) contents.send('mics:event', envelope)
+      if (contents.isDestroyed()) continue
+      if (target !== undefined && contents.id !== target) continue
+      contents.send('mics:event', envelope)
     }
     for (const listener of this.listeners.get(topic) ?? []) {
       listener(payload, envelope)
     }
+    // 跨进程 topic 同时在本地派发一次：插件用 `ctx.on('ipc:...')` 就能统一订阅，
+    // 不必区分事件来自本进程还是窗口。前缀是运行时约定，见 @mics/sdk 的 topics。
+    if (isRuntimeTopic(topic)) emitRuntime(this.baseCtx, topic, payload)
   }
 
   /** 主进程不实现 invoke，保留给渲染进程侧 */

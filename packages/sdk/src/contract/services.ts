@@ -1,5 +1,7 @@
 import type { Component } from 'vue'
 import type { Context } from 'cordis'
+// 只取类型：插件用 `ctx.timeout/interval`，实现由根上下文挂载的 TimerService 提供
+import type {} from '@cordisjs/plugin-timer'
 import type { CapabilitiesServiceApi } from './capability'
 import type { PluginConfigurationInfo } from './configuration'
 import type { PluginGraphReport } from './diagnostics'
@@ -15,6 +17,7 @@ import type {
   RuntimeSnapshot
 } from './runtime'
 import type { MainWindowServiceApi } from './window'
+import type { WirePayload, WireTopic } from './topics'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -62,15 +65,38 @@ export interface IpcServiceApi {
     method: string,
     handler: (params: T, meta: IpcMeta) => MaybePromise<unknown>
   ): Disposable
-  /** 订阅事件（两个进程都能用） */
-  on(
-    topic: string,
-    listener: (payload: unknown, envelope: RuntimeEventEnvelope) => void
+  /**
+   * 订阅跨进程事件（两个进程都能用）。
+   *
+   * 推荐用契约 topic（`ipc:` 前缀），payload 类型由 `RuntimeEvents` 增补给出；
+   * 字符串重载只留给基础设施代码（内核转发、桥接层）。
+   */
+  on<K extends WireTopic>(
+    topic: K,
+    listener: (payload: WirePayload<K>, envelope: RuntimeEventEnvelope) => void
   ): Disposable
-  /** 广播事件 */
+  on(topic: string, listener: (payload: unknown, envelope: RuntimeEventEnvelope) => void): Disposable
+  /**
+   * 广播事件。
+   *
+   * `ipc:` 前缀的 topic 会在本地再派发一次同名 Cordis 事件，
+   * 因此插件用 `ctx.on('ipc:...')` 就能同时收到本进程与另一进程的广播。
+   */
+  emit<K extends WireTopic>(topic: K, payload: WirePayload<K>): void
   emit(topic: string, payload?: unknown): void
-  /** 主进程：广播事件并标注来源插件 */
-  broadcast(topic: string, payload?: unknown, source?: PluginId): void
+  /**
+   * 主进程：广播事件并标注来源插件。
+   *
+   * `target` 是目标窗口的 webContents id；省略表示广播给所有窗口。
+   * 多窗口时"只属于某个窗口"的事件（关闭确认框、通知）应当带上它。
+   */
+  broadcast<K extends WireTopic>(
+    topic: K,
+    payload: WirePayload<K>,
+    source?: PluginId,
+    target?: number
+  ): void
+  broadcast(topic: string, payload?: unknown, source?: PluginId, target?: number): void
   /** 主进程实现：某个插件注册的方法名（诊断用） */
   methodsOf?(target: PluginId): string[]
 }
@@ -132,8 +158,17 @@ export interface PluginsServiceApi {
   uninstall?(id: PluginId, options?: { force?: boolean }): Promise<void>
   /** 主进程实现：激活所有声明了 onStartup / * 的插件 */
   activateStartup?(): Promise<void>
+  /**
+   * 主进程实现：挂载整棵插件树（include 引擎）。
+   * 必须在 `ipc` 等服务就绪后调用，否则 inject 这些服务的插件会一直 pending。
+   */
+  mountPlugins?(): Promise<void>
   /** 渲染端实现：重新拉取内核快照 */
   refresh?(): Promise<void>
+  /** 渲染端实现：快照落地后 resolve（服务本身在 init 完成前就可注入） */
+  whenReady?(): Promise<void>
+  /** 渲染端实现：加载所有启用插件的渲染半边（在 plugins 服务就绪之后调用） */
+  activateAll?(): Promise<void>
   snapshot(): RuntimeSnapshot
   /** 渲染端实现：插件作用域上下文，供页面组件通过 provide 使用 */
   contextOf?(id: PluginId): Context | undefined

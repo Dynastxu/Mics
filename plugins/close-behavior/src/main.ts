@@ -17,7 +17,7 @@ import {
 } from './shared'
 
 export const name = 'mics.close-behavior'
-export const inject = ['ipc', 'storage', 'mainWindow']
+export const inject = ['ipc', 'storage', 'mainWindow', 'timer']
 
 function readSettings(ctx: Context): CloseSettings {
   return {
@@ -65,7 +65,9 @@ export function apply(ctx: Context): void {
 
   const broker = new ClosePromptBroker({
     broadcast: (topic, payload) => ctx.ipc.broadcast(topic, payload),
-    logger
+    logger,
+    // 计时器挂在插件 fiber 上：插件被禁用 / 卸载时，等待中的超时一并撤销
+    schedule: (callback, delay) => ctx.timeout(callback, delay)
   })
 
   if (ctx.mainWindow.supported) {

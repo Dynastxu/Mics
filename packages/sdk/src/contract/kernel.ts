@@ -81,6 +81,13 @@ export interface KernelConfig {
   profile?: ProfileConfig
   /** 首次扫描中失败的目录（清单非法、入口冲突等）；rescan 时会刷新 */
   scanErrors?: ScanError[]
+  /**
+   * 插件树的持久化文件（`cordis.yml`）。
+   *
+   * 只保存部署状态（主要是 `disabled`）；条目的增删由扫描结果决定，
+   * 启动代码自己创建 entry，因此不需要 Include 参与挂载。
+   */
+  treeFile?: string
   /** 宿主资源同步接口；缺省表示不跟随变化（例如测试环境） */
   host?: PluginHostBridge
 }

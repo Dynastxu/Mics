@@ -16,17 +16,24 @@
     "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
+    "@cordisjs/plugin-fs-node": "^0.1.0",
+    "@cordisjs/plugin-group": "^1.0.0",
+    "@cordisjs/plugin-loader": "^1.0.0-rc.9",
+    "@cordisjs/plugin-logger-console": "^1.0.0",
+    "@cordisjs/plugin-timer": "^1.1.4",
     "@mics/plugin-loader": "workspace:*",
     "@mics/sdk": "workspace:*",
     "cordis": "4.0.0-rc.12",
     "vue": "^3.5.44"
   },
   "devDependencies": {
+    "@cordisjs/plugin-hmr": "^1.1.2",
     "@types/node": "^24.13.4",
     "@vitejs/plugin-vue": "^6.0.10",
     "electron": "^45.0.0",
     "electron-builder": "^26.0.0",
     "electron-vite": "^6.0.0",
+    "node-addon-require-builtin": "^0.1.9",
     "typescript": "~6.0.3",
     "vite": "^8.3.5",
     "vue-tsc": "^3.3.13"
@@ -44,7 +51,10 @@
       {
         "from": "../../plugins",
         "to": "plugins",
-        "filter": ["**/dist/**", "**/plugin.json"]
+        "filter": [
+          "**/dist/**",
+          "**/plugin.json"
+        ]
       },
       {
         "from": "../../boot.config.json",
@@ -55,7 +65,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -66,10 +78,15 @@
       "createStartMenuShortcut": true
     },
     "mac": {
-      "target": ["dmg"]
+      "target": [
+        "dmg"
+      ]
     },
     "linux": {
-      "target": ["AppImage", "deb"]
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     }
   }
 }

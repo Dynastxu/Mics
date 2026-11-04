@@ -98,9 +98,8 @@ onMounted(() => {
   offViewActivated = props.ctx.on('ui/viewActivated', (viewId: string) => {
     if (viewId === 'settings.general') void load()
   })
-  offChanged = props.ctx.ipc.on(CLOSE_BEHAVIOR_CHANGED, (payload) => {
+  offChanged = props.ctx.on(CLOSE_BEHAVIOR_CHANGED, (settings) => {
     if (saving.value) return
-    const settings = payload as Partial<CloseSettings> | undefined
     if (!isCloseAction(settings?.closeAction)) return
     apply({
       closeAction: settings.closeAction,

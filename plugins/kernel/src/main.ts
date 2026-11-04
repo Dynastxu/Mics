@@ -52,8 +52,13 @@ export function apply(ctx: Context, config: KernelConfig): void {
   )
 
   // 等内核服务就绪后，再对外暴露系统 RPC 并启动开机插件
-  ctx.inject(['ipc', 'plugins', 'commands', 'permissions', 'configuration'], (ctx) => {
-    log.info('内核服务就绪，开始注册系统 RPC 并激活启动插件')
+  ctx.inject(
+    ['ipc', 'plugins', 'commands', 'permissions', 'configuration'],
+    async (ctx) => {
+      // include 引擎：在这里挂载插件树。必须等到 ipc 等服务就绪之后，
+      // 否则 inject ipc 的插件会一直 pending，init 里的等待永远不返回。
+      await ctx.plugins.mountPlugins?.()
+      log.info('内核服务就绪，开始注册系统 RPC 并激活启动插件')
 
     const snapshot = (): RuntimeSnapshot => ({
       app: config.app,
@@ -125,9 +130,9 @@ export function apply(ctx: Context, config: KernelConfig): void {
       true
     )
 
-    // 插件状态变化 -> 广播给渲染进程
+    // 插件状态变化 -> 广播给渲染进程（同时本地重派发，见 kernel 的 IpcService.broadcast）
     ctx.on('plugins/changed', () => {
-      ctx.ipc.emit('plugins/changed', snapshot())
+      ctx.ipc.emit('ipc:plugins/changed', snapshot())
     })
 
     // 不阻塞 bootstrap：窗口可以先显示，插件在后台激活

@@ -28,6 +28,7 @@
     "workflow:ci": "pnpm typecheck && pnpm lint && pnpm build"
   },
   "devDependencies": {
+    "@cordisjs/plugin-timer": "^1.1.4",
     "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^6.0.10",
     "cordis": "4.0.0-rc.12",
@@ -40,6 +41,7 @@
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.1",
     "vite": "^8.3.5",
+    "yaml": "^2.9.1",
     "vite-plugin-vue-devtools": "^8.2.1",
     "vue": "^3.5.44",
     "vue-eslint-parser": "^10.4.1",

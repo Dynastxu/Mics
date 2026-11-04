@@ -10,13 +10,13 @@
                                │ root.extend({ [PLUGIN_ID]: id }).plugin(内核)
 ┌──────────────────────────────▼──────────── 主进程 ─────────────────────────┐
 │ plugins/kernel —— 内核插件，也是普通 cordis 插件                            │
-│   ├─ PluginsService     清单 → fiber 的映射、懒激活、依赖顺序                │
+│   ├─ PluginsService     清单 → Loader entry 的映射、依赖顺序、状态跟踪        │
 │   ├─ IpcService         mics:rpc 路由、mics:event 广播、调用方追踪           │
 │   ├─ CommandsService    声明式命令 + 实现注册，执行前按需激活                │
 │   ├─ StorageService     按 pluginId 隔离的 JSON 存储                        │
 │   ├─ PermissionsService 清单权限校验                                        │
 │   ├─ MainWindowService  主窗口生命周期（销毁 / 重建，低内存托盘）            │
-│   └─ 其余插件由 PluginsService 逐个 ctx.plugin() 挂载                        │
+│   └─ 其余插件由 PluginsService 经 Cordis Loader 挂载（entry → fiber）        │
 └──────────────────────────────┬─────────────────────────────────────────────┘
                                │ preload contextBridge（唯一通道）
 ┌──────────────────────────────▼──────────── 渲染进程 ───────────────────────┐
@@ -74,6 +74,44 @@ cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式
   实际派发模式与声明不符时打 warning；生产构建不挂这个审计。
 
 这样「`emit` 之后有没有人改返回值」不需要读派发点猜，类型和声明会直接回答。
+
+### 跨进程事件（`ipc:` topic）
+
+事件有两层，不能混：
+
+| 层 | 用法 | 能跨进程吗 |
+| --- | --- | --- |
+| Cordis 事件 | `ctx.emit` / `waterfall` / `bail` / `serial` / `parallel`，上面的 `EVENT_MODES` | 不能：参数里有 `next()`、`ctx`，不可序列化 |
+| Runtime topic | `ctx.ipc.emit/on`，payload 必须可序列化 | 能：主进程经 `mics:event` 广播到每个窗口 |
+
+两者靠**前缀**区分：topic 一律以 `ipc:` 开头。
+
+- 主进程 `broadcast()` 发完窗口后，会在本地再派发一次同名 Cordis 事件
+  （[ipc.ts](../plugins/kernel/src/services/ipc.ts)）；
+- 渲染进程在 `boot()` 里装一个边界适配器，把收到的每一帧重新派发成本地事件
+  （[context.ts](../apps/desktop/src/renderer/runtime/context.ts)）。
+
+因此插件在**两个进程里写同一行代码**：
+
+```ts
+ctx.on('ipc:plugins/changed', (snapshot) => {
+  /* ... */
+})
+```
+
+不需要知道事件从哪个进程来。契约用模块增补登记，topic 名与 payload 类型只有一个来源：
+
+```ts
+declare module 'cordis' {
+  interface Events {
+    'ipc:my-plugin/changed'(payload: MyPayload): void
+  }
+}
+```
+
+`@mics/sdk` 的 `WireTopic` 按前缀自动把 topic 从普通事件里挑出来，
+`ctx.ipc.emit` / `ctx.ipc.on` 都按它做类型检查。**跨进程只做 `emit` 语义**：
+`waterfall` / `bail` 依赖返回值与短路，需要「请求—响应」时走 RPC。
 
 ### 调用方追踪（traceable）
 
@@ -321,35 +359,44 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 组件复用 shell 的 `mics-*` 设计系统类，自带的 scoped 样式会进插件的 `dist/style.css`，
 因此使用方必须在 `plugin.json` 里声明 `styles`。
 
-## 10. 懒激活、状态机与贡献点
+## 10. 挂载模型、状态与贡献点
 
-- `activation: ["*"] | ["onStartup"]`：随内核启动。
-- 缺省：按需。打开页面时激活，或执行命令时由命令服务按 manifest 找到归属插件后激活。
-- 渲染器先按清单渲染导航 / 状态栏 / 主题；插件被激活时才 import 产物、创建 fiber、注册页面组件。
-- 渲染端插件激活时也会同步内核状态（`plugins/activate`），保持主进程与渲染进程的生命周期一致。
-- **状态机**（目录是「已安装」的唯一事实来源）：
+**挂载**（dsh 的 `entries.start` 模型）：
 
-  | 状态     | 含义                                                        | 界面                         |
-  | -------- | ----------------------------------------------------------- | ---------------------------- |
-  | 启用     | 目录在、fiber active                                        | 开关打开                     |
-  | 等待依赖 | 目录在、fiber pending：`inject` 的服务没人提供              | 徽标「等待依赖」+ 缺哪些服务 |
-  | 禁用     | 目录在、代码停止，状态写入 `userData/disabled-plugins.json` | 开关关闭                     |
-  | 失败     | 目录在、导入或 `apply` 抛错                                 | 红色徽标 + 错误              |
-  | 未安装   | 目录不存在                                                  | **不显示**（不是第五种开关） |
+- 启动代码（内核 `syncTree()`）按扫描结果**自己创建每个 entry**，然后
+  `await loader.await()`；entry 与 init 任务在 await 之前就已存在，因此不需要
+  轮询或延时去等"文件解析完"；
+- `<userData>/cordis.yml` 只保存部署状态（主要是 `disabled`）：启动时读它合并禁用集合，
+  变更后由内核整份重写；条目增删由目录扫描决定，手写条目会在下次对账时被移除；
+- 禁用/启用是 `loader.update(id, { disabled })`；重载是 `remove + create`（换查询串
+  强制重新 import）；安装/卸载后 `rescan → syncTree` 让树与目录对齐。
 
-- **三种状态与 waiting 的区别**：`PluginStatus` 里 `waiting` 不是安装状态，而是「插件已挂载、
-  但 `inject` 的服务没出现」。cordis 在服务缺失时只会把 fiber 留在 pending，`ctx.plugin()`
-  仍然 resolve——所以内核自己把 `fiber.state` 映射成插件状态（`plugins.ts` 的
-  `applyFiberState`），服务出现 / 消失时自动更新。
+> 曾短暂采用过 Cordis Include 挂载整棵树，但它由文件异步建行、`loader.await()` 会
+> 在空树上立即返回，只能靠轮询补偿，因此改回上面这种"启动代码建树"的模型。
+
+渲染进程在启动时把**所有**插件的渲染半边加载一次（不再按页面激活）。导航仍由清单
+在代码加载前渲染，因此首屏不依赖插件执行。`activation` 字段现在只用于诊断展示。
+
+- **状态**（目录是「已安装」的唯一事实来源）：
+
+  | 状态     | 含义                                                          | 界面                         |
+  | -------- | ------------------------------------------------------------- | ---------------------------- |
+  | 启用     | 目录在、entry 的 fiber active                                 | 开关打开                     |
+  | 等待依赖 | entry 在、fiber pending：`inject` 的服务没人提供              | 徽标「等待依赖」+ 缺哪些服务 |
+  | 禁用     | 目录在、entry `disabled: true`（写回 `cordis.yml`）           | 开关关闭                     |
+  | 失败     | entry 在、没有 fiber（import 失败）或 `apply` 抛错            | 红色徽标 + 错误              |
+  | 未安装   | 目录不存在                                                    | **不显示**（不是第五种开关） |
+
+- **状态来源**：`entry.fiber.state` 与 `entry.disabled` 是唯一事实，内核只做映射
+  （`applyFiberState`）。状态变化来自 fiber 的 `internal/status`，不靠轮询。
 - **清单依赖**（`dependencies`）与 **服务依赖**（`inject`）分工明确：前者是「必须一起运行的
   插件」，激活前做图校验（缺失 / 自依赖 / 环），有问题直接 `dependencyIssues`；后者是
-  「等某服务就绪」，运行期用 `waitingFor` 表达。两者混用会让「装错了」和「还没就绪」
-  看起来一样。
-- **禁用**（`ctx.plugins.disable(id)`）：写入状态文件并卸载 fiber；之后页面打开、命令执行、
-  启动事件都不会再激活它，只有 `enable(id)` 能解除。禁用后不再贡献导航 / 命令 / 主题 /
-  布局 / 状态栏与样式。
-- **启用 / 重载 / 卸载**都是双进程事务：主进程 fiber 与渲染端 fiber 一起成功或一起失败；
-  渲染端加载失败会回报内核（`plugins/fail`），内核停下主进程并标记失败。
+  「等某服务就绪」，运行期用 `waitingFor` 表达。
+- **禁用**（`ctx.plugins.disable(id)`）：改 entry 的 `disabled` 并卸载 fiber，Include 写回文件；
+  之后导航、命令、主题、布局与样式一并移除，只有 `enable(id)` 能解除。
+- **启用 / 重载 / 卸载**：启用把 entry 的 `disabled` 置回 false；重载用
+  `remove + create`（换查询串强制重新 import）；卸载删文件后 `rescan` 会让
+  reconcile 把 entry 从树里移除。三者都不需要重启应用。
 - `core: true` 的内核插件与 `essential: true` 的必需插件拒绝禁用（renderer 与 kernel 两侧都会校验）；
   这两个标记只对**内置插件**生效，第三方插件写它们不会获得自锁能力。插件管理自身标记为
   essential，避免禁用后失去恢复入口；日志插件同样标记为 essential，避免禁用后让 inject
@@ -371,7 +418,8 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 | `plugins/`                           | 第三方插件本体                                                                                 | 插件管理                       |
 | `logs/`                              | 每次启动一个 `mics-<时间>.log`                                                                 | 日志插件                       |
 | `profiles/`                          | `boot.config.json` 指向的 profile                                                              | 内核                           |
-| `disabled-plugins.json`、各插件 JSON | 插件开关与 `ctx.storage` 数据                                                                  | 内核 / 各插件                  |
+| `cordis.yml`                         | 插件树：每个主进程插件的入口、配置与 `disabled`（Include 写回）                                 | 内核（Include）                |
+| `disabled-plugins.json`              | 纯渲染插件（没有主进程入口）的开关；其余开关已并入 `cordis.yml`                                | 内核                           |
 
 游戏数据与应用数据分开放：`.minecraft` 可以整目录备份或搬到别的盘，而 `plugins` /
 `logs` / `profiles` / `cache` 是启动器自己的东西。插件在根下新增目录前先确认没有

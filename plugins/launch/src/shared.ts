@@ -159,4 +159,10 @@ export interface InstanceModDeleteRequest extends InstanceRef {
 }
 
 /** 主进程广播运行状态的事件主题 */
-export const LAUNCH_STATE_TOPIC = 'mics.launch/state'
+export const LAUNCH_STATE_TOPIC = 'ipc:mics.launch/state'
+
+declare module 'cordis' {
+  interface Events {
+    [LAUNCH_STATE_TOPIC](state: LaunchState): void
+  }
+}

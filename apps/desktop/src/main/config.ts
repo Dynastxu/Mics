@@ -70,15 +70,21 @@ export function loadBootConfig(onWarning: ConfigWarning = consoleWarning): BootC
 
 /** 解析插件根目录；MICS_PLUGIN_ROOTS 可覆盖（多个路径用 path.delimiter 分隔） */
 export function resolvePluginRoots(roots: string[]): string[] {
+  const base = app.isPackaged ? process.resourcesPath : projectRoot()
+  // 覆盖值也要按仓库根解析：开发时进程 cwd 是 apps/desktop，
+  // 直接拿相对的 "plugins" 去扫会一个都找不到（内核缺失 → 应用起不来）。
+  const resolve = (root: string): string =>
+    path.isAbsolute(root) ? root : path.resolve(base, root)
+
   const override = process.env.MICS_PLUGIN_ROOTS
   if (override) {
     return override
       .split(path.delimiter)
       .map((item) => item.trim())
       .filter(Boolean)
+      .map(resolve)
   }
-  const base = app.isPackaged ? process.resourcesPath : projectRoot()
-  return roots.map((root) => (path.isAbsolute(root) ? root : path.resolve(base, root)))
+  return roots.map(resolve)
 }
 
 /**

@@ -52,6 +52,8 @@ export interface MicsWindowControls {
 
 /** preload 通过 contextBridge 暴露到渲染进程的 window.mics */
 export interface MicsBridge {
+  /** 当前渲染进程所属窗口的 webContents id；事件路由用它区分"发给哪个窗口" */
+  readonly windowId: number
   readonly versions: Record<string, string>
   readonly platform: string
   readonly windowControls: MicsWindowControls

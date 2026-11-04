@@ -11,6 +11,8 @@
  * provider，启动管线与这里的接口都不用改。
  */
 
+import type {} from 'cordis'
+
 export type AccountKind = 'microsoft' | 'offline'
 
 export const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = {
@@ -65,4 +67,10 @@ export interface AuthCredentialsCapability {
 }
 
 /** 账户列表、当前账户或授权状态变化；payload 为 AccountSnapshot */
-export const ACCOUNT_CHANGED_TOPIC = 'mics.account/changed'
+export const ACCOUNT_CHANGED_TOPIC = 'ipc:mics.account/changed'
+
+declare module 'cordis' {
+  interface Events {
+    [ACCOUNT_CHANGED_TOPIC](snapshot: AccountSnapshot): void
+  }
+}

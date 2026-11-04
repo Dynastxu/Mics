@@ -99,8 +99,7 @@ function handleAdded(): void {
 let offChanged: (() => void) | null = null
 
 onMounted(() => {
-  offChanged = ctx.ipc.on(ACCOUNT_CHANGED_TOPIC, (payload) => {
-    const snapshot = payload as AccountSnapshot | undefined
+  offChanged = ctx.on(ACCOUNT_CHANGED_TOPIC, (snapshot) => {
     if (snapshot && Array.isArray(snapshot.accounts)) apply(snapshot)
   })
   void load()

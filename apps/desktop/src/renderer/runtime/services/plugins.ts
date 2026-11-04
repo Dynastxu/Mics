@@ -7,7 +7,8 @@ import type {
   PluginInfo,
   RuntimeSnapshot
 } from '@mics/sdk'
-import { FIBER_ACTIVE, PLUGIN_ID, PluginFailureError } from '@mics/sdk'
+import { FIBER_ACTIVE, FIBER_FAILED, PLUGIN_ID, PluginFailureError } from '@mics/sdk'
+import { failBootScreen, hideBootScreen, setBootProgress } from '../../boot-screen'
 import { reportCleanup, snapshotCleanup, type CleanupSnapshot } from '../cleanupAudit'
 import { logDebug, logError, logInfo, logWarn } from '../logging'
 import { applySnapshot, ensureStyle, removeStyle, store } from '../store'
@@ -55,11 +56,21 @@ export class PluginsService extends Service {
   private stamp = 0
   /** dev 清理审计：每个插件上一次重载后的渲染端注册快照 */
   private readonly auditBaselines = new Map<PluginId, CleanupSnapshot>()
+  /** init 完成（快照已落地）后 resolve；服务本身在 init 之前就可注入 */
+  private readonly readyPromise: Promise<void>
+  private resolveReady!: () => void
+  private rejectReady!: (error: unknown) => void
 
   constructor(ctx: Context) {
     super(ctx, 'plugins')
     this.owner = ctx
     this.baseCtx = ctx
+    this.readyPromise = new Promise<void>((resolve, reject) => {
+      this.resolveReady = resolve
+      this.rejectReady = reject
+    })
+    // 没人 await 时也不能变成 unhandled rejection
+    void this.readyPromise.catch(() => {})
   }
 
   async [Service.init](): Promise<void> {
@@ -67,12 +78,23 @@ export class PluginsService extends Service {
       // 主进程的内核服务可能还在注册系统 RPC，这里做有限重试
       await this.waitForKernel()
       this.owner.theme.restore()
-      await this.activateStartupPlugins()
       logInfo('渲染端插件快照已同步：%d 个插件', store.plugins.length)
+      this.resolveReady()
     } catch (error) {
       store.bootError = error instanceof Error ? error.message : String(error)
       logError('渲染端等待内核就绪失败', error)
+      this.rejectReady(error)
     }
+  }
+
+  /**
+   * 快照落地后才 resolve。
+   *
+   * 服务在 `[Service.init]` 完成之前就已经可注入，所以「拿到 plugins 服务」不等于
+   * 「插件清单已加载」；`activateAll()` 必须等这里，否则面对的是空列表。
+   */
+  whenReady(): Promise<void> {
+    return this.readyPromise
   }
 
   private async waitForKernel(): Promise<void> {
@@ -93,31 +115,62 @@ export class PluginsService extends Service {
     throw lastError instanceof Error ? lastError : new Error(String(lastError))
   }
 
-  /**
-   * 渲染端也会遵守清单的 `activation`。
+   /**
+   * 渲染端把插件的渲染半边**全部**加载一次。
    *
-   * 有页面的插件可以懒加载，但服务型插件（例如通知）没有页面可打开；它们
-   * 声明 onStartup / * 后必须随外壳一起启动，否则 inject 该服务的插件会一直
-   * 停在 waiting。单个插件失败只记录错误，不影响外壳继续启动。
+   * 主进程已经由 Cordis Include 在启动时挂载完毕；如果渲染端仍按页面懒加载，
+   * 就会出现「主进程已 active、渲染端还没加载」的半激活状态。全部加载后这条路
+   * 只剩一种状态，代价是启动时多解析约 380 KB 的插件产物（导航仍先于代码渲染）。
+   *
+   * 必须在 `plugins` 服务就绪之后调用：在 Service.init 里调用时 `plugins` 自身
+   * 还不算可用，注入它的插件会全部报「服务尚未提供」。
+   *
+   * 两轮：第一轮按快照顺序加载；失败的多半是依赖的提供方排在后面，
+   * 第二轮重试即可，顺序不再依赖清单排序。
    */
-  private async activateStartupPlugins(): Promise<void> {
-    const startup = store.plugins.filter((plugin) => {
-      if (!plugin.hasRenderer || plugin.state === 'disabled') return false
-      const activation = plugin.manifest.activation ?? []
-      return activation.includes('*') || activation.includes('onStartup')
-    })
-
-    for (const plugin of startup) {
+  /**
+   * 渲染端把插件的渲染半边**全部**加载一次。
+   *
+   * 主进程已经由 Cordis Include 在启动时挂载完毕；如果渲染端仍按页面懒加载，
+   * 就会出现「主进程已 active、渲染端还没加载」的半激活状态。全部加载后这条路
+   * 只剩一种状态，代价是启动时多解析约 380 KB 的插件产物（导航仍先于代码渲染）。
+   *
+   * 只跑一遍，和 dsh 的 `bootClient` 一致：依赖的服务如果还没出现，cordis 会把
+   * fiber 留在 pending，等提供方就绪后**自动**激活；这里不做重试。
+   */
+  async activateAll(): Promise<void> {
+    const pending = store.plugins.filter(
+      (plugin) => plugin.hasRenderer && plugin.state !== 'disabled'
+    )
+    const total = pending.length
+    const done = new Set<PluginId>()
+    const failed: string[] = []
+    setBootProgress(0, total)
+    for (const plugin of pending) {
       try {
         await this.activate(plugin.id)
+        if (!done.has(plugin.id)) {
+          done.add(plugin.id)
+          setBootProgress(done.size, total)
+        }
       } catch (error) {
+        failed.push(plugin.id)
         logWarn(
-          '启动插件 %s 失败：%s',
+          '渲染端加载插件 %s 失败：%s',
           plugin.id,
           error instanceof Error ? error.message : String(error)
         )
       }
     }
+    if (failed.length > 0) {
+      // 与 dsh 的启动页一致：失败项直接摆出来，而不是只留一条日志
+      failBootScreen('部分插件未能加载（可在「插件管理」中查看）', failed)
+      setTimeout(() => hideBootScreen(), 4000)
+    } else {
+      logInfo('渲染端插件已全部加载')
+    }
+    // 与内核状态对齐：早先的尝试可能留下「等待依赖」或错误行
+    await this.refresh().catch(() => {})
   }
 
   list(): PluginInfo[] {
@@ -155,7 +208,7 @@ export class PluginsService extends Service {
   }
 
   onDidChange(listener: () => void): Disposable {
-    return this.owner.ipc.on('plugins/changed', () => listener())
+    return this.owner.on('ipc:plugins/changed', () => listener())
   }
 
   async activate(id: PluginId): Promise<void> {
@@ -300,16 +353,21 @@ export class PluginsService extends Service {
               `插件 ${info.id} 的页面启动失败：${error instanceof Error ? error.message : String(error)}`
             )
           }
-          // 服务缺失时 cordis 只会让插件停在 pending：页面什么都不注册，
-          // 用户看到的是「已启用但空白」。这里显式失败，错误信息能指到具体服务。
+          // 服务缺失时 cordis 会把插件留在 pending，等提供方出现后自动激活。
+          // 全量加载下这是正常的中间状态（提供方可能排在后面），不能当失败处理——
+          // 否则每个「依赖别人的页面插件」都要靠重试顺序碰运气。
           const unmet = Object.keys(fiber.inject).filter(
             (name) => fiber.ctx.get(name) === undefined
           )
-          if (fiber.state !== FIBER_ACTIVE || unmet.length > 0) {
+          if (fiber.state === FIBER_FAILED) {
             await fiber.dispose()
-            throw new PluginFailureError(
-              unmet.length > 0 ? 'dependency' : 'apply',
-              `插件 ${info.id} 声明的服务尚未提供：${unmet.join('、') || '未知'}`
+            throw new PluginFailureError('apply', `插件 ${info.id} 的页面启动失败`)
+          }
+          if (fiber.state !== FIBER_ACTIVE) {
+            logInfo(
+              '页面插件 %s 已挂载，等待服务：%s',
+              info.id,
+              unmet.join('、') || '未知（尚未重新评估）'
             )
           }
           this.fibers.set(info.id, fiber)

@@ -12,11 +12,16 @@ import type {
 type Listener = (envelope: RuntimeEventEnvelope) => void
 type WindowStateListener = (state: MicsWindowState) => void
 
+// 同步问主进程要自己的窗口 id：必须在任何插件加载前拿到，用于事件路由
+const windowId = ipcRenderer.sendSync('mics:window-id') as number
+
 const listeners = new Map<string, Set<Listener>>()
 const windowStateListeners = new Set<WindowStateListener>()
 
 ipcRenderer.on('mics:event', (_event, envelope: RuntimeEventEnvelope) => {
   if (!envelope || typeof envelope.topic !== 'string') return
+  // 定向事件：只处理发给本窗口的帧（未带 target 的是广播）
+  if (typeof envelope.target === 'number' && envelope.target !== windowId) return
   for (const listener of listeners.get(envelope.topic) ?? []) listener(envelope)
   for (const listener of listeners.get('*') ?? []) listener(envelope)
 })
@@ -31,6 +36,7 @@ function sendWindowControl(action: MicsWindowControl): void {
 }
 
 const bridge: MicsBridge = {
+  windowId,
   versions: {
     electron: process.versions.electron ?? '',
     chrome: process.versions.chrome ?? '',

@@ -11,18 +11,31 @@ import {
 const DEFAULT_DISPLAY_TIMEOUT_MS = 2_000
 const DEFAULT_CHOICE_TIMEOUT_MS = 10 * 60_000
 
+/** 默认调度：与宿主无关的实现，便于单测；宿主会传入 `ctx.timeout` */
+function defaultSchedule(callback: () => void, delay: number): Cancel {
+  const timer = setTimeout(callback, delay)
+  return () => clearTimeout(timer)
+}
+
 export interface ClosePromptBrokerOptions {
   broadcast(topic: string, payload: unknown): void
   logger: Logger
+  /**
+   * 定时器工厂：默认 setTimeout，宿主传 `ctx.timeout` 让计时器随插件 fiber 回收。
+   * 返回值是「取消」，替代 clearTimeout。
+   */
+  schedule?(callback: () => void, delay: number): () => void
   displayTimeoutMs?: number
   choiceTimeoutMs?: number
 }
 
+type Cancel = () => void
+
 interface PendingPrompt {
   id: string
   resolve(result: ClosePromptResult | undefined): void
-  displayTimer: ReturnType<typeof setTimeout>
-  choiceTimer?: ReturnType<typeof setTimeout>
+  displayTimer: Cancel
+  choiceTimer?: Cancel
 }
 
 /**
@@ -36,18 +49,20 @@ export class ClosePromptBroker {
   private readonly pending = new Map<string, PendingPrompt>()
   private readonly displayTimeoutMs: number
   private readonly choiceTimeoutMs: number
+  private readonly schedule: (callback: () => void, delay: number) => Cancel
   private sequence = 0
 
   constructor(private readonly options: ClosePromptBrokerOptions) {
     this.displayTimeoutMs = options.displayTimeoutMs ?? DEFAULT_DISPLAY_TIMEOUT_MS
     this.choiceTimeoutMs = options.choiceTimeoutMs ?? DEFAULT_CHOICE_TIMEOUT_MS
+    this.schedule = options.schedule ?? defaultSchedule
   }
 
   /** 广播 request 并等待用户选择；界面没有响应时返回 undefined */
   request(): Promise<ClosePromptResult | undefined> {
     const id = `close_${++this.sequence}_${Date.now()}`
     return new Promise<ClosePromptResult | undefined>((resolve) => {
-      const displayTimer = setTimeout(() => {
+      const displayTimer = this.schedule(() => {
         const current = this.pending.get(id)
         if (!current) return
         this.options.logger.warn(
@@ -69,9 +84,9 @@ export class ClosePromptBroker {
     const prompt = this.pending.get(id)
     if (!prompt) return false
 
-    clearTimeout(prompt.displayTimer)
-    if (prompt.choiceTimer) clearTimeout(prompt.choiceTimer)
-    prompt.choiceTimer = setTimeout(() => {
+    prompt.displayTimer()
+    prompt.choiceTimer?.()
+    prompt.choiceTimer = this.schedule(() => {
       this.options.logger.warn('关闭确认框等待选择超时，按最小化至托盘处理')
       this.settle(prompt, undefined)
     }, this.choiceTimeoutMs)
@@ -95,8 +110,8 @@ export class ClosePromptBroker {
   private settle(prompt: PendingPrompt, result: ClosePromptResult | undefined): void {
     if (this.pending.get(prompt.id) !== prompt) return
     this.pending.delete(prompt.id)
-    clearTimeout(prompt.displayTimer)
-    if (prompt.choiceTimer) clearTimeout(prompt.choiceTimer)
+    prompt.displayTimer()
+    prompt.choiceTimer?.()
     this.options.broadcast(CLOSE_PROMPT_DISMISS, { id: prompt.id })
     prompt.resolve(result)
   }

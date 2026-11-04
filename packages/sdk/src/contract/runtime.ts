@@ -111,4 +111,11 @@ export interface RuntimeEventEnvelope {
   source?: PluginId
   payload?: unknown
   ts: number
+  /**
+   * 目标窗口（webContents id）。缺省表示广播给所有窗口。
+   *
+   * 多窗口的前置协议：关闭确认框、通知这类"只属于某个窗口"的事件带上它，
+   * 渲染端只处理发给自己的帧。单窗口时保持缺省，行为不变。
+   */
+  target?: number
 }

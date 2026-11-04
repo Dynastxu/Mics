@@ -31,7 +31,17 @@ export function logError(message: unknown, ...args: unknown[]): void {
   write('error', [message, ...args])
 }
 
+function print(level: LogLevel, args: unknown[]): void {
+  if (level === 'error') console.error(...args)
+  else if (level === 'warn') console.warn(...args)
+  else if (level === 'debug') console.debug(...args)
+  else console.info(...args)
+}
+
 function write(level: LogLevel, args: unknown[]): void {
+  // 开发期同时写 DevTools 控制台：主进程日志服务未就绪时 RPC 会静默失败，
+  // 控制台是排查启动问题的唯一兜底。
+  if (import.meta.env.DEV) print(level, args)
   if (sink) {
     try {
       sink(level, args)
@@ -40,8 +50,5 @@ function write(level: LogLevel, args: unknown[]): void {
       // 出口暂时不可用（主进程还在启动）：继续走控制台兜底
     }
   }
-  if (level === 'error') console.error(...args)
-  else if (level === 'warn') console.warn(...args)
-  else if (level === 'debug') console.debug(...args)
-  else console.info(...args)
+  if (!import.meta.env.DEV) print(level, args)
 }

@@ -6,6 +6,8 @@
  * - `quit`：直接退出应用；
  * - `tray`：隐藏主窗口、保留托盘图标继续运行。
  */
+import type {} from 'cordis'
+
 export type CloseAction = 'ask' | 'quit' | 'tray'
 
 /** 存储键；storage 已按插件隔离，无需再加插件前缀 */
@@ -14,7 +16,7 @@ export const CLOSE_ACTION_KEY = 'closeAction'
 export const LOW_MEMORY_TRAY_KEY = 'lowMemoryTray'
 
 /** 设置变化事件：确认框勾选「不再提示」后，已打开的设置页也能同步 */
-export const CLOSE_BEHAVIOR_CHANGED = 'close-behavior/changed'
+export const CLOSE_BEHAVIOR_CHANGED = 'ipc:close-behavior/changed'
 
 /**
  * 关闭确认框的事件。
@@ -23,8 +25,8 @@ export const CLOSE_BEHAVIOR_CHANGED = 'close-behavior/changed'
  * 用户选择后经 `prompt/respond` RPC 把结果交回主进程。主进程没有在
  * 显示时限内收到 ack 时按最小化至托盘处理，避免界面无响应时卡住关闭。
  */
-export const CLOSE_PROMPT_REQUEST = 'close-behavior/prompt/request'
-export const CLOSE_PROMPT_DISMISS = 'close-behavior/prompt/dismiss'
+export const CLOSE_PROMPT_REQUEST = 'ipc:close-behavior/prompt/request'
+export const CLOSE_PROMPT_DISMISS = 'ipc:close-behavior/prompt/dismiss'
 
 export type ClosePromptAction = Exclude<CloseAction, 'ask'>
 
@@ -81,4 +83,12 @@ export function normalizeLowMemoryTray(value: unknown): boolean {
   if (value === true || value === 'true') return true
   if (value === false || value === 'false') return false
   return DEFAULT_LOW_MEMORY_TRAY
+}
+
+declare module 'cordis' {
+  interface Events {
+    [CLOSE_BEHAVIOR_CHANGED](settings: CloseSettings): void
+    [CLOSE_PROMPT_REQUEST](request: ClosePromptRequest): void
+    [CLOSE_PROMPT_DISMISS](payload: { id: string }): void
+  }
 }

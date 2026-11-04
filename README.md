@@ -319,15 +319,16 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
 
 - `pnpm dev` 只负责 shell 的 HMR；改动 `plugins/*/src` 后需要重新 `pnpm build:plugins`
   （或另开一个终端跑 `pnpm watch:plugins`）。
-- 插件清单里未声明 `activation` 的插件是**懒激活**的：导航先由清单渲染，
-  第一次打开页面 / 执行命令时才加载代码；声明 `onStartup` / `*` 且有渲染端的
-  服务型插件（例如 `mics.notifications`）会随外壳一起启动。
+- 插件不再懒加载：主进程由 Cordis Include 在启动时整树挂载（`userData/cordis.yml`），
+  渲染进程也在启动时把所有插件的渲染半边加载一次。导航仍由清单在代码加载前渲染，
+  因此首屏不依赖插件执行。`activation` 字段现在只影响诊断展示。
 - 右下角通知：渲染端插件声明 `inject: ['notifications']` 后调用
   `ctx.notifications.show({ title, message, level })`；`mics.notifications`
   随外壳启动，并把通知宿主挂到 `body` 上，不占用导航页。
 - `ctx.effect()`、`ctx.ipc.handle()`、`ctx.ui.registerView()` 等注册都绑定在调用方插件
-  的 fiber 上，插件禁用或卸载时自动清理；禁用状态会持久化到 `userData/disabled-plugins.json`，
-  之后不会被页面/命令/启动事件自动重新激活，其导航、命令与样式也会从界面上移除。
+  的 fiber 上，插件禁用或卸载时自动清理；主进程插件的开关状态持久化在
+  `userData/cordis.yml` 的 `disabled` 字段，纯渲染插件仍写 `userData/disabled-plugins.json`。
+  禁用后其导航、命令与样式也会从界面上移除。
 - 第三方插件的安装、启停、重载与卸载都不需要重启应用，详见
   [docs/plugin-manager.md](docs/plugin-manager.md)；验收载体是 `examples/hello-tool`。
 - 插件管理页点开插件进入详情页：描述、「依赖 / 被依赖 / 提供 / 贡献」、未满足项与设置；
@@ -336,7 +337,7 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
   直接编辑，`ctx.storage` 自动补默认值并校验，agent 通过 `configuration/*` 读写。
   设置项较多、需要自定义界面的插件写 `settingsView` 指向自己的页面，详情里就只给入口。
 - `boot.config.json` 的 `profile` 指向 `<userData>/profiles/<name>.json`，可强制启用/禁用
-  一批插件并给设置项提供默认值；用户自己的开关保存在 `disabled-plugins.json`。
+  一批插件并给设置项提供默认值；插件开关持久化在 `<userData>/cordis.yml`（生成文件）。
 - 开发模式会做清理审计：插件重载后 `ipcMain` / `window` 监听器 / 定时器 / 视图数量
   如果增长，控制台或日志会打印告警与注册堆栈（渲染端前缀 `[mics.cleanup]`）；
   生产构建不安装审计。

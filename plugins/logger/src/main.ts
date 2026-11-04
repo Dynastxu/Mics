@@ -1,7 +1,8 @@
 import path from 'node:path'
+import { format as utilFormat } from 'node:util'
 import { app, shell } from 'electron'
 import type { Context, Message } from 'cordis'
-import type { LogLevel, LogStatus, LogWriteRequest } from '@mics/sdk'
+import type { LogStatus, LogWriteRequest } from '@mics/sdk'
 import { isLogLevel } from '@mics/sdk'
 import { defineMainPlugin } from '@mics/sdk/main'
 import { LogSink } from './sink'
@@ -44,13 +45,6 @@ function readBuffer(ctx: Context): Message[] {
 }
 
 /** 开发模式下把日志同时打印到控制台；debug 只进文件，避免刷屏 */
-function mirrorToConsole(level: LogLevel, scope: string, text: string): void {
-  if (level === 'debug') return
-  const line = `${level.toUpperCase().padEnd(5)} [${scope}] ${text}`
-  if (level === 'error') console.error(line)
-  else if (level === 'warn') console.warn(line)
-  else console.info(line)
-}
 
 function writeRendererLog(
   logs: LogsService,
@@ -61,6 +55,16 @@ function writeRendererLog(
   // 参数来自渲染进程：只接受有限数量，避免一次 RPC 把日志文件撑爆
   const args = Array.isArray(request?.args) ? request.args.slice(0, 32) : [request ?? '']
   logs.record(level, callerId ?? 'renderer', args, Date.now())
+  // 渲染端日志不经过 ctx.logger，ConsoleExporter 看不到；开发构建在终端补一行，
+  // 否则排查启动问题时只能翻日志文件。
+  if (!app.isPackaged && level !== 'debug') {
+    const label = `[renderer:${callerId ?? 'renderer'}]`
+    // 与 ctx.logger 一致：支持 %s / %d / %o 占位符
+    const line = `${label} ${utilFormat(args[0] as string, ...args.slice(1))}`
+    if (level === 'error') console.error(line)
+    else if (level === 'warn') console.warn(line)
+    else console.info(line)
+  }
 }
 
 /**
@@ -76,9 +80,9 @@ export function apply(ctx: Context): void {
   const directory = path.join(app.getPath('userData'), 'logs')
   const logs = new LogsService(ctx, {
     sink: acquireSink(directory),
-    maxFiles: readLogSettings(ctx.storage).maxFiles,
-    // 控制台镜像只在开发构建启用：生产环境没有终端可看
-    mirror: app.isPackaged ? undefined : mirrorToConsole
+    maxFiles: readLogSettings(ctx.storage).maxFiles
+    // 控制台输出由 Cordis 的 ConsoleExporter 负责（bootstrap 在开发构建挂载），
+    // 这里不再重复镜像，避免同一条日志打印两次。
   })
 
   // 先回放历史，再安装导出器：这样启动阶段的日志不会被写第二次

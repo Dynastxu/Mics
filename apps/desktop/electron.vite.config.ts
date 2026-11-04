@@ -7,11 +7,27 @@ const root = import.meta.dirname
 
 export default defineConfig({
   main: {
-    // 工作区内的 @mics/* 包以源码形式被打包进来，其余依赖保持 external
-    plugins: [externalizeDepsPlugin({ exclude: ['@mics/sdk', '@mics/plugin-loader'] })],
+    // 工作区内的 @mics/* 包以源码形式被打包进来；cordis 的框架插件也随包进 out，
+    // 因为发布产物只带 out/**，external 的依赖不会进安装包。
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: [
+          '@mics/sdk',
+          '@mics/plugin-loader',
+          '@cordisjs/plugin-loader',
+          '@cordisjs/plugin-timer',
+          '@cordisjs/plugin-fs-node',
+          '@cordisjs/plugin-group',
+          '@cordisjs/plugin-logger-console'
+        ]
+      })
+    ],
     build: {
       rollupOptions: {
         input: { index: resolve(root, 'src/main/index.ts') },
+        // HMR 只在开发期动态 import（`if (!app.isPackaged)`）。生产构建把它保持为
+        // external：产物里只留一个永不执行的 import，不会把它的依赖打进安装包。
+        external: ['@cordisjs/plugin-hmr'],
         output: { format: 'es', entryFileNames: 'index.mjs' }
       }
     }

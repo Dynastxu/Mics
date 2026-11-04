@@ -14,12 +14,13 @@
  * `examples/*` 用同一套流程构建，但**不会**被当作内置插件扫描——它们是给
  * 「从文件夹安装」验收用的示例包。
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build as viteBuild } from 'vite'
 import vuePlugin from '@vitejs/plugin-vue'
+import ts from 'typescript'
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const pluginsDir = path.join(root, 'plugins')
@@ -48,14 +49,25 @@ function resolveSdkSpecifier(specifier) {
 
 /* esbuild 侧的解析插件已不再需要：主进程入口同样交给 Vite（SSR 模式）编译 */
 
-function makeViteAliases() {
+/**
+ * 生成插件构建用的别名表。
+ *
+ * `@mics/ui` 只在渲染侧换成 shim：组件代码由 shell 打包并注入 `__MICS_UI__`，
+ * 插件不再各自重复打包一份（6 个目录页各带一份 CatalogBrowser 是真实浪费）。
+ * 主进程构建保持源码别名，避免把 Vue 组件打进主进程产物。
+ */
+function makeViteAliases({ renderer = false } = {}) {
   const alias = [
     { find: /^@mics\/plugin-loader$/, replacement: path.join(loaderDir, 'index.ts') },
-    { find: /^@mics\/ui$/, replacement: uiEntry },
     { find: /^@mics\/java$/, replacement: path.join(root, 'packages', 'java', 'src', 'index.ts') },
     { find: /^vue$/, replacement: path.join(shimDir, 'vue-shim.js') },
     { find: /^cordis$/, replacement: path.join(shimDir, 'cordis-shim.js') }
   ]
+  if (renderer) {
+    alias.push({ find: /^@mics\/ui$/, replacement: path.join(shimDir, 'ui-shim.js') })
+  } else {
+    alias.push({ find: /^@mics\/ui$/, replacement: uiEntry })
+  }
   for (const [specifier, file] of SDK_ENTRIES) {
     alias.push({
       find: new RegExp(`^${specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
@@ -87,6 +99,33 @@ function generateShim(globalName, label, module) {
   return lines.join('\n')
 }
 
+/**
+ * 读出 `@mics/ui` 的运行时具名导出。
+ *
+ * shim 必须在构建期就知道导出名（ESM 的 `export const X = runtime.X` 是静态的），
+ * 因此这里解析 index.ts 的 AST 而不是在 Node 里 import 组件（后者要跑 Vue 运行时）。
+ * 出现 `export *` 时无法静态枚举，直接报错让作者改成具名导出。
+ */
+function collectUiExportNames(file) {
+  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ESNext, true)
+  const names = []
+  for (const statement of source.statements) {
+    if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) continue
+    const clause = statement.exportClause
+    if (!clause) {
+      throw new Error(
+        `${file} 使用了 \`export *\`：@mics/ui 必须保持具名导出，构建脚本才能生成 shim`
+      )
+    }
+    if (!ts.isNamedExports(clause)) continue
+    for (const element of clause.elements) {
+      if (element.isTypeOnly) continue
+      names.push(element.name.text)
+    }
+  }
+  return [...new Set(names)]
+}
+
 async function writeShims() {
   await mkdir(shimDir, { recursive: true })
   const vue = await import('vue')
@@ -95,6 +134,12 @@ async function writeShims() {
   await writeFile(
     path.join(shimDir, 'cordis-shim.js'),
     generateShim('__MICS_CORDIS__', 'Cordis', cordis)
+  )
+  const uiNames = collectUiExportNames(uiEntry)
+  const uiPlaceholder = Object.fromEntries(uiNames.map((name) => [name, name]))
+  await writeFile(
+    path.join(shimDir, 'ui-shim.js'),
+    generateShim('__MICS_UI__', '@mics/ui', uiPlaceholder)
   )
 }
 
@@ -180,7 +225,7 @@ async function buildRenderer(dir, manifest, watchMode) {
     publicDir: false,
     logLevel: 'warn',
     plugins: [vuePlugin()],
-    resolve: { alias: makeViteAliases() },
+    resolve: { alias: makeViteAliases({ renderer: true }) },
     build: {
       outDir: path.join(dir, 'dist'),
       emptyOutDir: false,

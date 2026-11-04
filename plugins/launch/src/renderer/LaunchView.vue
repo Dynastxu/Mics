@@ -404,12 +404,10 @@ async function terminate(instance: InstanceSummary): Promise<void> {
 }
 
 onMounted(() => {
-  offState = ctx.ipc.on(LAUNCH_STATE_TOPIC, (payload) => {
-    const state = payload as LaunchState | undefined
+  offState = ctx.on(LAUNCH_STATE_TOPIC, (state) => {
     if (state && Array.isArray(state.instances)) runtime.value = state
   })
-  offAccounts = ctx.ipc.on(ACCOUNT_CHANGED_TOPIC, (payload) => {
-    const snapshot = payload as AccountSnapshot | undefined
+  offAccounts = ctx.on(ACCOUNT_CHANGED_TOPIC, (snapshot) => {
     if (snapshot && Array.isArray(snapshot.accounts)) applyAccounts(snapshot)
   })
   offViewActivated = ctx.on('ui/viewActivated', (viewId: string) => {

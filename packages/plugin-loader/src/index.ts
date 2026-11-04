@@ -17,3 +17,5 @@ export {
   UNINSTALL_TIMEOUT_MS
 } from './uninstall'
 export type { UninstallScriptContext, UninstallScript, RunUninstallOptions } from './uninstall'
+export { buildPluginTree, mainEntryUrl } from './tree'
+export type { PluginTreeEntry, BuildPluginTreeOptions } from './tree'

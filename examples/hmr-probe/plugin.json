@@ -1,0 +1,9 @@
+{
+  "id": "demo.hmr-probe",
+  "name": "HMR 探针",
+  "version": "0.1.0",
+  "description": "开发期验收专用：模块每次被重新求值都会打印一条带时间戳与模块 URL 的日志，用来确认 HMR 是否真的替换了插件代码。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"]
+}

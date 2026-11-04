@@ -1,6 +1,12 @@
 import { app, dialog, Menu } from 'electron'
+import { pathToFileURL } from 'node:url'
 import * as Cordis from 'cordis'
 import { Context, type Logger } from 'cordis'
+import TimerService from '@cordisjs/plugin-timer'
+import Loader from '@cordisjs/plugin-loader'
+import FsService from '@cordisjs/plugin-fs-node'
+import Group from '@cordisjs/plugin-group'
+import ConsoleExporter from '@cordisjs/plugin-logger-console'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { PLUGIN_ID } from '@mics/sdk'
@@ -45,8 +51,80 @@ registerPrivilegedSchemes()
  */
 async function start(): Promise<void> {
   const root = new Context()
+  // 计时器服务挂在根上下文：插件用 `inject: ['timer']` + `ctx.timeout/interval`，
+  // 计时器随插件 fiber 回收，不需要每个插件自己维护 clearTimeout。
+  root.plugin(TimerService)
+  // 插件树容器（Cordis Loader）。插件的挂载已经走 `ctx.loader.create()`（内核负责），
+  // 下一步 Include 会把同一棵树持久化到 userData，因此这里先把两个底层服务挂好。
+  root.plugin(Loader, {})
+  // 文件 watch 服务：Include 的 watch 模式与后续插件目录热发现都用它
+  root.plugin(FsService)
   const log = root.logger('mics')
   bootstrapLog = log
+
+  // 开发构建的控制台输出交给 Cordis 的 exporter（颜色 / %o inspect），
+  // 文件日志仍由 mics.logger 负责；生产环境没有终端，不挂。
+  if (!app.isPackaged) {
+    root.plugin(ConsoleExporter, { levels: { default: 2 } })
+  }
+
+  // Cordis HMR：**只在开发构建里动态加载**。
+  // 与 vite-plugin-vue-devtools 的区别：后者是构建期插件，跑在 dev server 进程里，
+  // 本来就不会进产物；HMR 是运行时插件，跑在应用主进程里，所以必须用动态 import
+  // + 构建 external，生产包里只留一个永不执行的 import。
+  if (!app.isPackaged) {
+    // 前置检查：Electron 里能否真的拿到 Node 内部 ESM 加载器。
+    // addon 是 Node-API 模块，装得上不代表 Electron 的内部模块表可达；
+    // 拿不到就完全不挂 HMR——否则它会在构造时抛错，日志里只剩一条难懂的告警，
+    // 而内核的开发期产物监视才是真正生效的那条路。
+    // TODO(HMR): node-addon-require-builtin 按 V8 指纹白名单放行，目前不支持
+    // Electron 45.0.0 stable（只支持到 45.0.0-alpha.6）。等 addon 支持后按顺序验证：
+    //   1) 确认下面这行输出 `内部加载器=true`；
+    //   2) 用 examples/hmr-probe 验证热替换：改 src/main.ts 后 apply 应再次执行、
+    //      evaluatedAt 变化且 url 不带 `?mics=`；
+    //   3) 验证通过后再决定是否保留内核的产物回退监视（它在 HMR 存在时会自动让位）。
+    let internalReady = false
+    try {
+      const { createRequire } = await import('node:module')
+      const req = createRequire(import.meta.url)
+      const addon = req('node-addon-require-builtin') as {
+        requireBuiltin?: (id: string) => unknown
+      }
+      internalReady = Boolean(addon.requireBuiltin?.('internal/modules/esm/loader'))
+      log.info(
+        'HMR 前置检查：addon=可用 · 内部加载器=%s · node=%s · electron=%s',
+        internalReady,
+        process.versions.node,
+        process.versions.electron
+      )
+    } catch (error) {
+      log.info(
+        'HMR 前置检查：addon 不可用（%s）',
+        error instanceof Error ? error.message : String(error)
+      )
+    }
+
+    if (internalReady) {
+      void import('@cordisjs/plugin-hmr')
+        .then(({ default: Hmr }) =>
+          Promise.resolve(
+            root.plugin(Hmr, {
+              // base 传 file: URL：HMR 用它解析相对监视路径，Windows 盘符会被当成 scheme
+              base: pathToFileURL(app.getAppPath()).href,
+              root: ['../../plugins', '../../examples'],
+              ignored: ['**/node_modules'],
+              debounce: 200
+            })
+          )
+        )
+        .catch((error) => {
+          log.warn('HMR 挂载失败：%s', String(error))
+        })
+    } else {
+      log.info('HMR 跳过：Electron 未暴露内部加载器，改用插件产物的自动重载')
+    }
+  }
+
   const windowHost = new MainWindowHost({ createWindow: createMainWindow, loadRenderer })
 
   // 窗口装饰（标题栏 / 菜单栏 / 窗口按钮）全部由渲染器自绘，不要系统菜单
@@ -135,6 +213,19 @@ async function start(): Promise<void> {
 
   const protocol = registerPluginProtocol(scan.plugins)
 
+  // Cordis 内建：Group 通过 `cordis:` 前缀挂载，不依赖安装目录里的包。
+  // Group 提供 isolate 域（一组 entry 共享 realm），当前没有子树需要隔离——
+  // mics 的服务按 pluginId 归属即可，强行隔离会切断插件对内核服务的注入；
+  // 先注册内建，等多窗口 / 多实例需要 realm 时再使用。
+  await root.inject(['loader'], () => {})
+  const loader = root.get('loader') as { builtins?: Record<string, unknown> } | undefined
+  if (loader) {
+    loader.builtins = loader.builtins ?? {}
+    loader.builtins.group = Group
+  } else {
+    log.warn('Loader 不可用：插件无法挂载')
+  }
+
   const kernelRecord = scan.plugins.find((record) => record.manifest.id === boot.kernel)
   if (!kernelRecord) throw new Error(`未找到内核插件 ${boot.kernel}`)
   if (!kernelRecord.entryMain) {
@@ -161,6 +252,8 @@ async function start(): Promise<void> {
     userPluginRoot,
     userDataDir: app.getPath('userData'),
     disabled: boot.disabled,
+    // 插件树持久化文件：必须位于可写目录，`resources/` 打包后是只读的
+    treeFile: path.join(app.getPath('userData'), 'cordis.yml'),
     // profile 只做「启用集合 + 设置默认值」；文件缺失时退回空 profile
     profile,
     // 首次扫描失败的目录带进内核，诊断报告里能一并展示清单错误
