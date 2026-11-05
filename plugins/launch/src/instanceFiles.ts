@@ -16,7 +16,7 @@ import type {
   InstanceUsage,
   InstanceUsageEntry
 } from './shared'
-import { countMods, isSafeInstanceId, loaderLabel, resolveInstance } from './instances'
+import { countMods, discoverInstance, isSafeInstanceId, loaderLabel } from './instances'
 import { readJarModInfo } from './zip'
 
 /** 详情页一次最多读取的日志字节数 */
@@ -76,18 +76,20 @@ function isModFile(name: string): boolean {
 }
 
 export function describeInstance(userDataDir: string, id: string): InstanceDetail {
-  const instance = resolveInstance(userDataDir, id)
-  if (!instance) throw new Error('实例不存在或缺少版本文件')
+  const instance = discoverInstance(userDataDir, id)
+  if (!instance) throw new Error('实例不存在')
 
+  // 半成品实例没有版本档案：详情页仍可打开，让用户查看日志、占用并删除
+  const version = instance.version
   return {
     id: instance.id,
     name: instance.name,
     dir: instance.dir,
-    versionId: instance.version.id,
-    minecraft: instance.version.inheritsFrom ?? instance.version.id,
-    loader: loaderLabel(instance.version),
-    versionType: instance.version.type ?? null,
-    javaMajor: instance.version.javaVersion?.majorVersion ?? null,
+    versionId: version?.id ?? '',
+    minecraft: version ? (version.inheritsFrom ?? version.id) : (instance.gameVersion ?? '未知'),
+    loader: version ? loaderLabel(version) : '未知',
+    versionType: version?.type ?? null,
+    javaMajor: version?.javaVersion?.majorVersion ?? null,
     mods: countMods(instance.dir)
   }
 }

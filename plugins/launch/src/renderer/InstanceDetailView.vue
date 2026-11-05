@@ -554,20 +554,20 @@ onMounted(() => {
     <header class="mics-page__header detail__header">
       <div class="detail__identity">
         <button
-            class="mics-button mics-button--ghost mics-button--small"
-            type="button"
-            @click="goBack"
+          class="mics-button mics-button--ghost mics-button--small"
+          type="button"
+          @click="goBack"
         >
           <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.7"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
           >
             <path d="m15 6-6 6 6 6" />
           </svg>
@@ -668,7 +668,9 @@ onMounted(() => {
             </div>
             <div>
               <dt>版本标识</dt>
-              <dd class="detail__ellipsis" :title="detail.dir">{{ detail.versionId }}</dd>
+              <dd class="detail__ellipsis" :title="detail.dir">
+                {{ detail.versionId || '未安装' }}
+              </dd>
             </div>
             <div>
               <dt>版本类型</dt>

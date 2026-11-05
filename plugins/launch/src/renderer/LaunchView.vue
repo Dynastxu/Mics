@@ -19,6 +19,7 @@ import type {
 } from '../shared'
 import { LAUNCH_STATE_TOPIC } from '../shared'
 import InstanceDetailView from './InstanceDetailView.vue'
+import DeleteInstanceDialog from './DeleteInstanceDialog.vue'
 import MissingFilesDialog from './MissingFilesDialog.vue'
 import RepeatLaunchDialog from './RepeatLaunchDialog.vue'
 
@@ -40,6 +41,9 @@ const conflict = ref<InstanceSummary | null>(null)
 const missing = ref<{ instance: InstanceSummary; files: MissingFile[] } | null>(null)
 /** 当前打开的实例详情；为空时展示实例列表 */
 const detailId = ref('')
+/** 等待确认删除的实例；列表里的未完成实例可以直接删除 */
+const deleteTarget = ref<InstanceSummary | null>(null)
+const deleting = ref(false)
 
 const detailInstance = computed(
   () => instances.value.find((instance) => instance.id === detailId.value) ?? null
@@ -186,6 +190,11 @@ async function refreshStatuses(): Promise<void> {
  */
 async function repair(instance: InstanceSummary): Promise<void> {
   if (isRepairing(instance.id)) return
+  // 没有版本档案就无法重建补全清单；这种实例只能删除后重新安装
+  if (!instance.versionId) {
+    notice.value = '该实例缺少版本档案，无法补全，请删除后重新下载'
+    return
+  }
   repairing.value = [...repairing.value, instance.id]
   notice.value = ''
   try {
@@ -221,6 +230,26 @@ function handleDeleted(id: string): void {
   instances.value = instances.value.filter((instance) => instance.id !== id)
   if (selected.value === id) selected.value = ''
   if (detailId.value === id) detailId.value = ''
+}
+
+function askDelete(instance: InstanceSummary): void {
+  deleteTarget.value = instance
+}
+
+async function confirmDelete(): Promise<void> {
+  const target = deleteTarget.value
+  if (!target || deleting.value) return
+  deleting.value = true
+  notice.value = ''
+  try {
+    await ctx.ipc.invoke('mics.launch', 'instances/delete', { id: target.id })
+    handleDeleted(target.id)
+    deleteTarget.value = null
+  } catch (cause) {
+    notice.value = `删除实例失败：${messageOf(cause)}`
+  } finally {
+    deleting.value = false
+  }
 }
 
 function handleModsChanged(mods: number): void {
@@ -544,17 +573,27 @@ onUnmounted(() => {
                 {{ phaseLabel(phases[instance.id] ?? 'incomplete') }}
               </span>
             </div>
-            <div class="mics-list__meta">{{ instance.loader }} · {{ instance.mods }} 个 Mod</div>
+            <div class="mics-list__meta">
+              {{ [instance.loader, `${instance.mods} 个 Mod`].filter(Boolean).join(' · ') }}
+            </div>
           </div>
           <span class="launch__played">{{ formatPlayed(instance.lastPlayed) }}</span>
           <div class="launch__actions" @click.stop>
             <button
-              v-if="phases[instance.id] === 'incomplete'"
+              v-if="phases[instance.id] === 'incomplete' && instance.versionId"
               class="mics-button mics-button--ghost mics-button--small"
               :disabled="isRepairing(instance.id)"
               @click="repair(instance)"
             >
               {{ isRepairing(instance.id) ? '补全中…' : '补全文件' }}
+            </button>
+            <button
+              v-if="phases[instance.id] === 'incomplete'"
+              class="mics-button mics-button--danger mics-button--small"
+              :disabled="deleting || isRepairing(instance.id)"
+              @click="askDelete(instance)"
+            >
+              删除
             </button>
             <button
               v-if="phases[instance.id] === 'ready' && !isLaunchHidden(instance)"
@@ -592,6 +631,15 @@ onUnmounted(() => {
     @confirm="confirmRepair"
     @cancel="missing = null"
   />
+
+  <DeleteInstanceDialog
+    :open="Boolean(deleteTarget)"
+    :name="deleteTarget?.name ?? ''"
+    :running="deleteTarget ? isAlive(deleteTarget.id) : false"
+    :busy="deleting"
+    @confirm="confirmDelete"
+    @cancel="deleteTarget = null"
+  />
 </template>
 
 <style scoped>
@@ -617,7 +665,9 @@ onUnmounted(() => {
   border-radius: 6px;
   cursor: pointer;
   line-height: 0;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 
 .launch__refresh:hover {

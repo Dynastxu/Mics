@@ -14,18 +14,32 @@ interface InstanceMetadata {
   username?: string
 }
 
-export interface ResolvedInstance {
+/**
+ * 实例的一份磁盘快照。
+ *
+ * `versions` 下的每个文件夹都是一个实例：即使下载还没写出版本档案，也要能看到、
+ * 删除它。版本档案只决定「能不能启动」，不决定「算不算实例」。
+ */
+export interface InstanceSnapshot {
   id: string
   name: string
   dir: string
-  /** 版本档案路径（`<实例>/<版本 id>.json`） */
+  /** 版本档案路径；实例还没有版本档案时为空 */
+  versionFile: string | null
+  /** 版本档案；半成品实例为空 */
+  version: VersionJson | null
+  metadataPath: string
+  metadata: InstanceMetadata
+  installState: InstanceInstallState
+  /** 安装记录里声明的游戏版本；缺少版本档案时用于展示 */
+  gameVersion: string | null
+}
+
+export interface ResolvedInstance extends InstanceSnapshot {
   versionFile: string
   version: VersionJson
   /** 资源位置（共享的 libraries / assets + 实例内的 natives / log_configs） */
   layout: InstanceLayout
-  metadataPath: string
-  metadata: InstanceMetadata
-  installState: InstanceInstallState
 }
 
 function readJson<T>(file: string): T | null {
@@ -51,11 +65,14 @@ function readMetadata(instanceDir: string): { metadataPath: string; metadata: In
  * 读取实例的安装状态。
  *
  * 下载管线在实例目录里写 `installing` / `ready`；没有这个文件的实例来自
- * 更早的版本，按 `ready` 处理以保持兼容。`installing` 的实例仍然会出现在
- * 列表里，由界面去掉启动入口，用户可以在下载页继续、重试或删除。
+ * 更早的版本，按 `ready` 处理以保持兼容。没有版本档案的实例无论标记如何都
+ * 不能启动，统一按 `installing` 展示，让启动页提供补全或删除入口。
  */
-function installStateOf(instanceDir: string): InstanceInstallState {
-  const record = readJson<InstanceInstallRecord>(path.join(instanceDir, INSTANCE_STATE_FILE))
+function installStateOf(
+  version: VersionJson | null,
+  record: InstanceInstallRecord | null
+): InstanceInstallState {
+  if (!version) return 'installing'
   return record?.state === 'installing' ? 'installing' : 'ready'
 }
 
@@ -123,38 +140,61 @@ export function countMods(instanceDir: string): number {
   }
 }
 
-function toSummary(instance: ResolvedInstance): InstanceSummary {
+function toSummary(instance: InstanceSnapshot): InstanceSummary {
+  const version = instance.version
   return {
     id: instance.id,
     name: instance.name,
-    minecraft: instance.version.inheritsFrom ?? instance.version.id,
-    loader: loaderLabel(instance.version),
+    minecraft: version ? (version.inheritsFrom ?? version.id) : (instance.gameVersion ?? '未知'),
+    loader: version ? loaderLabel(version) : '未知',
     mods: countMods(instance.dir),
     lastPlayed: instance.metadata.lastPlayed ?? null,
-    versionId: instance.version.id,
+    versionId: version?.id ?? '',
     installState: instance.installState
   }
 }
 
-export function resolveInstance(userDataDir: string, id: string): ResolvedInstance | null {
+/**
+ * 读取实例快照；只要 `versions/<id>` 是文件夹就算实例，不要求版本档案存在。
+ * 目录不存在或不是文件夹时返回 null。
+ */
+export function discoverInstance(userDataDir: string, id: string): InstanceSnapshot | null {
   if (!isSafeInstanceId(id)) return null
   const instanceDir = path.join(instancesRoot(userDataDir), id)
-  if (!existsSync(instanceDir)) return null
+
+  try {
+    if (!statSync(instanceDir).isDirectory()) return null
+  } catch {
+    return null
+  }
 
   const { metadataPath, metadata } = readMetadata(instanceDir)
+  const record = readJson<InstanceInstallRecord>(path.join(instanceDir, INSTANCE_STATE_FILE))
   const resolved = resolveVersion(instanceDir, metadata.lastVersion)
-  if (!resolved) return null
 
   return {
     id,
     name: metadata.name?.trim() || id,
     dir: instanceDir,
-    versionFile: resolved.file,
-    version: resolved.version,
-    layout: resolveInstanceLayout(userDataDir, instanceDir),
+    versionFile: resolved?.file ?? null,
+    version: resolved?.version ?? null,
     metadataPath,
     metadata,
-    installState: installStateOf(instanceDir)
+    installState: installStateOf(resolved?.version ?? null, record),
+    gameVersion: record?.gameVersion ?? null
+  }
+}
+
+/** 可启动的实例：除目录外还必须能找到版本档案 */
+export function resolveInstance(userDataDir: string, id: string): ResolvedInstance | null {
+  const instance = discoverInstance(userDataDir, id)
+  if (!instance?.version || !instance.versionFile) return null
+
+  return {
+    ...instance,
+    version: instance.version,
+    versionFile: instance.versionFile,
+    layout: resolveInstanceLayout(userDataDir, instance.dir)
   }
 }
 
@@ -165,7 +205,7 @@ export function listInstances(userDataDir: string): InstanceSummary[] {
   const summaries: InstanceSummary[] = []
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
-    const instance = resolveInstance(userDataDir, entry.name)
+    const instance = discoverInstance(userDataDir, entry.name)
     if (instance) summaries.push(toSummary(instance))
   }
 

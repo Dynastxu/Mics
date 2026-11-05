@@ -135,12 +135,6 @@ function canRetry(job: InstallJobSummary, stats: InstallJobStats): boolean {
   return !isSuperseded(job) && stats.failed > stats.cancelled
 }
 
-/** 只有失败/取消的安装可以在这里清理；成功完成的实例请到启动页删除 */
-function canDiscard(job: InstallJobSummary, stats: InstallJobStats): boolean {
-  if (isSuperseded(job)) return false
-  return job.state === 'failed' || job.state === 'cancelled' || stats.failed > 0
-}
-
 function fmtSpeed(bytesPerSecond: number): string {
   if (bytesPerSecond < 1) return '0 B/s'
   if (bytesPerSecond < 1024) return `${Math.round(bytesPerSecond)} B/s`
@@ -374,7 +368,11 @@ onUnmounted(() => {
       <h2 class="mics-section__title">历史记录</h2>
 
       <div class="mics-list">
-        <div v-for="row in historyRows" :key="row.job.id" class="mics-list__row">
+        <div
+          v-for="row in historyRows"
+          :key="row.job.id"
+          class="mics-list__row progress-history-row"
+        >
           <div class="mics-list__main">
             <div class="mics-list__title">
               <span>{{ jobTitle(row.job) }}</span>
@@ -425,11 +423,10 @@ onUnmounted(() => {
               重试
             </button>
             <button
-              v-if="canDiscard(row.job, row.stats)"
-              class="mics-button mics-button--ghost mics-button--small"
+              class="mics-button mics-button--ghost mics-button--small progress-history-row__delete"
               @click="invoke('install/discard', row.job.id)"
             >
-              {{ row.job.mode === 'repair' ? '移除记录' : '删除' }}
+              删除记录
             </button>
           </div>
         </div>
@@ -478,6 +475,19 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* 记录行的删除是低频操作：悬停或键盘聚焦到这一行时才出现，平时不占视觉噪音 */
+.progress-history-row__delete {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.progress-history-row:hover .progress-history-row__delete,
+.progress-history-row:focus-within .progress-history-row__delete {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .progress-job__preparing {

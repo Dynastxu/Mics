@@ -35,9 +35,9 @@
  * 实例根目录下的安装状态文件。
  *
  * 下载管线在创建实例目录时先写入 `installing`，全部文件落盘并校验通过后
- * 原子替换为 `ready`。启动页会照常列出 `installing` 的实例，但不提供启动入口：
- * 下载到一半、断点暂停或部分失败的实例只能查看或删除，不能开始游戏。
- * 没有该文件的旧实例按 `ready` 处理，保持兼容。
+ * 原子替换为 `ready`。`versions/` 下的每个文件夹都是一个实例：下载到一半、
+ * 还没有版本档案的半成品也会被启动页列出（固定按 `installing` 处理），
+ * 只能补全或删除，不能开始游戏。没有该文件的旧实例按 `ready` 处理，保持兼容。
  *
  * 其它创建实例的插件也必须遵守这一约定，否则半成品会被误判为可启动。
  */
@@ -60,6 +60,7 @@ export interface InstanceSummary {
   mods: number
   /** 上次启动时间戳；从未启动为 null */
   lastPlayed: number | null
+  /** 实例当前版本档案的 id；还没有版本档案时为空字符串 */
   versionId: string
   /** 安装状态：installing 的实例仍会列出，但不提供启动入口 */
   installState: InstanceInstallState

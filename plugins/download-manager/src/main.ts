@@ -4232,21 +4232,14 @@ export function apply(ctx: Context): void {
   })
 
   /**
-   * 删除一次未完成安装留下的记录与残留目录。
+   * 删除一条下载记录。
    *
-   * 已完成的安装必须到启动页删除，避免下载页把还能玩的实例一起删掉。
+   * 记录与实例是两回事：这里只清任务与历史记录，不碰实例目录。任何已经结束的
+   * 记录（完成、失败、取消或被更新安装取代）都可以删除；仍在进行的记录要先取消。
    */
   ctx.ipc.handle<{ jobId: string }>('install/discard', async ({ jobId }) => {
     const job = jobs.get(jobId)
     if (!job) return
-    if (job.state === 'done') {
-      throw new Error(
-        isGameJob(job)
-          ? '安装已完成，请到启动页删除实例'
-          : `${jobContentLabel(job)}安装已完成，记录会保留在历史中`
-      )
-    }
-    if (!isCurrentJob(job)) throw new Error('该安装记录已被更新的安装取代，不能删除')
 
     const active =
       job.state === 'preparing' ||
@@ -4256,9 +4249,7 @@ export function apply(ctx: Context): void {
       })
     if (active) throw new Error('安装仍在进行，请先取消')
 
-    // 补全任务只丢弃记录，实例目录留给启动页的「补全文件」继续处理；
-    // Mod 安装没有半成品实例目录需要清理
-    if (isGameJob(job) && job.mode !== 'repair') await discardInstanceDir(job)
+    // 实例目录留给启动页；这里只丢弃这条记录自己的任务
     for (const taskId of job.taskIds) tasks.delete(taskId)
     jobs.delete(jobId)
     pausedJobs.delete(jobId)
