@@ -348,6 +348,7 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
   `packages/sdk/src/contract/events.ts` 里统一声明；开发模式会审计派发点与声明不一致的情况。
 - 快捷键：`Ctrl+Shift+P` 命令面板，`Ctrl+B` 显示/隐藏左侧导航。
 - 窗口无边框，标题栏由 `apps/desktop/src/renderer/shell/WindowTitleBar.vue` 自绘；
+  应用名右侧的按钮与 `Ctrl+B` 一样收起/展开左侧导航（共用 store 的 `toggleNav`）；
   系统菜单已移除，开发/预览构建下用 `F12` 打开 DevTools、`Ctrl+R` 重载渲染进程。
 
 更多设计细节见 [docs/architecture.md](docs/architecture.md)。

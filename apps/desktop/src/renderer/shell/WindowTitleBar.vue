@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { store } from '../runtime/store'
+import { store, toggleNav } from '../runtime/store'
 
 /**
  * 自绘标题栏（BrowserWindow 是 frame: false 的）。
  *
  * 拖动与双击最大化由 `-webkit-app-region: drag` 交给系统处理；
  * 三个窗口按钮经由 preload 的 windowControls 让主进程操作窗口。
+ * 应用名右侧是侧边栏开关，与 Ctrl+B 共用 store 的同一份状态。
  * 属于壳层：插件不参与窗口装饰。
  */
 const maximized = ref(false)
@@ -47,6 +48,23 @@ function close(): void {
     <div class="mics-titlebar__brand">
       <span class="mics-titlebar__logo">M</span>
       <span class="mics-titlebar__name">{{ productName }}</span>
+      <button
+        class="mics-titlebar__sidebar"
+        :title="store.navVisible ? '收起侧边栏 (Ctrl+B)' : '展开侧边栏 (Ctrl+B)'"
+        :aria-label="store.navVisible ? '收起侧边栏' : '展开侧边栏'"
+        aria-controls="mics-nav"
+        aria-keyshortcuts="Control+B"
+        :aria-expanded="store.navVisible"
+        :disabled="!store.ready"
+        @click="toggleNav"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+          <path d="M9.5 4.5v15" />
+          <path v-if="store.navVisible" d="m17.5 10-2.5 2 2.5 2" />
+          <path v-else d="m14.5 10 2.5 2-2.5 2" />
+        </svg>
+      </button>
     </div>
 
     <div class="mics-titlebar__controls">

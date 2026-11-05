@@ -24,7 +24,7 @@ function isGroupCurrent(group: NavGroup): boolean {
 </script>
 
 <template>
-  <aside class="mics-nav" :style="{ width }">
+  <aside id="mics-nav" class="mics-nav" :style="{ width }">
     <nav class="mics-nav__list">
       <template v-for="root in roots" :key="root.kind === 'item' ? root.item.id : root.group.id">
         <button

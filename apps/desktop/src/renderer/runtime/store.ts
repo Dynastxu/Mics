@@ -223,6 +223,11 @@ export function toggleGroup(id: string): void {
   store.expandedGroups[id] = !isGroupExpanded(id)
 }
 
+/** 收起 / 展开左侧导航；标题栏按钮与 Ctrl+B 共用这一处翻转 */
+export function toggleNav(): void {
+  store.navVisible = !store.navVisible
+}
+
 export function statusBarItems(): StatusItem[] {
   const declared: StatusItem[] = store.plugins
     .filter((plugin) => plugin.state !== 'disabled')

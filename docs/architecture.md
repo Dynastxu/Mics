@@ -269,6 +269,7 @@ app.whenReady()
 | 系统菜单   | bootstrap 里 `Menu.setApplicationMenu(null)`；开发/预览构建下用 F12（或 `Ctrl+Shift+I`）开 DevTools、`Ctrl+R` 重载渲染进程                             |
 | 标题栏     | `shell/WindowTitleBar.vue`；拖动区用 `-webkit-app-region: drag` 交给系统，双击最大化、贴边吸附都是系统行为                                             |
 | 窗口按钮   | 按钮区 `-webkit-app-region: no-drag`，点击经 `window.mics.windowControls` → IPC → 主进程 `BrowserWindow`                                               |
+| 侧边栏开关 | 应用名右侧，与 `Ctrl+B` 共用 store 的 `toggleNav`；`aria-expanded` + `aria-controls="mics-nav"` 指向左侧导航，开关只在 `store.ready` 后可点            |
 | 最大化状态 | 主进程监听 `maximize` / `unmaximize` 推给渲染进程，标题栏据此在「最大化 / 还原」之间切换图标                                                           |
 | 窗口可见性 | 主进程按 `isVisible() && !isMinimized()` 推 `visible`；图标入场动画等它为 true 才播放。隐藏窗口里 Electron 仍在绘制，`document.visibilityState` 不可信 |
 | 窗口尺寸   | `main/windowSizing.ts`：最小 640×420，启动尺寸不超过当前工作区；状态栏「命令」右侧有一个拖动区，按住拖动即可缩放窗口（左上角固定，只受最小尺寸限制）   |

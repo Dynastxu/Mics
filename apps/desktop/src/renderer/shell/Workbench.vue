@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from 'vue'
 import { getContext } from '../runtime/context'
-import { store } from '../runtime/store'
+import { store, toggleNav } from '../runtime/store'
 import CommandPalette from './CommandPalette.vue'
 import MainArea from './MainArea.vue'
 import NavPanel from './NavPanel.vue'
@@ -38,7 +38,7 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
     event.preventDefault()
-    store.navVisible = !store.navVisible
+    toggleNav()
     return
   }
   if (event.key === 'Escape' && store.paletteOpen) {

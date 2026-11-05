@@ -136,6 +136,40 @@ svg.mics-icon {
   white-space: nowrap;
 }
 
+/* 应用名右侧的侧边栏开关：尺寸小于窗口按钮，避免和右侧三个按钮抢视觉重心 */
+.mics-titlebar__sidebar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-left: 2px;
+  border-radius: 6px;
+  color: var(--mics-fg-muted);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+  -webkit-app-region: no-drag;
+}
+
+.mics-titlebar__sidebar svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mics-titlebar__sidebar:hover:not(:disabled) {
+  background: var(--mics-bg-hover);
+  color: var(--mics-fg);
+}
+
+.mics-titlebar__sidebar:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .mics-titlebar__controls {
   display: flex;
   margin-left: auto;
