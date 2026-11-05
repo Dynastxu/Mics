@@ -485,6 +485,8 @@ function openModDetail(entry: InstanceModEntry): void {
         ...(entry.modName ? { name: entry.modName } : {}),
         fileName: entry.fileName
       }
+  // Mod 详情没有内部的搜索/详情历史可回退，「返回」应回到启动页（实例详情）
+  intent.origin = { view: 'launch', label: '启动' }
   const globalStore = globalThis as typeof globalThis & Record<string, unknown>
   globalStore[MOD_OPEN_INTENT_KEY] = intent
   if (ctx.ui.navigate('download.mod')) return

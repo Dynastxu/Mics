@@ -118,6 +118,9 @@ export interface ModSourceInfo {
  *
  * 路由没有参数，渲染端插件之间用全局 key 传递；消费者读取后立即删除，
  * 避免下一次打开 Mod 页时再次自动进入详情。
+ *
+ * 页面首次打开后保持挂载，消费者不能只在 setup 里读取：每次页面重新激活
+ * （`ui/viewActivated`）都要再取一次，否则第二次跳转只会停在搜索页。
  */
 export interface ModOpenIntent {
   /** 有精确识别结果时直接打开该项目，不再搜索 */
@@ -133,6 +136,21 @@ export interface ModOpenIntent {
   loader?: ModLoader | 'all'
   /** 本地文件对应的确切版本 */
   versionId?: string
+  /** 来源页面；Mod 详情「返回」没有内部历史可回退时回到这里 */
+  origin?: ModOpenOrigin
+}
+
+/**
+ * 目录详情的来源页面。
+ *
+ * 从实例详情直接跳进某个 Mod 时，详情页没有搜索页可回退，
+ * 「返回」应当回到来源页面（例如启动页的实例详情）。
+ */
+export interface ModOpenOrigin {
+  /** 来源页面 id；消费方用 `ctx.ui.navigate` 打开 */
+  view: string
+  /** 返回按钮提示中显示的名称，例如「启动」 */
+  label?: string
 }
 
 export const MOD_OPEN_INTENT_KEY = '__MICS_MOD_OPEN_INTENT__'

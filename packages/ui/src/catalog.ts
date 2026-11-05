@@ -103,6 +103,21 @@ export interface CatalogIntent {
   gameVersion?: string
   loader?: string
   versionId?: string
+  /** 来源页面；详情页「返回」没有内部历史可回退时回到这里 */
+  origin?: CatalogOrigin
+}
+
+/**
+ * 目录详情的来源页面。
+ *
+ * 从实例详情等页面直接跳进某个项目时，详情页没有「上一个搜索页」，
+ * 返回按钮应当回到来源页面而不是退回搜索页。
+ */
+export interface CatalogOrigin {
+  /** 页面 id；由调用方用 `ctx.ui.navigate` 打开 */
+  view: string
+  /** 返回按钮提示中显示的名称，例如「启动」 */
+  label?: string
 }
 
 export interface CatalogLoaderOption {
@@ -115,6 +130,8 @@ export interface CatalogOpenOptions {
   filter?: FilterSelection
   /** 是否把当前详情压入返回栈（前置跳转） */
   remember?: boolean
+  /** 这次打开由其它页面跳转而来；返回时回到该来源而不是搜索页 */
+  origin?: CatalogOrigin
 }
 
 /** 目录条目数量：过亿显示「亿」，过万显示「万」 */

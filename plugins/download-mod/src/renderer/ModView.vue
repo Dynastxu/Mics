@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { MOD_LOADER_LABELS, MOD_LOADERS, MOD_OPEN_INTENT_KEY } from '@mics/sdk'
 import type {
   ModLoader,
@@ -20,6 +20,7 @@ import type {
   CatalogGameVersion,
   CatalogIntent,
   CatalogItem,
+  CatalogOrigin,
   CatalogSearchRequest,
   CatalogSearchResult,
   CatalogSourceInfo,
@@ -63,6 +64,16 @@ function takeOpenIntent(): CatalogIntent | null {
     typeof intent.loader === 'string' && MOD_LOADERS.includes(intent.loader as ModLoader)
       ? intent.loader
       : 'all'
+  const origin = intent.origin
+  const validOrigin =
+    origin && typeof origin === 'object' && typeof origin.view === 'string' && origin.view.trim()
+      ? {
+          view: origin.view.trim(),
+          ...(typeof origin.label === 'string' && origin.label.trim()
+            ? { label: origin.label.trim() }
+            : {})
+        }
+      : undefined
   return {
     query: intent.query.trim(),
     ...(validProject ? { project: validProject as CatalogItem } : {}),
@@ -74,11 +85,41 @@ function takeOpenIntent(): CatalogIntent | null {
     ...(loader !== 'all' ? { loader } : {}),
     ...(typeof intent.versionId === 'string' && intent.versionId
       ? { versionId: intent.versionId }
-      : {})
+      : {}),
+    ...(validOrigin ? { origin: validOrigin } : {})
   }
 }
 
 const intent = ref<CatalogIntent | null>(takeOpenIntent())
+
+/**
+ * 页面首次打开后保持挂载，第二次从实例 Mod 列表跳进来时不会再执行 setup；
+ * 因此在页面每次重新激活时再取一次意图，否则第二次点击只会停在搜索页。
+ */
+function applyOpenIntent(): void {
+  const next = takeOpenIntent()
+  if (next) intent.value = next
+}
+
+/** 详情由其它页面跳来：返回时回到来源页面；来源不可用时退回搜索页 */
+function leaveToOrigin(origin: CatalogOrigin): void {
+  if (ctx.ui.navigate(origin.view)) return
+  browser.value?.closeToSearch()
+}
+
+let offViewActivated: (() => boolean) | null = null
+
+onMounted(() => {
+  offViewActivated = ctx.on('ui/viewActivated', (viewId: string) => {
+    if (viewId !== 'download.mod') return
+    applyOpenIntent()
+  })
+})
+
+onUnmounted(() => {
+  offViewActivated?.()
+  offViewActivated = null
+})
 
 async function fetchSources(): Promise<CatalogSourceInfo[]> {
   return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.manager', 'mods/sources')
@@ -191,6 +232,7 @@ function onInstallStarted(_jobId: string, instanceCount: number): void {
     :fetch-project="fetchProject"
     @install="openInstall"
     @settings="openDownloadSettings"
+    @back="leaveToOrigin"
   >
     <template #version-extra="{ version, selected }">
       <div

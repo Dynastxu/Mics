@@ -43,6 +43,7 @@ export type {
   CatalogItem,
   CatalogLoaderOption,
   CatalogOpenOptions,
+  CatalogOrigin,
   CatalogSearchRequest,
   CatalogSearchResult,
   CatalogSourceError,

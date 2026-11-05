@@ -15,6 +15,7 @@ import type {
   CatalogItem,
   CatalogLoaderOption,
   CatalogOpenOptions,
+  CatalogOrigin,
   CatalogSearchRequest,
   CatalogSearchResult,
   CatalogSourceError,
@@ -71,6 +72,8 @@ const emit = defineEmits<{
   open: [item: CatalogItem]
   install: [version: CatalogVersion]
   settings: []
+  /** 详情由其它页面跳转而来，且没有内部历史可回退；调用方负责回到来源页面 */
+  back: [origin: CatalogOrigin]
 }>()
 
 const pageEl = ref<HTMLElement | null>(null)
@@ -103,6 +106,8 @@ const searchError = ref('')
 const searched = ref(false)
 
 const activeItem = ref<CatalogItem | null>(null)
+/** 当前详情链从哪个页面跳来；有值时「返回」回到来源而不是搜索页 */
+const externalOrigin = ref<CatalogOrigin | null>(null)
 const versions = ref<CatalogVersion[]>([])
 const versionLoading = ref(false)
 const versionError = ref('')
@@ -247,6 +252,13 @@ const versionById = computed(() => new Map(versions.value.map((version) => [vers
 const selectedVersion = computed(
   () => versions.value.find((version) => version.id === selectedVersionId.value) ?? null
 )
+
+/** 返回按钮提示：从其它页面跳进来时说明会回到哪里 */
+const backTitle = computed(() => {
+  const origin = externalOrigin.value
+  if (!origin) return ''
+  return origin.label ? `返回${origin.label}` : '返回来源页面'
+})
 
 /** 详情页筛选不继承搜索页的版本/加载器限制，选项始终来自全部版本 */
 const versionFilterGroups = computed<FilterGroup[]>(() => {
@@ -495,6 +507,7 @@ function openItem(item: CatalogItem, options: CatalogOpenOptions = {}): void {
   showBackToTop.value = false
   detailIconFailed.value = false
   activeItem.value = item
+  externalOrigin.value = options.origin ?? null
   selectedVersionId.value = ''
   versionQuery.value = ''
   versionFilter.value = options.filter ?? searchFilter()
@@ -506,7 +519,11 @@ function openItem(item: CatalogItem, options: CatalogOpenOptions = {}): void {
 
 /** 前置跳转：保留当前详情版本筛选，返回时回到原详情 */
 function openRelated(item: CatalogItem): void {
-  openItem(item, { filter: relatedFilter(), remember: true })
+  openItem(item, {
+    filter: relatedFilter(),
+    remember: true,
+    origin: externalOrigin.value ?? undefined
+  })
 }
 
 function restoreItem(snapshotValue: CatalogSnapshot): void {
@@ -565,6 +582,7 @@ function closeToSearch(): void {
   pendingScrollTop = null
   history.value = []
   activeItem.value = null
+  externalOrigin.value = null
   versions.value = []
   versionError.value = ''
   selectedVersionId.value = ''
@@ -583,6 +601,12 @@ function goHome(): void {
 function closeItem(): void {
   const previous = history.value.pop()
   if (!previous) {
+    // 从其它页面跳进来的详情没有搜索页可回：交给调用方回到来源页面
+    const origin = externalOrigin.value
+    if (origin) {
+      emit('back', origin)
+      return
+    }
     closeToSearch()
     return
   }
@@ -632,7 +656,7 @@ function openPendingIntent(): void {
     ) ??
     results.value.find((item) => item.name.toLowerCase().includes(targetName)) ??
     results.value[0]
-  if (target) openItem(target)
+  if (target) openItem(target, { origin: intent.origin })
 }
 
 async function loadSources(): Promise<void> {
@@ -648,7 +672,7 @@ async function loadPageData(): Promise<void> {
   if (intent?.project) {
     query.value = intent.project.name
     ready = true
-    openItem(intent.project, { filter: intentFilter(intent) })
+    openItem(intent.project, { filter: intentFilter(intent), origin: intent.origin })
     // 详情已经显示；后台准备搜索结果，返回列表时仍然可用
     void (async () => {
       await loadSources()
@@ -685,6 +709,16 @@ watch(query, () => {
     void runSearch(true)
   }, 350)
 })
+
+// 页面切换只切可见性、不重新挂载，从其它页面再次跳进来时 intent 会换成新对象；
+// 只在挂载时读取会让第二次跳转退回搜索页，因此每次 intent 更新都要重新应用。
+watch(
+  () => props.intent,
+  (intent) => {
+    if (!intent) return
+    void loadPageData()
+  }
+)
 
 watch(
   filterSelection,
@@ -750,6 +784,7 @@ defineExpose({
           <button
             class="mics-button mics-button--ghost mics-button--small"
             type="button"
+            :title="backTitle || undefined"
             @click="closeItem"
           >
             <svg
