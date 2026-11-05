@@ -4,7 +4,8 @@ import { INSTANCE_STATE_FILE } from '@mics/sdk'
 import type { InstanceInstallRecord, InstanceInstallState } from '@mics/sdk'
 import { instancesRoot, resolveInstanceLayout } from '@mics/sdk/main'
 import type { InstanceLayout } from '@mics/sdk/main'
-import type { InstanceSummary } from './shared'
+import { normalizeInstanceSettings } from './settings'
+import type { InstanceLaunchSettings, InstanceSummary } from './shared'
 import type { VersionJson } from './version'
 
 interface InstanceMetadata {
@@ -12,6 +13,8 @@ interface InstanceMetadata {
   lastPlayed?: number
   lastVersion?: string
   username?: string
+  /** 实例级启动设置；读取时用 normalizeInstanceSettings 兜底 */
+  launch?: unknown
 }
 
 /**
@@ -223,4 +226,24 @@ export function markInstanceLaunched(instance: ResolvedInstance, username: strin
     username
   }
   writeFileSync(instance.metadataPath, JSON.stringify(metadata, null, 2), 'utf8')
+}
+
+/**
+ * 实例级启动设置。
+ *
+ * 存在 `instance.json` 的 `launch` 字段里：删除实例时随目录一起消失，
+ * 复制实例目录时也一并带走，不需要额外的 id → 设置映射。
+ */
+export function readInstanceSettings(instance: InstanceSnapshot): InstanceLaunchSettings {
+  return normalizeInstanceSettings(instance.metadata.launch)
+}
+
+/** 覆盖实例级启动设置；`instance.json` 里的其它字段原样保留 */
+export function writeInstanceSettings(
+  instance: InstanceSnapshot,
+  settings: InstanceLaunchSettings
+): InstanceLaunchSettings {
+  const metadata: InstanceMetadata = { ...instance.metadata, launch: settings }
+  writeFileSync(instance.metadataPath, JSON.stringify(metadata, null, 2), 'utf8')
+  return settings
 }

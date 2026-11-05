@@ -18,6 +18,7 @@ import type {
   RepeatLaunchBehavior
 } from '../shared'
 import { LAUNCH_STATE_TOPIC } from '../shared'
+import { DEFAULT_SETTINGS } from '../settings'
 import InstanceDetailView from './InstanceDetailView.vue'
 import DeleteInstanceDialog from './DeleteInstanceDialog.vue'
 import MissingFilesDialog from './MissingFilesDialog.vue'
@@ -26,7 +27,7 @@ import RepeatLaunchDialog from './RepeatLaunchDialog.vue'
 const ctx = usePluginContext()
 const instances = ref<InstanceSummary[]>([])
 const runtime = ref<LaunchState>({ instances: [] })
-const settings = ref<LaunchSettings>({ repeatBehavior: 'prompt', maxMemory: 4096 })
+const settings = ref<LaunchSettings>({ ...DEFAULT_SETTINGS })
 const loading = ref(true)
 const error = ref('')
 const notice = ref('')

@@ -1,9 +1,18 @@
 import { app, shell } from 'electron'
 import type { Context } from 'cordis'
+import path from 'node:path'
 import { defineMainPlugin } from '@mics/sdk/main'
 import { AUTH_CREDENTIALS, SHELL_EXECUTE } from '@mics/sdk'
 import type { AuthCredentialsCapability, ShellExecuteCapability } from '@mics/sdk'
-import { listInstances, markInstanceLaunched, resolveInstance } from './instances'
+import { detectJavaRuntimes, resolveJavaPath } from '@mics/java'
+import {
+  discoverInstance,
+  listInstances,
+  markInstanceLaunched,
+  readInstanceSettings,
+  resolveInstance,
+  writeInstanceSettings
+} from './instances'
 import {
   deleteInstanceDirectory,
   deleteInstanceMod,
@@ -19,17 +28,29 @@ import {
 import { InstanceFilesMissingError, launchInstance } from './launch'
 import { waitForGameWindow } from './gameWindow'
 import { LaunchRuntime, isProcessAlive, type PersistedProcess } from './runtime'
+import {
+  DEFAULT_MAX_MEMORY,
+  DEFAULT_WINDOW_HEIGHT,
+  DEFAULT_WINDOW_WIDTH,
+  normalizeInstanceSettings,
+  normalizeJavaPaths,
+  normalizeMemoryMb,
+  normalizeRepeatBehavior,
+  normalizeWindowSize,
+  parseJvmArgs
+} from './settings'
 import type {
   InstanceArea,
+  InstanceLaunchSettings,
   InstanceLogRequest,
   InstanceModDeleteRequest,
   InstanceModToggleRequest,
   InstanceRef,
   InstanceRevealRequest,
+  JavaPathStatus,
   LaunchOutcome,
   LaunchRequest,
   LaunchSettings,
-  RepeatLaunchBehavior,
   TerminateRequest,
   TerminateResult
 } from './shared'
@@ -42,14 +63,16 @@ export const inject = ['ipc', 'storage', 'capabilities']
 const RUNNING_KEY = 'running'
 /** 重复启动行为 */
 const BEHAVIOR_KEY = 'repeatLaunchBehavior'
+const MEMORY_KEY = 'maxMemory'
+/** 候选 Java 路径；数组不受配置 schema 约束，由本插件自行校验 */
+const JAVA_PATHS_KEY = 'javaPaths'
+const WINDOW_WIDTH_KEY = 'windowWidth'
+const WINDOW_HEIGHT_KEY = 'windowHeight'
+const JVM_ARGS_KEY = 'jvmArgs'
 /** 等待游戏窗口的上限；超时后按「已在运行」处理，避免按钮一直停在启动中 */
 const WINDOW_PROBE_TIMEOUT = 120_000
 /** 无法探测窗口的平台（非 Windows / 无 PowerShell）下，稍等片刻就恢复按钮 */
 const FALLBACK_RUNNING_DELAY = 4_000
-
-function normalizeBehavior(value: unknown): RepeatLaunchBehavior {
-  return value === 'launch' || value === 'ignore' ? value : 'prompt'
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -64,6 +87,37 @@ function instanceIdOf(params?: InstanceRef): string {
 
 function areaOf(value: unknown): InstanceArea {
   return value === 'logs' || value === 'mods' || value === 'saves' ? value : 'root'
+}
+
+/** 设置里的文本项：非字符串直接拒绝，避免把错误类型写进 storage */
+function textSetting(value: unknown, label: string): string {
+  if (typeof value !== 'string') throw new Error(`${label}必须是字符串`)
+  return value.trim()
+}
+
+/** 写入端严格些：只接受字符串数组，读取端再用 normalizeJavaPaths 兜底 */
+function javaPathsSetting(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error('Java 路径列表必须是数组')
+  if (value.some((entry) => typeof entry !== 'string')) throw new Error('Java 路径必须是字符串')
+  return normalizeJavaPaths(value)
+}
+
+/** 把一个候选路径解析成设置页与启动共用的状态 */
+function javaStatusOf(javaPath: string): JavaPathStatus {
+  const runtime = resolveJavaPath(javaPath)
+  return { path: javaPath, java: runtime?.java ?? null, major: runtime?.major ?? null }
+}
+
+/**
+ * 候选 Java 路径统一存成 `bin` 目录。
+ *
+ * 用户习惯看到 `...\jre1.8.0_471\bin` 这样的路径；而输入允许是 java 可执行文件、
+ * Java 主目录或 bin 目录，三种写法在这里归一到同一个存储形态，也顺带完成去重。
+ * 解析失败时返回 null，由调用方决定是保留旧条目还是拒绝新条目。
+ */
+function javaBinDir(javaPath: string): string | null {
+  const runtime = resolveJavaPath(javaPath)
+  return runtime ? path.dirname(runtime.java) : null
 }
 
 /** 结束进程后等待文件锁释放，避免紧接着删除目录时反复重试 */
@@ -88,19 +142,32 @@ export function apply(ctx: Context): void {
   if (restored > 0) log.info('已恢复 %d 个仍在运行的实例进程', restored)
   ctx.effect(() => () => runtime.dispose())
 
-  const readBehavior = (): RepeatLaunchBehavior =>
-    normalizeBehavior(ctx.storage.get<string>(BEHAVIOR_KEY, 'prompt'))
+  const readTextSetting = (key: string): string => {
+    const value = ctx.storage.get<unknown>(key, '')
+    return typeof value === 'string' ? value.trim() : ''
+  }
 
   /**
-   * 当前生效的最大内存。
+   * 当前生效的启动设置。
    *
-   * 范围由清单 schema（1024–32768）校验，storage 取值时也会按 schema 归一化；
-   * 这里只做类型兜底，运行时夹取统一放在 buildLaunchArgs()，避免两处规则漂移。
+   * 范围由清单 schema（内存 1024–32768、窗口 320–16384）校验，storage 取值时也会
+   * 按 schema 归一化；这里用同一套纯函数兜底，运行时夹取统一在 buildLaunchPlan()，
+   * 避免两处规则漂移。候选 Java 路径不在 schema 里，读取时同样归整。
    */
-  const readMemory = (): number => {
-    const value = Number(ctx.storage.get<unknown>('maxMemory', 4096))
-    return Number.isFinite(value) ? value : 4096
-  }
+  const readSettings = (): LaunchSettings => ({
+    repeatBehavior: normalizeRepeatBehavior(ctx.storage.get<string>(BEHAVIOR_KEY, 'prompt')),
+    maxMemory: normalizeMemoryMb(ctx.storage.get<unknown>(MEMORY_KEY, DEFAULT_MAX_MEMORY)),
+    javaPaths: normalizeJavaPaths(ctx.storage.get<unknown>(JAVA_PATHS_KEY, [])),
+    windowWidth: normalizeWindowSize(
+      ctx.storage.get<unknown>(WINDOW_WIDTH_KEY, DEFAULT_WINDOW_WIDTH),
+      DEFAULT_WINDOW_WIDTH
+    ),
+    windowHeight: normalizeWindowSize(
+      ctx.storage.get<unknown>(WINDOW_HEIGHT_KEY, DEFAULT_WINDOW_HEIGHT),
+      DEFAULT_WINDOW_HEIGHT
+    ),
+    jvmArgs: readTextSetting(JVM_ARGS_KEY)
+  })
 
   /** 正在准备（校验 / 下载 / spawn）的实例，避免页面重挂载后的重复点击 */
   const preparing = new Set<string>()
@@ -200,6 +267,55 @@ export function apply(ctx: Context): void {
     return { id }
   })
 
+  ctx.ipc.handle<InstanceRef>('instances/settings', (params) => {
+    const instance = discoverInstance(dataDir, instanceIdOf(params))
+    if (!instance) throw new Error('实例不存在')
+    return readInstanceSettings(instance)
+  })
+
+  /**
+   * 更新实例级启动设置。
+   *
+   * 渲染端只发变化的字段：以现有设置打底再整体归一化，避免漏字段把已保存的值清掉。
+   */
+  ctx.ipc.handle<InstanceRef & Partial<InstanceLaunchSettings>>(
+    'instances/settings/set',
+    (params) => {
+      const id = instanceIdOf(params)
+      const instance = discoverInstance(dataDir, id)
+      if (!instance) throw new Error('实例不存在')
+
+      const next = normalizeInstanceSettings({ ...readInstanceSettings(instance), ...params })
+      if (next.javaMode === 'specified') {
+        if (!next.javaPath) throw new Error('指定 Java 需要先选择一个 Java')
+        // 与全局候选一样统一存 bin 目录，也接受可执行文件 / 主目录写法
+        const runtime = resolveJavaPath(next.javaPath)
+        if (!runtime) {
+          throw new Error(
+            `Java 路径无效：${next.javaPath}（需要一个 java 可执行文件、Java 主目录或 bin 目录）`
+          )
+        }
+        const required = instance.version?.javaVersion?.majorVersion ?? 8
+        if (runtime.major < required) {
+          throw new Error(
+            `该实例需要 Java ${required} 或更高版本，所选 Java ${runtime.major} 不满足`
+          )
+        }
+        next.javaPath = path.dirname(runtime.java)
+      }
+
+      writeInstanceSettings(instance, next)
+      log.info(
+        '实例 %s 的启动设置已更新：Java=%s，JVM 参数=%s，窗口=%s',
+        id,
+        next.javaMode === 'specified' ? next.javaPath : '自动',
+        next.followGlobalJvmArgs ? '跟随全局' : `${parseJvmArgs(next.jvmArgs).length} 项`,
+        next.followGlobalWindow ? '跟随全局' : `${next.windowWidth}×${next.windowHeight}`
+      )
+      return next
+    }
+  )
+
   ctx.ipc.handle<LaunchRequest>(
     'instances/launch',
     async ({ id, accountId }): Promise<LaunchOutcome> => {
@@ -215,13 +331,32 @@ export function apply(ctx: Context): void {
           .require<AuthCredentialsCapability>(AUTH_CREDENTIALS)
           .resolve(accountId)
 
-        const memoryMb = readMemory()
+        const settings = readSettings()
+        const instanceSettings = readInstanceSettings(instance)
+        // 实例指定了 Java 就只用它；否则沿用全局候选列表（为空时自动检测）
+        const javaPaths =
+          instanceSettings.javaMode === 'specified' && instanceSettings.javaPath
+            ? [instanceSettings.javaPath]
+            : settings.javaPaths
+        const windowWidth = instanceSettings.followGlobalWindow
+          ? settings.windowWidth
+          : instanceSettings.windowWidth
+        const windowHeight = instanceSettings.followGlobalWindow
+          ? settings.windowHeight
+          : instanceSettings.windowHeight
+        const jvmArgs = instanceSettings.followGlobalJvmArgs
+          ? parseJvmArgs(settings.jvmArgs)
+          : parseJvmArgs(instanceSettings.jvmArgs)
+
         log.info(
-          '开始启动实例 %s（版本 %s，账户 %s，内存 %dMB）',
+          '开始启动实例 %s（版本 %s，账户 %s，内存 %dMB，窗口 %d×%d，Java=%s）',
           instance.id,
           instance.version.id,
           credentials.name,
-          memoryMb
+          settings.maxMemory,
+          windowWidth,
+          windowHeight,
+          instanceSettings.javaMode === 'specified' ? '实例指定' : '自动'
         )
 
         // 启动方式由 provider 决定：本机进程只是默认实现，沙箱插件可以整体替换
@@ -230,7 +365,11 @@ export function apply(ctx: Context): void {
         const launched = await launchInstance(shellCapability, instance, {
           credentials,
           launcherVersion: app.getVersion(),
-          memoryMb,
+          memoryMb: settings.maxMemory,
+          javaPaths,
+          windowWidth,
+          windowHeight,
+          jvmArgs,
           onLog: (level, message) => {
             if (level === 'warn') log.warn('%s', message)
             else log.info('%s', message)
@@ -273,31 +412,89 @@ export function apply(ctx: Context): void {
     return { terminated } satisfies TerminateResult
   })
 
-  ctx.ipc.handle(
-    'settings/get',
-    () =>
-      ({
-        repeatBehavior: readBehavior(),
-        maxMemory: readMemory()
-      }) satisfies LaunchSettings
-  )
+  ctx.ipc.handle('settings/get', () => readSettings())
 
   ctx.ipc.handle<Partial<LaunchSettings>>('settings/set', (params) => {
     if (params?.repeatBehavior !== undefined) {
-      ctx.storage.set(BEHAVIOR_KEY, normalizeBehavior(params.repeatBehavior))
+      ctx.storage.set(BEHAVIOR_KEY, normalizeRepeatBehavior(params.repeatBehavior))
     }
     if (params?.maxMemory !== undefined) {
       const memory = Number(params.maxMemory)
       if (!Number.isFinite(memory)) throw new Error('最大内存必须是数字')
       // storage 会按清单 schema 校验 1024–32768
-      ctx.storage.set('maxMemory', Math.round(memory))
+      ctx.storage.set(MEMORY_KEY, Math.round(memory))
     }
-    log.info('启动设置已更新：重复启动=%s，最大内存=%dMB', readBehavior(), readMemory())
-    return {
-      repeatBehavior: readBehavior(),
-      maxMemory: readMemory()
-    } satisfies LaunchSettings
+    if (params?.javaPaths !== undefined) {
+      const incoming = javaPathsSetting(params.javaPaths)
+      // 只校验这次新增的条目：已保存的路径可能在 JVM 被卸载后失效，
+      // 不能因为一个旧条目就让「删除 / 添加其它 Java」也保存不了。
+      const saved = new Set(
+        normalizeJavaPaths(ctx.storage.get<unknown>(JAVA_PATHS_KEY, [])).map((entry) =>
+          entry.toLowerCase()
+        )
+      )
+      const next: string[] = []
+      const seen = new Set<string>()
+      for (const javaPath of incoming) {
+        const canonical = javaBinDir(javaPath)
+        if (!canonical) {
+          if (!saved.has(javaPath.toLowerCase())) {
+            throw new Error(
+              `Java 路径无效：${javaPath}（需要一个 java 可执行文件、Java 主目录或 bin 目录）`
+            )
+          }
+          if (!seen.has(javaPath)) {
+            seen.add(javaPath)
+            next.push(javaPath)
+          }
+          continue
+        }
+        if (seen.has(canonical)) continue
+        seen.add(canonical)
+        next.push(canonical)
+      }
+      ctx.storage.set(JAVA_PATHS_KEY, next)
+    }
+    if (params?.windowWidth !== undefined) {
+      ctx.storage.set(WINDOW_WIDTH_KEY, Math.round(Number(params.windowWidth)))
+    }
+    if (params?.windowHeight !== undefined) {
+      ctx.storage.set(WINDOW_HEIGHT_KEY, Math.round(Number(params.windowHeight)))
+    }
+    if (params?.jvmArgs !== undefined) {
+      ctx.storage.set(JVM_ARGS_KEY, textSetting(params.jvmArgs, 'JVM 参数'))
+    }
+
+    const settings = readSettings()
+    log.info(
+      '启动设置已更新：重复启动=%s，最大内存=%dMB，窗口=%d×%d，候选 Java=%d 个，JVM 参数=%d 项',
+      settings.repeatBehavior,
+      settings.maxMemory,
+      settings.windowWidth,
+      settings.windowHeight,
+      settings.javaPaths.length,
+      parseJvmArgs(settings.jvmArgs).length
+    )
+    return settings
   })
+
+  /**
+   * 候选 Java 路径的解析结果：设置页据此显示每项的版本，
+   * 路径失效时 `major` 为空，界面标成「不可用」而不是悄悄删掉。
+   */
+  ctx.ipc.handle<{ paths?: unknown }>('java/inspect', (params) =>
+    normalizeJavaPaths(params?.paths).map(javaStatusOf)
+  )
+
+  /** 「自动检测」按钮：扫描本机所有 Java，强制刷新缓存 */
+  ctx.ipc.handle('java/detect', (): JavaPathStatus[] =>
+    detectJavaRuntimes(true).map((runtime) => ({
+      // 与存储形态一致：候选路径以 bin 目录出现
+      path: path.dirname(runtime.java),
+      java: runtime.java,
+      major: runtime.major
+    }))
+  )
 }
 
 export default defineMainPlugin({ name, inject, apply })

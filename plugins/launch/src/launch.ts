@@ -12,8 +12,14 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import type { LaunchCredentials, ShellExecuteCapability, ShellProcess } from '@mics/sdk'
-import { findJava } from '@mics/java'
+import { findJava, resolveJavaPath, type JavaRuntime } from '@mics/java'
 import type { ResolvedInstance } from './instances'
+import {
+  DEFAULT_WINDOW_HEIGHT,
+  DEFAULT_WINDOW_WIDTH,
+  normalizeMemoryMb,
+  normalizeWindowSize
+} from './settings'
 import type { MissingFile } from './shared'
 import type { ArgumentEntry, Library, LibraryDownload, Rule } from './version'
 import { isReadableJar, syncNativeLibraries } from './zip'
@@ -23,6 +29,16 @@ export interface LaunchOptions {
   credentials: LaunchCredentials
   launcherVersion: string
   memoryMb?: number
+  /**
+   * 候选 Java 的 bin 目录（`java` 可执行文件所在目录），按顺序取第一个满足
+   * 版本要求的；为空时自动检测本机 Java
+   */
+  javaPaths?: string[]
+  /** 游戏窗口尺寸；省略时为 1280×720 */
+  windowWidth?: number
+  windowHeight?: number
+  /** 额外 JVM 参数（已拆分），追加在版本自带参数之后 */
+  jvmArgs?: string[]
   /** 启动准备阶段的告警出口；由调用方接到插件日志器上 */
   onLog?: (level: 'info' | 'warn', message: string) => void
 }
@@ -331,13 +347,49 @@ function syncNatives(
   return { dir: nativesDir, jars }
 }
 
+/**
+ * 选出这次启动使用的 Java。
+ *
+ * 候选路径是用户明确管理的列表：按顺序取第一个满足版本要求的条目，失效的条目告警
+ * 后跳过、版本不够的条目静默跳过，但不会悄悄换成别的 Java。只有列表为空时才回落到
+ * 自动检测——没配置 Java 的默认行为不变，配置了就以配置为准。
+ */
+function selectJava(
+  requiredMajor: number,
+  javaPaths: string[] | undefined,
+  onLog?: LaunchOptions['onLog']
+): JavaRuntime {
+  const candidates = javaPaths ?? []
+  if (candidates.length === 0) return findJava(requiredMajor)
+
+  const rejected: string[] = []
+  for (const configured of candidates) {
+    const runtime = resolveJavaPath(configured)
+    if (!runtime) {
+      rejected.push(`${configured}（路径无效）`)
+      onLog?.('warn', `Java 路径已失效，已跳过：${configured}`)
+      continue
+    }
+    if (runtime.major < requiredMajor) {
+      // 一个候选列表里同时有 Java 8 / 17 / 21 是常态，版本不够只是不匹配，
+      // 不按告警刷屏；一个都不匹配时下面的错误会把原因一起列出来。
+      rejected.push(`${configured}（Java ${runtime.major}）`)
+      continue
+    }
+    return runtime
+  }
+
+  throw new Error(
+    `候选 Java 都不满足 Java ${requiredMajor} 的要求：${rejected.join('；')}。请在「设置 → 启动设置」里调整 Java 路径`
+  )
+}
+
 export async function buildLaunchPlan(
   instance: ResolvedInstance,
   options: LaunchOptions
 ): Promise<LaunchPlan> {
   const version = instance.version
-  const requiredJava = version.javaVersion?.majorVersion ?? 8
-  const java = findJava(requiredJava)
+  const java = selectJava(version.javaVersion?.majorVersion ?? 8, options.javaPaths, options.onLog)
 
   // 资源在共享目录（跨实例一份），实例目录里只放这个版本自己的文件
   const assetsDir = instance.layout.assetsDir
@@ -386,8 +438,10 @@ export async function buildLaunchPlan(
 
   const classpath = [clientJar, ...librariesInClasspath, ...nativesDir.jars]
 
-  // 运行时唯一的夹取点：schema 负责写入校验，但 buildLaunchArgs 也可能被直接调用
-  const memoryMb = Math.max(1024, Math.min(32768, Math.round(options.memoryMb ?? 4096)))
+  // 运行时唯一的夹取点：schema 负责写入校验，但 buildLaunchPlan 也可能被直接调用
+  const memoryMb = normalizeMemoryMb(options.memoryMb)
+  const windowWidth = normalizeWindowSize(options.windowWidth, DEFAULT_WINDOW_WIDTH)
+  const windowHeight = normalizeWindowSize(options.windowHeight, DEFAULT_WINDOW_HEIGHT)
   const credentials = options.credentials
   const variables: Record<string, string> = {
     auth_player_name: credentials.name,
@@ -410,8 +464,8 @@ export async function buildLaunchPlan(
     classpath: classpath.join(path.delimiter),
     classpath_separator: path.delimiter,
     library_directory: librariesDir,
-    resolution_width: '1280',
-    resolution_height: '720',
+    resolution_width: String(windowWidth),
+    resolution_height: String(windowHeight),
     path: ''
   }
 
@@ -422,6 +476,8 @@ export async function buildLaunchPlan(
   if (version.arguments?.jvm) {
     jvmArgs.push(...expandArguments(version.arguments.jvm, variables))
   }
+  // 设置里的额外参数放在版本自带参数之后：同名参数以用户的配置为准
+  jvmArgs.push(...(options.jvmArgs ?? []))
 
   const logFile = version.logging?.client?.file
   if (logFile) {
@@ -452,6 +508,11 @@ export async function buildLaunchPlan(
   } else {
     gameArgs = []
   }
+
+  // 1.13+ 的版本档案用 has_custom_resolution 带出 --width/--height；
+  // 更早的版本走 minecraftArguments，没有这两项，补上窗口尺寸设置才会生效。
+  if (!gameArgs.includes('--width')) gameArgs.push('--width', String(windowWidth))
+  if (!gameArgs.includes('--height')) gameArgs.push('--height', String(windowHeight))
 
   mkdirSync(path.join(instance.dir, 'logs'), { recursive: true })
   mkdirSync(path.join(instance.dir, 'mods'), { recursive: true })

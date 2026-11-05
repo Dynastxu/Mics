@@ -57,6 +57,47 @@ export interface LaunchSettings {
   repeatBehavior: RepeatLaunchBehavior
   /** 游戏 JVM 最大堆内存（MB） */
   maxMemory: number
+  /**
+   * 候选 Java 路径，保存为 Java 的 bin 目录，按顺序尝试；
+   * 为空时启动前自动检测本机 Java
+   */
+  javaPaths: string[]
+  /** 游戏窗口宽度（像素） */
+  windowWidth: number
+  /** 游戏窗口高度（像素） */
+  windowHeight: number
+  /** 额外 JVM 参数；按空白拆分，引号内的空格保留 */
+  jvmArgs: string
+}
+
+/** 设置里可选的 Java 模式：跟随全局候选列表，或为本实例指定一个 */
+export type InstanceJavaMode = 'auto' | 'specified'
+
+/**
+ * 实例级启动设置，保存在实例目录的 `instance.json` 里，随实例一起迁移。
+ *
+ * 未设置过的实例使用默认值（全部跟随全局）；参数与窗口各自可以单独覆盖。
+ */
+export interface InstanceLaunchSettings {
+  javaMode: InstanceJavaMode
+  /** `javaMode = specified` 时使用：Java 的 bin 目录 */
+  javaPath: string
+  /** 跟随全局 JVM 参数；为 false 时使用 `jvmArgs` */
+  followGlobalJvmArgs: boolean
+  jvmArgs: string
+  /** 跟随全局窗口尺寸；为 false 时使用 `windowWidth` / `windowHeight` */
+  followGlobalWindow: boolean
+  windowWidth: number
+  windowHeight: number
+}
+
+/** 一个候选 Java 路径的解析结果；路径失效时 `java` / `major` 为空 */
+export interface JavaPathStatus {
+  /** 用户填写 / 自动检测得到的路径 */
+  path: string
+  /** 实际使用的 java 可执行文件 */
+  java: string | null
+  major: number | null
 }
 
 export interface TerminateRequest {

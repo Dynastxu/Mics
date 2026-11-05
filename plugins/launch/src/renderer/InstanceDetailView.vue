@@ -19,6 +19,7 @@ import type {
 } from '../shared'
 import DeleteInstanceDialog from './DeleteInstanceDialog.vue'
 import DeleteModDialog from './DeleteModDialog.vue'
+import InstanceSettingsTab from './InstanceSettingsTab.vue'
 
 const props = defineProps<{
   instance: InstanceSummary
@@ -42,13 +43,14 @@ const emit = defineEmits<{
   changed: [mods: number]
 }>()
 
-type DetailTab = 'overview' | 'logs' | 'mods' | 'saves'
+type DetailTab = 'overview' | 'logs' | 'mods' | 'saves' | 'settings'
 
 const TABS: Array<{ id: DetailTab; label: string }> = [
   { id: 'overview', label: '概览' },
   { id: 'saves', label: '存档' },
   { id: 'mods', label: 'Mod' },
-  { id: 'logs', label: '日志' }
+  { id: 'logs', label: '日志' },
+  { id: 'settings', label: '设置' }
 ]
 
 const USAGE_LABELS: Record<string, string> = {
@@ -677,8 +679,8 @@ onMounted(() => {
               <dd>{{ detail.versionType ?? '未知' }}</dd>
             </div>
             <div>
-              <dt>Java</dt>
-              <dd>{{ detail.javaMajor ? `Java ${detail.javaMajor}` : '自动检测' }}</dd>
+              <dt>Java 要求</dt>
+              <dd>{{ detail.javaMajor ? `Java ${detail.javaMajor}` : '未声明' }}</dd>
             </div>
             <div>
               <dt>已启用 Mod</dt>
@@ -888,6 +890,10 @@ onMounted(() => {
             />
           </div>
         </div>
+      </section>
+
+      <section v-else-if="tab === 'settings'" class="detail__panel">
+        <InstanceSettingsTab :instance-id="instance.id" :required-java="detail.javaMajor ?? 8" />
       </section>
 
       <section v-else class="detail__panel">

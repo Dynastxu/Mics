@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 /**
@@ -36,6 +37,20 @@ function parseVersionText(value: string): number | null {
   return modern ? Number(modern[1]) : null
 }
 
+function majorOfExecutable(java: string): number | null {
+  try {
+    const result = spawnSync(java, ['-version'], {
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+    const match = /version "([^"]+)"/.exec(output)
+    return match ? parseVersionText(match[1] ?? '') : null
+  } catch {
+    return null
+  }
+}
+
 function majorFromHome(home: string): number | null {
   const release = path.join(home, 'release')
   if (existsSync(release)) {
@@ -58,18 +73,7 @@ function majorFromHome(home: string): number | null {
   }
 
   const java = javaExecutable(home)
-  if (!java) return null
-  try {
-    const result = spawnSync(java, ['-version'], {
-      encoding: 'utf8',
-      windowsHide: true
-    })
-    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
-    const match = /version "([^"]+)"/.exec(output)
-    return match ? parseVersionText(match[1] ?? '') : null
-  } catch {
-    return null
-  }
+  return java ? majorOfExecutable(java) : null
 }
 
 function addHome(homes: Set<string>, home: string): void {
@@ -145,10 +149,10 @@ function detectRuntimes(): JavaRuntime[] {
 
   const runtimes: JavaRuntime[] = []
   for (const home of homes) {
-    const java = javaExecutable(home)
-    if (!java) continue
+    const executable = javaExecutable(home)
+    if (!executable) continue
     const major = majorFromHome(home)
-    if (major) runtimes.push({ home, java, major })
+    if (major) runtimes.push({ home, java: canonicalPath(executable), major })
   }
 
   return runtimes.sort((a, b) => a.major - b.major)
@@ -170,6 +174,90 @@ function runtimePreference(runtime: JavaRuntime): number {
   if (name.startsWith('jdk')) return 0
   if (name.startsWith('jbr')) return 1
   return 2
+}
+
+/** 解析符号链接：PATH 里的 java 与 JAVA_HOME 里的同一 JVM 应该归并成一个运行时 */
+function canonicalPath(file: string): string {
+  try {
+    return realpathSync(file)
+  } catch {
+    return file
+  }
+}
+
+function runtimeFromHome(home: string): JavaRuntime | null {
+  const executable = javaExecutable(home)
+  if (!executable) return null
+  const major = majorFromHome(home)
+  return major ? { home, java: canonicalPath(executable), major } : null
+}
+
+const JAVA_NAMES = new Set(['java', 'java.exe', 'javaw', 'javaw.exe'])
+
+function runtimeFromExecutable(file: string): JavaRuntime | null {
+  const name = path.basename(file).toLowerCase()
+  if (!JAVA_NAMES.has(name)) return null
+
+  const bin = path.dirname(file)
+  const home = path.basename(bin).toLowerCase() === 'bin' ? path.dirname(bin) : bin
+  // javaw 不输出控制台信息，版本探测改用同目录的 java
+  const probe = path.join(bin, process.platform === 'win32' ? 'java.exe' : 'java')
+  const major = majorFromHome(home) ?? majorOfExecutable(existsSync(probe) ? probe : file)
+  return major ? { home, java: canonicalPath(file), major } : null
+}
+
+/** 展开手写路径里的引号、`~` 与环境变量：设置页允许直接粘贴 `%JAVA_HOME%\bin\java.exe` */
+function expandUserPath(input: string): string {
+  let value = input.trim()
+  const head = value.charAt(0)
+  if (value.length >= 2 && (head === '"' || head === "'") && value.endsWith(head)) {
+    value = value.slice(1, -1).trim()
+  }
+  if (value === '~' || value.startsWith('~/') || value.startsWith('~\\')) {
+    value = path.join(os.homedir(), value.slice(1))
+  }
+  return value
+    .replace(/%([^%]+)%/g, (match, name: string) => process.env[name] ?? match)
+    .replace(/\$\{([^}]+)\}/g, (match, name: string) => process.env[name] ?? match)
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (match, name: string) => process.env[name] ?? match)
+    .trim()
+}
+
+/**
+ * 把用户填写的 Java 位置解析成本机运行时。
+ *
+ * 接受 `java` / `java.exe` 可执行文件、Java 主目录，或主目录下的 `bin`；
+ * 文本可以带引号、`~` 与环境变量。解析不到时返回 null，由调用方决定怎么提示。
+ */
+export function resolveJavaPath(input: string): JavaRuntime | null {
+  const value = expandUserPath(input)
+  if (!value) return null
+  const target = path.resolve(value)
+
+  let directory: boolean
+  try {
+    directory = statSync(target).isDirectory()
+  } catch {
+    return null
+  }
+
+  if (directory) {
+    return (
+      runtimeFromHome(target) ??
+      (path.basename(target).toLowerCase() === 'bin' ? runtimeFromHome(path.dirname(target)) : null)
+    )
+  }
+  return runtimeFromExecutable(target)
+}
+
+/**
+ * 本机检测到的全部 Java 运行时（按主版本升序）。
+ *
+ * `refresh` 会跳过 30 秒缓存：设置页的「自动检测」按钮要能看到刚装好的 Java。
+ */
+export function detectJavaRuntimes(refresh = false): JavaRuntime[] {
+  if (refresh) cache = null
+  return runtimes().map((runtime) => ({ ...runtime }))
 }
 
 export function findJava(requiredMajor: number): JavaRuntime {

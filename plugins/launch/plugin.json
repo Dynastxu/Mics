@@ -11,7 +11,14 @@
   "activation": ["onStartup"],
   "contributes": {
     "nav": [
-      { "id": "launch", "title": "启动", "icon": "play", "order": 10, "rightSlot": "launch.badge", "rightDisplay": "always" },
+      {
+        "id": "launch",
+        "title": "启动",
+        "icon": "play",
+        "order": 10,
+        "rightSlot": "launch.badge",
+        "rightDisplay": "always"
+      },
       {
         "id": "settings.launch",
         "group": "settings",
@@ -43,6 +50,30 @@
           "minimum": 1024,
           "maximum": 32768,
           "unit": "MB"
+        },
+        "windowWidth": {
+          "type": "integer",
+          "title": "窗口宽度",
+          "description": "游戏启动时的窗口宽度",
+          "default": 1280,
+          "minimum": 320,
+          "maximum": 16384,
+          "unit": "px"
+        },
+        "windowHeight": {
+          "type": "integer",
+          "title": "窗口高度",
+          "description": "游戏启动时的窗口高度",
+          "default": 720,
+          "minimum": 320,
+          "maximum": 16384,
+          "unit": "px"
+        },
+        "jvmArgs": {
+          "type": "string",
+          "title": "JVM 参数",
+          "description": "额外 JVM 参数，按空白拆分，引号内的空格保留",
+          "default": ""
         }
       }
     }
