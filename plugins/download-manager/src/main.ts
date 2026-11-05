@@ -36,6 +36,7 @@ import {
   downloadCacheLimitBytes,
   isModLoader,
   isPackKind,
+  micsUserAgent,
   normalizeDownloadCacheLimit,
   normalizeDownloadSegmentThreshold,
   normalizeDownloadSegments,
@@ -304,7 +305,7 @@ function artifactPlatformMatches(relative: string): boolean {
  */
 function downloadHeaders(): Record<string, string> {
   return {
-    'User-Agent': `Mics/${app.getVersion()}`,
+    'User-Agent': micsUserAgent(app.getVersion()),
     Accept: '*/*'
   }
 }

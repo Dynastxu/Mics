@@ -6,6 +6,9 @@
  * `status` / `code` 区分「等待授权」和真正的错误。
  */
 
+import { app } from 'electron'
+import { micsUserAgent } from '@mics/sdk'
+
 const DEFAULT_TIMEOUT = 20_000
 
 export class HttpRequestError extends Error {
@@ -37,7 +40,11 @@ export async function requestJson<T>(url: string, options: JsonRequestOptions = 
     response = await fetch(url, {
       method,
       body,
-      headers: { Accept: 'application/json', ...headers },
+      headers: {
+        'User-Agent': micsUserAgent(app.getVersion()),
+        Accept: 'application/json',
+        ...headers
+      },
       signal: AbortSignal.timeout(timeoutMs)
     })
   } catch (cause) {

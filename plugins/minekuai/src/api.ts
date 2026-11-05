@@ -1,4 +1,5 @@
-import type { ModProjectKind } from '@mics/sdk'
+import { app } from 'electron'
+import { micsUserAgent, type ModProjectKind } from '@mics/sdk'
 import type { MineKuaiSettings } from './settings'
 
 /**
@@ -87,7 +88,10 @@ export async function queryMineKuai(
   const response = await fetch(url, {
     method: 'GET',
     signal,
-    headers: { accept: 'application/json' }
+    headers: {
+      'User-Agent': micsUserAgent(app.getVersion()),
+      accept: 'application/json'
+    }
   })
   if (!response.ok) {
     throw new Error(`麦块 API 返回 HTTP ${response.status}`)

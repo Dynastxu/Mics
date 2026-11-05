@@ -11,7 +11,12 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { LaunchCredentials, ShellExecuteCapability, ShellProcess } from '@mics/sdk'
+import {
+  MICS_BRAND,
+  type LaunchCredentials,
+  type ShellExecuteCapability,
+  type ShellProcess
+} from '@mics/sdk'
 import { findJava, resolveJavaPath, type JavaRuntime } from '@mics/java'
 import type { ResolvedInstance } from './instances'
 import {
@@ -459,7 +464,7 @@ export async function buildLaunchPlan(
     clientid: '',
     auth_xuid: '',
     natives_directory: nativesDir.dir,
-    launcher_name: 'Mics',
+    launcher_name: MICS_BRAND,
     launcher_version: options.launcherVersion,
     classpath: classpath.join(path.delimiter),
     classpath_separator: path.delimiter,

@@ -1,5 +1,7 @@
 import http from 'node:http'
 import https from 'node:https'
+import { app } from 'electron'
+import { micsUserAgent } from '@mics/sdk'
 
 /**
  * Mod 目录的元数据请求。
@@ -20,7 +22,7 @@ export interface ModHttpOptions {
 
 const DEFAULT_TIMEOUT = 30_000
 const MAX_REDIRECTS = 5
-const USER_AGENT = 'Mics'
+const USER_AGENT = micsUserAgent(app.getVersion())
 
 export function requestText(
   url: string,
