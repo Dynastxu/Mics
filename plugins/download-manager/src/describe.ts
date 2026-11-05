@@ -69,7 +69,13 @@ async function describeSummary(
   const nextName = name ? described.name : summary.name
   const nextSummary = text ? described.summary : summary.summary
   if (nextName === summary.name && nextSummary === summary.summary) return summary
-  return { ...summary, name: nextName, summary: nextSummary }
+  return {
+    ...summary,
+    name: nextName,
+    summary: nextSummary,
+    // 展示名被改写时留下原文：复制名称 / 到官网搜索都需要未被翻译的英文名
+    ...(nextName === summary.name ? {} : { originalName: summary.originalName ?? summary.name })
+  }
 }
 
 async function describeSearch(

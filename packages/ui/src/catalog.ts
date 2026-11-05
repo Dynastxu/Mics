@@ -35,6 +35,8 @@ export interface CatalogItem {
   projectId: string
   slug: string
   name: string
+  /** 来源原文名称；翻译插件改写 `name` 之前的英文原名，未翻译时为空 */
+  originalName?: string
   summary: string
   author: string
   icon: string
@@ -139,4 +141,14 @@ export function formatDownloads(value: number): string {
   if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1)} 亿`
   if (value >= 10_000) return `${Math.round(value / 10_000)} 万`
   return value.toLocaleString('zh-CN')
+}
+
+/**
+ * 项目原文名称。
+ *
+ * 目录页展示的 `name` 可能已被翻译插件改写成本地化文案；需要原文的地方
+ * （复制名称、到来源网站搜索）统一用这个函数取值，未翻译时回退到 `name`。
+ */
+export function originalNameOf(item: Pick<CatalogItem, 'name' | 'originalName'>): string {
+  return item.originalName?.trim() || item.name
 }

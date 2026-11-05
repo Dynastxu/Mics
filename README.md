@@ -279,7 +279,11 @@ import type { CatalogVersion, FilterGroup, FilterSelection, ListRow } from '@mic
 - `CatalogBrowser`：完整的「搜索项目 → 详情 → 版本列表 → 安装」交互，包含来源筛选、分页、
   返回栈、详情滚动恢复与「返回顶部」；页面只注入 IPC 调用与加载器 / 渠道标签，
   `#version-extra` / `#version-action` / `#card` 插槽用于业务特有内容（例如 Mod 的前置）；
-  `show-loader-filter` 可关闭加载器筛选（资源包 / 光影包 / 数据包没有 Mod 加载器概念）；
+  `show-loader-filter` 可关闭加载器筛选（资源包 / 光影包 / 数据包没有 Mod 加载器概念）。
+  详情页搜索框上方是一行左对齐的操作按钮：`转到 Modrinth` / `转到 CurseForge` 只按项目
+  实际来源显示一个、打开它的项目页，`复制名称` 复制来源原文（翻译后的中文名不参与）；
+  `#detail-actions` 插槽往同一行追加按钮，插槽参数是 `item` / `projectName` / `copyName`；
+  `open-external` 由页面注入系统浏览器打开方式（清单里需要 `shell:openExternal` 权限）；
 - `CatalogCard`：目录网格卡片（图标 / 作者 / 来源徽标 / 类型 / 下载量）；
 - `ListPager`：目录分页条，`page` / `page-count` + `@change`；
 - `BackToTop`：右下角悬浮「返回顶部」按钮；

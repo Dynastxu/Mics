@@ -13,7 +13,7 @@ import type {
   NotificationsServiceApi,
   PackKind
 } from '@mics/sdk'
-import { usePluginContext } from '@mics/sdk/renderer'
+import { usePluginContext, useOpenExternal } from '@mics/sdk/renderer'
 import { CatalogBrowser, PackInstallDialog } from '@mics/ui'
 import type {
   CatalogCategory,
@@ -27,6 +27,7 @@ import type {
 
 const KIND: PackKind = 'shader'
 const ctx = usePluginContext()
+const openExternal = useOpenExternal()
 
 const installOpen = ref(false)
 const installVersion = ref<CatalogVersion | null>(null)
@@ -185,6 +186,7 @@ function openDownloadSettings(): void {
     :search="search"
     :fetch-versions="fetchVersions"
     :fetch-project="fetchProject"
+    :open-external="openExternal"
     @install="openInstall"
     @settings="openDownloadSettings"
   />

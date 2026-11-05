@@ -240,6 +240,14 @@ export interface ModSummary {
   projectId: string
   slug: string
   name: string
+  /**
+   * 来源原文名称（英文），翻译插件改写 `name` 之前的原名。
+   *
+   * 目录 RPC 返回前统一经过 `catalog/describe`，麦块这类插件会把 `name` 换成
+   * 中文；「复制名称」要的是原文，所以这里保留一份改写前的值。
+   * 没有发生改写时为空，调用方回退到 `name`。
+   */
+  originalName?: string
   summary: string
   author: string
   /** 图标 URL；没有时为空串 */

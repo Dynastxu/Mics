@@ -6,6 +6,7 @@
   "author": "mics",
   "renderer": "dist/renderer.mjs",
   "dependencies": ["mics.download.manager", "mics.notifications"],
+  "permissions": ["shell:openExternal"],
   "contributes": {
     "nav": [
       {

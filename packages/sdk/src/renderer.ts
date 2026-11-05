@@ -65,6 +65,19 @@ function scopedSettingsGroup(group: SettingsGroupContribution): SettingsGroupCon
 }
 
 /**
+ * 用系统浏览器打开 http(s) 链接。
+ *
+ * 走内核的 `host/openExternal`，因此调用方插件必须在 plugin.json 里声明
+ * `"permissions": ["shell:openExternal"]`；渲染进程里直接 `window.open`
+ * 虽然也能被外壳转交，但绕过了权限声明，插件应统一用这个入口。
+ */
+export function useOpenExternal(): (url: string) => Promise<void> {
+  const ctx = usePluginContext()
+  return (url: string) =>
+    ctx.ipc.invoke('mics.kernel', 'host/openExternal', { url }).then(() => undefined)
+}
+
+/**
  * 渲染进程插件的类型标注辅助函数。
  * 插件同样是 cordis 插件对象；UI 贡献通过 ctx.ui 注册，
  * 并随插件 fiber 的销毁而自动回收。

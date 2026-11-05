@@ -34,7 +34,8 @@ export type { SettingsExtension } from './settings/types'
 export { default as ToggleSwitch } from './ToggleSwitch.vue'
 export { defaultSelection, filterRows, isFilterActive, matchesQuery } from './list'
 export type { FilterRowsOptions } from './list'
-export { formatDownloads } from './catalog'
+export { copyText } from './clipboard'
+export { formatDownloads, originalNameOf } from './catalog'
 export type {
   CatalogCategory,
   CatalogDependency,

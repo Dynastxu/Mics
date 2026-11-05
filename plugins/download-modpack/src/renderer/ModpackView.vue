@@ -20,7 +20,7 @@ import type {
   ModVersionRequest,
   NotificationsServiceApi
 } from '@mics/sdk'
-import { usePluginContext } from '@mics/sdk/renderer'
+import { usePluginContext, useOpenExternal } from '@mics/sdk/renderer'
 import { CatalogBrowser, InstanceInstallDialog } from '@mics/ui'
 import type {
   CatalogCategory,
@@ -33,6 +33,7 @@ import type {
 } from '@mics/ui'
 
 const ctx = usePluginContext()
+const openExternal = useOpenExternal()
 
 const CHANNEL_LABELS = {
   release: '正式版',
@@ -245,6 +246,7 @@ async function install(name: string): Promise<void> {
     :search="search"
     :fetch-versions="fetchVersions"
     :fetch-project="fetchProject"
+    :open-external="openExternal"
     @open="onOpen"
     @install="openInstall"
     @settings="openDownloadSettings"

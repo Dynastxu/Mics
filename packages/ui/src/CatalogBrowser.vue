@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { MOD_SOURCE_LABELS, isModSourceKind } from '@mics/sdk'
 import BackToTop from './BackToTop.vue'
 import CatalogCard from './CatalogCard.vue'
 import DataBrowser from './DataBrowser.vue'
 import FilterButton from './FilterButton.vue'
 import FilterPanel from './FilterPanel.vue'
 import ListPager from './ListPager.vue'
-import { formatDownloads } from './catalog'
+import { formatDownloads, originalNameOf } from './catalog'
+import { copyText } from './clipboard'
 import { isFilterActive } from './list'
 import type {
   CatalogCategory,
@@ -56,6 +58,14 @@ const props = withDefaults(
     fetchProject?: (item: CatalogItem) => Promise<CatalogItem>
     /** 从其它页面跳进来时的一次性意图 */
     intent?: CatalogIntent | null
+    /**
+     * 用系统浏览器打开链接。
+     *
+     * 页面应当传入自己插件的实现（`host/openExternal` + 清单里的
+     * `shell:openExternal` 权限）；缺省时退回 `window.open`，由 Electron 外壳
+     * 转交系统浏览器。
+     */
+    openExternal?: (url: string) => void | Promise<void>
   }>(),
   {
     entityLabel: '项目',
@@ -259,6 +269,49 @@ const backTitle = computed(() => {
   if (!origin) return ''
   return origin.label ? `返回${origin.label}` : '返回来源页面'
 })
+
+/** 详情页操作行：复制名称与去来源网站 */
+const copiedName = ref(false)
+const actionError = ref('')
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 名称原文：翻译插件只改写 `name`，「复制名称」必须用未翻译的英文名 */
+const projectName = computed(() => (activeItem.value ? originalNameOf(activeItem.value) : ''))
+
+/** 来源显示名；只按项目实际所在的平台显示「转到 X」 */
+const projectSourceLabel = computed(() => {
+  const source = activeItem.value?.source
+  if (!source) return ''
+  return isModSourceKind(source) ? MOD_SOURCE_LABELS[source] : source
+})
+
+async function openProjectPage(): Promise<void> {
+  const url = activeItem.value?.url
+  if (!url) return
+  actionError.value = ''
+  try {
+    if (props.openExternal) await props.openExternal(url)
+    else window.open(url, '_blank', 'noopener,noreferrer')
+  } catch (cause) {
+    actionError.value = `打开链接失败：${cause instanceof Error ? cause.message : String(cause)}`
+  }
+}
+
+async function copyProjectName(): Promise<void> {
+  const value = projectName.value
+  if (!value) return
+  actionError.value = ''
+  if (!(await copyText(value))) {
+    actionError.value = '复制失败：当前环境不支持剪贴板'
+    return
+  }
+  copiedName.value = true
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => {
+    copiedName.value = false
+    copiedTimer = null
+  }, 1500)
+}
 
 /** 详情页筛选不继承搜索页的版本/加载器限制，选项始终来自全部版本 */
 const versionFilterGroups = computed<FilterGroup[]>(() => {
@@ -506,6 +559,8 @@ function openItem(item: CatalogItem, options: CatalogOpenOptions = {}): void {
   pendingScrollTop = null
   showBackToTop.value = false
   detailIconFailed.value = false
+  copiedName.value = false
+  actionError.value = ''
   activeItem.value = item
   externalOrigin.value = options.origin ?? null
   selectedVersionId.value = ''
@@ -586,6 +641,8 @@ function closeToSearch(): void {
   versions.value = []
   versionError.value = ''
   selectedVersionId.value = ''
+  copiedName.value = false
+  actionError.value = ''
 
   const top = searchScrollTop
   void nextTick(() => {
@@ -740,6 +797,10 @@ onBeforeUnmount(() => {
   pageScrollEl?.removeEventListener('scroll', onPageScroll)
   pageScrollEl = null
   if (searchTimer) clearTimeout(searchTimer)
+  if (copiedTimer) {
+    clearTimeout(copiedTimer)
+    copiedTimer = null
+  }
   searchSeq += 1
   versionSeq += 1
 })
@@ -826,6 +887,64 @@ defineExpose({
           <p class="catalog-detail__summary">{{ activeItem.summary }}</p>
         </div>
       </header>
+
+      <!-- 详情操作行：#detail-actions 供页面追加自己的按钮，默认内容固定在左侧 -->
+      <div class="catalog-detail__actions">
+        <!-- 只出现项目实际所在平台的入口，避免给出另一个平台上并不存在的项目 -->
+        <button
+          v-if="activeItem.url"
+          class="mics-button mics-button--ghost mics-button--small"
+          type="button"
+          :title="`在浏览器打开 ${projectSourceLabel} 项目页`"
+          @click="openProjectPage"
+        >
+          转到 {{ projectSourceLabel }}
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M14 4h6v6" />
+            <path d="m20 4-10 10" />
+            <path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6" />
+          </svg>
+        </button>
+        <button
+          class="mics-button mics-button--ghost mics-button--small"
+          type="button"
+          :title="`复制名称原文：${projectName}`"
+          @click="copyProjectName"
+        >
+          {{ copiedName ? '已复制' : '复制名称' }}
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M15 5H6a2 2 0 0 0-2 2v9" />
+          </svg>
+        </button>
+        <slot
+          name="detail-actions"
+          :item="activeItem"
+          :project-name="projectName"
+          :copy-name="copyProjectName"
+        />
+      </div>
+      <p v-if="actionError" class="mics-notice catalog-notice--error">{{ actionError }}</p>
 
       <div v-if="versionLoading" class="mics-empty">正在获取版本列表…</div>
       <div v-else-if="versionError" class="mics-empty mics-empty--error">
@@ -987,6 +1106,14 @@ defineExpose({
   flex-direction: column;
   gap: 6px;
   margin-top: 2px;
+}
+
+/* 详情操作行：左对齐，页面追加的按钮与默认按钮同一行、同一间距 */
+.catalog-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .catalog-detail__icon,

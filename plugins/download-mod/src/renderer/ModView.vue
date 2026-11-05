@@ -13,7 +13,7 @@ import type {
   GameVersion,
   NotificationsServiceApi
 } from '@mics/sdk'
-import { usePluginContext } from '@mics/sdk/renderer'
+import { usePluginContext, useOpenExternal } from '@mics/sdk/renderer'
 import { CatalogBrowser } from '@mics/ui'
 import type {
   CatalogCategory,
@@ -29,6 +29,7 @@ import type {
 import ModInstallDialog from './ModInstallDialog.vue'
 
 const ctx = usePluginContext()
+const openExternal = useOpenExternal()
 
 const CHANNEL_LABELS = {
   release: '正式版',
@@ -230,6 +231,7 @@ function onInstallStarted(_jobId: string, instanceCount: number): void {
     :search="search"
     :fetch-versions="fetchVersions"
     :fetch-project="fetchProject"
+    :open-external="openExternal"
     @install="openInstall"
     @settings="openDownloadSettings"
     @back="leaveToOrigin"
