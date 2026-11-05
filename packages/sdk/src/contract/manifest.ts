@@ -136,4 +136,16 @@ export interface PluginManifest {
    * 例如插件管理页本身；core 用于内核级插件。
    */
   essential?: boolean
+  /**
+   * 实验性插件：插件管理页标注，便于用户识别功能尚未稳定。
+   *
+   * 只影响展示；是否默认关闭由 `defaultDisabled` 单独决定。
+   */
+  experimental?: boolean
+  /**
+   * 默认关闭：首次出现时禁用，用户显式启用后写入 `enabled-plugins.json`。
+   *
+   * 与 `core` / `essential` 冲突时以后者为准——必需插件不能默认关闭。
+   */
+  defaultDisabled?: boolean
 }

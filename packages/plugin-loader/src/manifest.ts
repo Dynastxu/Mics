@@ -255,6 +255,8 @@ export function validateManifest(raw: unknown): ValidationResult {
   if (isStringArray(raw.keywords)) manifest.keywords = raw.keywords
   if (raw.core === true) manifest.core = true
   if (raw.essential === true) manifest.essential = true
+  if (raw.experimental === true) manifest.experimental = true
+  if (raw.defaultDisabled === true) manifest.defaultDisabled = true
 
   for (const field of ['main', 'renderer', 'uninstall'] as const) {
     const value = raw[field]

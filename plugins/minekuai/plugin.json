@@ -1,0 +1,75 @@
+{
+  "id": "mics.minekuai",
+  "name": "麦块开放API",
+  "version": "0.1.0",
+  "description": "通过麦块公共 API 查询 Mod / 整合包 / 资源包 / 光影包 / 数据包的英文名称与描述；只有英文与来源原文完全一致时才采用中文翻译，否则保留原文。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "experimental": true,
+  "defaultDisabled": true,
+  "dependencies": ["mics.kernel"],
+  "contributes": {
+    "configuration": {
+      "title": "麦块开放API",
+      "description": "目录文案的翻译来源；关闭后目录保留原文，RPC 查询仍然可用。",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "启用目录翻译",
+          "description": "在目录中显示中文名称与描述；英文与原文不完全一致时自动回退原文",
+          "default": true
+        },
+        "baseUrl": {
+          "type": "string",
+          "title": "API 根地址",
+          "description": "麦块公共 API 的根地址；使用自建代理时改这里",
+          "default": "https://api.minekuai.cn"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "title": "单次查询超时",
+          "default": 5000,
+          "minimum": 500,
+          "maximum": 15000,
+          "unit": "毫秒"
+        },
+        "budgetMs": {
+          "type": "integer",
+          "title": "目录等待预算",
+          "description": "一次目录请求最多等待翻译多久；超时后未命中的条目保留原文",
+          "default": 3500,
+          "minimum": 500,
+          "maximum": 15000,
+          "unit": "毫秒"
+        },
+        "cacheTtlMinutes": {
+          "type": "integer",
+          "title": "查询缓存",
+          "description": "麦块查询结果与译文在内存中保留多久",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 10080,
+          "unit": "分钟"
+        },
+        "maxCandidates": {
+          "type": "integer",
+          "title": "候选数量",
+          "description": "按英文名称查询时最多比对多少条结果",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 50,
+          "unit": "条"
+        },
+        "concurrency": {
+          "type": "integer",
+          "title": "并发查询",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 8,
+          "unit": "个"
+        }
+      }
+    }
+  }
+}

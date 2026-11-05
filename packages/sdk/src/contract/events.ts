@@ -1,6 +1,7 @@
 import type { Context } from 'cordis'
 import type { CapabilityProviderInfo } from './capability'
 import type { PluginId } from './manifest'
+import type { ModProjectKind, ModSourceKind } from './mod'
 import type { RpcRequest, RpcResponse } from './runtime'
 
 /**
@@ -33,6 +34,23 @@ export interface PluginActivationVerdict {
   allow: boolean
   /** 拒绝原因；会进入插件失败态与诊断信息 */
   reason?: string
+}
+
+/**
+ * 目录项目的展示文案。
+ *
+ * Mod / 整合包 / 资源包 / 光影包 / 数据包共用同一种摘要，`id` 是
+ * `${source}:${projectId}` 的跨来源稳定键；`name` 与 `summary` 是来源返回的
+ * 原文，翻译插件只能改写这份展示副本，不能反向影响缓存、搜索或指纹识别。
+ */
+export interface CatalogDescriptor {
+  kind: ModProjectKind
+  id: string
+  source: ModSourceKind
+  projectId: string
+  slug: string
+  name: string
+  summary: string
 }
 
 /**
@@ -75,6 +93,18 @@ export interface MicsEvents {
 
   /** 通知：导航切换到指定页面；插件可在页面重新可见时刷新数据。 */
   'ui/viewActivated'(viewId: string): void
+
+  /**
+   * 改写目录项目的名称/描述（`waterfall`）。
+   *
+   * 派发点在主进程的目录 RPC 边界，缓存仍然保存来源原文：监听器只拿到一份
+   * 展示副本，返回改写后的副本即可，未命中时原样返回 `next()`。监听器必须
+   * 调用 `next()`，否则后面的监听器不会执行；抛出的异常由派发方吞掉并回退原文。
+   */
+  'catalog/describe'(
+    descriptor: CatalogDescriptor,
+    next: () => Promise<CatalogDescriptor>
+  ): Promise<CatalogDescriptor>
 }
 
 /**
@@ -91,7 +121,8 @@ export const EVENT_MODES = {
   'ipc/before': 'waterfall',
   'ipc/after': 'emit',
   'capability/changed': 'emit',
-  'ui/viewActivated': 'emit'
+  'ui/viewActivated': 'emit',
+  'catalog/describe': 'waterfall'
 } as const satisfies Record<keyof MicsEvents, EventDispatchMode>
 
 export type MicsEventName = keyof MicsEvents

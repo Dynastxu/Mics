@@ -48,7 +48,8 @@ pending（代码没有执行）。它不是安装状态，界面只在插件管�
 <应用目录>/resources/plugins/<id>/   内置，只读
 <用户数据>/plugins/<id>/             第三方，可写
 <用户数据>/plugins/.staging/         安装暂存目录（以 . 开头，扫描时跳过）
-<用户数据>/disabled-plugins.json     禁用状态
+<用户数据>/disabled-plugins.json     用户禁用的插件
+<用户数据>/enabled-plugins.json      用户显式启用的「默认关闭」插件
 <用户数据>/plugin-storage/<id>.json  插件自己的设置/状态
 ```
 
@@ -69,6 +70,21 @@ pending（代码没有执行）。它不是安装状态，界面只在插件管�
 
 `core` / `essential` 标记的插件（内核、插件管理、日志等）**连禁用也不行**：
 禁用开关在界面上锁住，宿主层也会拒绝，避免用户把自己锁在门外。
+
+### 实验性与默认关闭
+
+清单可以声明两个展示/初始状态字段：
+
+| 字段              | 作用                                                      |
+| ----------------- | --------------------------------------------------------- |
+| `experimental`    | 插件管理页显示「实验性」徽章，只影响展示                  |
+| `defaultDisabled` | 首次出现时默认禁用；用户启用后写入 `enabled-plugins.json` |
+
+`defaultDisabled` 只决定初始状态：用户在插件管理页打开开关后，内核把 id 记入
+`enabled-plugins.json`，之后重启保持启用；关闭开关会删除该记录并写回
+`disabled-plugins.json`。profile 的 `disable` / `enable` 仍然优先于默认值；
+`core` / `essential` 永远不能默认关闭。第三方安装的插件本来就会先禁用，
+`defaultDisabled` 主要给内置的实验性插件使用。
 
 ## 3. 安装
 

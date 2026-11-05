@@ -124,6 +124,7 @@ import {
 import type { LoaderEnvironment } from './loaders/types'
 import { mergeVersion, stripClientChecksum, joinBase, mavenPath } from './version'
 import type { VersionArtifact, VersionDetail, VersionLibrary } from './version'
+import { describeResponse } from './describe'
 
 let taskSeq = 0
 let jobSeq = 0
@@ -4354,6 +4355,17 @@ export function apply(ctx: Context): void {
     void prepareJob(job, { ...request, gameVersion, loader }).catch(() => undefined)
 
     return { jobId: job.id }
+  })
+
+  // 目录 RPC 返回前给 `catalog/describe` 一次改写展示文案的机会。缓存里仍然
+  // 是来源原文（describe.ts 只在副本上改写），翻译插件禁用时没有监听器，
+  // 事件原样返回，调用方不会感知到这一层。
+  ctx.on('ipc/before', async (request, next) => {
+    const response = await next()
+    if (!response.ok || request.target !== name) return response
+    return describeResponse(ctx, request, response, (message, ...args) =>
+      log.debug(message, ...args)
+    )
   })
 }
 

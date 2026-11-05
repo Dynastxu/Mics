@@ -61,7 +61,7 @@ cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式
 | ----------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `emit`      | 通知，同步执行，返回值丢弃                | `plugins/changed`、`plugin/activated`、`plugin/deactivated`、`ipc/after`、`capability/changed` |
 | `bail`      | 同步投票，第一个非空返回值即结论          | `plugin/beforeActivate`（审批：`{ allow: false, reason }` 拒绝激活）                           |
-| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认）                                                     |
+| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认）、`catalog/describe`（目录名称/描述的翻译扩展）      |
 | `serial`    | 串行等待，遇到第一个结论即停止            | 暂无（需要异步审批时使用）                                                                     |
 | `parallel`  | 扇出，等全部监听器完成                    | 暂无（纯并行的收尾工作使用）                                                                   |
 
@@ -74,6 +74,10 @@ cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式
   实际派发模式与声明不符时打 warning；生产构建不挂这个审计。
 
 这样「`emit` 之后有没有人改返回值」不需要读派发点猜，类型和声明会直接回答。
+
+`catalog/describe` 是目录文案的扩展点：下载管线在主进程返回目录 RPC 之前派发，
+监听器按来源原文改写名称/描述；未命中时原样返回 `next()`。缓存、搜索与指纹识别
+仍然只看到原文，派发方会吞掉监听器异常并回退原文，翻译插件不能阻断目录打开。
 
 ### 跨进程事件（`ipc:` topic）
 
@@ -429,6 +433,7 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 | `profiles/`             | `boot.config.json` 指向的 profile                                                              | 内核                           |
 | `cordis.yml`            | 插件树：每个主进程插件的入口、配置与 `disabled`（Include 写回）                                | 内核（Include）                |
 | `disabled-plugins.json` | 纯渲染插件（没有主进程入口）的开关；其余开关已并入 `cordis.yml`                                | 内核                           |
+| `enabled-plugins.json`  | 用户显式启用的「默认关闭」插件；没有记录时按清单的 `defaultDisabled` 处理                      | 内核                           |
 
 游戏数据与应用数据分开放：`.minecraft` 可以整目录备份或搬到别的盘，而 `plugins` /
 `logs` / `profiles` / `cache` 是启动器自己的东西。插件在根下新增目录前先确认没有

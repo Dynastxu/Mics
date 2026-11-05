@@ -190,6 +190,13 @@ export class PluginsService extends Service {
   private readonly disabled = new Set<PluginId>()
   /** 用户自己切换出来的禁用集合；持久化到 disabled-plugins.json */
   private readonly userDisabled = new Set<PluginId>()
+  /**
+   * 用户显式启用的「默认关闭」插件；持久化到 enabled-plugins.json。
+   *
+   * 只记录对有 `defaultDisabled` 清单的插件的正向选择，普通插件启用不需要
+   * 写文件——它们本来默认就是启用的。
+   */
+  private readonly userEnabled = new Set<PluginId>()
   /** 最近一次扫描里失败的目录；清单非法时插件不会进入 entries，只能从这里看到 */
   private scanIssues: ScanError[] = []
 
@@ -218,10 +225,7 @@ export class PluginsService extends Service {
      */
     const onPatchContext = this.baseCtx.on as unknown as (
       name: string,
-      listener: (
-        entry: { ctx: Context; options: { id: string } },
-        next: () => unknown
-      ) => unknown
+      listener: (entry: { ctx: Context; options: { id: string } }, next: () => unknown) => unknown
     ) => () => void
     onPatchContext('loader/patch-context', (entry, next) => {
       ;(entry.ctx as unknown as Record<symbol, string>)[PLUGIN_ID] = entry.options.id
@@ -240,6 +244,7 @@ export class PluginsService extends Service {
     // 禁用来源：用户开关（文件）、部署静态声明、以及 profile 的强制集合。
     // 用户集合单独保存，profile 变化时只需要重新合并，不会污染用户选择。
     for (const id of this.readDisabled()) this.userDisabled.add(id)
+    for (const id of this.readEnabled()) this.userEnabled.add(id)
     this.rebuildEffectiveDisabled()
 
     for (const [id, entry] of this.entries) {
@@ -278,6 +283,7 @@ export class PluginsService extends Service {
     }
 
     this.persistDisabled()
+    this.persistEnabled()
     this.syncHost()
   }
 
@@ -314,8 +320,7 @@ export class PluginsService extends Service {
     // 真 HMR 在跑时交给它：两套监视同时生效会重复重载
     if (this.baseCtx.get('hmr')) return
     const fs = this.baseCtx.get('fs') as
-      | { watch?(file: string, listener: (file: string) => void): unknown }
-      | undefined
+      { watch?(file: string, listener: (file: string) => void): unknown } | undefined
     if (!fs?.watch) {
       this.baseCtx.logger('plugins').debug('fs 服务不可用，插件产物自动重载未启用')
       return
@@ -636,8 +641,10 @@ export class PluginsService extends Service {
       }
 
       this.userDisabled.add(id)
+      this.userEnabled.delete(id)
       this.rebuildEffectiveDisabled()
       this.persistDisabled()
+      this.persistEnabled()
 
       const loader = this.loaderService()
       if (loader?.update) {
@@ -676,8 +683,11 @@ export class PluginsService extends Service {
         throw new Error(`profile ${this.config.profile?.name} 禁用了插件 ${id}，不能启用`)
       }
       this.userDisabled.delete(id)
+      // 默认关闭的插件必须记住这次正向选择，否则下一次 rebuild 又会把它禁用
+      if (entry.record.manifest.defaultDisabled) this.userEnabled.add(id)
       this.rebuildEffectiveDisabled()
       this.persistDisabled()
+      this.persistEnabled()
       entry.failure = undefined
       const loader = this.loaderService()
       if (loader?.update) {
@@ -808,7 +818,9 @@ export class PluginsService extends Service {
         }
 
         this.userDisabled.add(installed.record.manifest.id)
+        this.userEnabled.delete(installed.record.manifest.id)
         this.rebuildEffectiveDisabled()
+        this.persistEnabled()
         await this.rescan()
         const summary = this.summarize(installed.record, preview.installedVersion)
         this.baseCtx
@@ -844,8 +856,10 @@ export class PluginsService extends Service {
 
         // 先落禁用：即使后面失败，它也保持「已安装但已禁用」，不会自己跑起来
         this.userDisabled.add(id)
+        this.userEnabled.delete(id)
         this.rebuildEffectiveDisabled()
         this.persistDisabled()
+        this.persistEnabled()
         const log = this.baseCtx.logger('plugins')
         log.info('正在卸载插件 %s%s', id, options.force ? '（跳过卸载脚本）' : '')
         const timedOut = await this.stop(entry)
@@ -1207,10 +1221,7 @@ export class PluginsService extends Service {
       } catch (error) {
         this.recordFailure(
           entry,
-          new PluginFailureError(
-            'import',
-            `挂载 ${record.manifest.id} 失败：${toMessage(error)}`
-          )
+          new PluginFailureError('import', `挂载 ${record.manifest.id} 失败：${toMessage(error)}`)
         )
       }
     }
@@ -1313,12 +1324,18 @@ export class PluginsService extends Service {
       const id = entry.record.manifest.id
       if (!known.has(id)) continue
       if (state.disabled.has(id)) {
+        if (this.userEnabled.delete(id)) changed = true
         if (!this.userDisabled.has(id)) {
           this.userDisabled.add(id)
           changed = true
         }
-      } else if (this.userDisabled.delete(id)) {
-        changed = true
+      } else {
+        if (this.userDisabled.delete(id)) changed = true
+        // 树里是启用态：默认关闭插件要把这次选择记成用户启用，否则下次合并又会被关掉
+        if (entry.record.manifest.defaultDisabled && !this.userEnabled.has(id)) {
+          this.userEnabled.add(id)
+          changed = true
+        }
       }
     }
     this.rebuildEffectiveDisabled()
@@ -1327,8 +1344,12 @@ export class PluginsService extends Service {
       if (!this.disabled.has(id) || !this.isLocked(entry)) continue
       this.disabled.delete(id)
       this.userDisabled.delete(id)
+      this.userEnabled.delete(id)
     }
-    if (changed) this.persistDisabled()
+    if (changed) {
+      this.persistDisabled()
+      this.persistEnabled()
+    }
   }
 
   /** 把当前树写回 cordis.yml；查询串一律不落盘 */
@@ -1543,6 +1564,7 @@ export class PluginsService extends Service {
       }
       this.entries.delete(id)
       this.userDisabled.delete(id)
+      this.userEnabled.delete(id)
       this.disabled.delete(id)
       this.forgetStorage(id)
     }
@@ -1561,7 +1583,12 @@ export class PluginsService extends Service {
           state: this.disabled.has(id) ? 'disabled' : 'discovered'
         })
       }
+      // 清单不再声明默认关闭时，删掉旧的显式启用记录
+      if (!record.manifest.defaultDisabled) this.userEnabled.delete(id)
     }
+
+    // 新条目加入 entries 后才能按 manifest.defaultDisabled 合并第二次
+    this.rebuildEffectiveDisabled()
 
     // 让状态与禁用集合对齐（升级后保持禁用、启用后不再显示禁用）
     for (const [id, entry] of this.entries) {
@@ -1580,6 +1607,7 @@ export class PluginsService extends Service {
     // 目录集合变了：让 Loader 树与 entries 对齐并落盘
     await this.syncTree()
     this.persistDisabled()
+    this.persistEnabled()
     this.syncHost()
     this.notify()
     this.baseCtx
@@ -1660,13 +1688,14 @@ export class PluginsService extends Service {
   }
 
   /**
-   * 合并三处禁用来源：
+   * 合并禁用来源：
    *   1. boot.config.disabled（部署静态）
    *   2. disabled-plugins.json（用户开关）
-   *   3. profile.disable / profile.enable（部署 profile）
+   *   3. manifest.defaultDisabled（插件默认关闭，`enabled-plugins.json` 可解除）
+   *   4. profile.disable / profile.enable（部署 profile）
    *
-   * 优先级：profile.disable > profile.enable > boot/user。core / essential
-   * 永远不可禁用，因此会从结果里剔除并清掉对应用户记录。
+   * 优先级：profile.disable > profile.enable > 默认关闭 > boot/user。
+   * core / essential 永远不可禁用，因此会从结果里剔除并清掉对应用户记录。
    */
   private rebuildEffectiveDisabled(): void {
     const profile = this.config.profile
@@ -1676,6 +1705,12 @@ export class PluginsService extends Service {
     const effective = new Set<PluginId>()
     for (const id of this.config.disabled) effective.add(id)
     for (const id of this.userDisabled) effective.add(id)
+    // 实验性 / 预览插件：首次出现时默认关闭，用户显式启用后跳过
+    for (const [id, entry] of this.entries) {
+      if (!entry.record.manifest.defaultDisabled) continue
+      if (this.userEnabled.has(id)) continue
+      effective.add(id)
+    }
     for (const id of disable) effective.add(id)
     for (const id of enable) effective.delete(id)
     // disable 与 enable 同时出现时 disable 优先
@@ -1686,6 +1721,7 @@ export class PluginsService extends Service {
       if (!this.isLocked(entry)) continue
       effective.delete(id)
       this.userDisabled.delete(id)
+      this.userEnabled.delete(id)
     }
 
     this.disabled.clear()
@@ -1814,6 +1850,31 @@ export class PluginsService extends Service {
       writeFileSync(this.disabledFile(), JSON.stringify([...this.userDisabled], null, 2), 'utf8')
     } catch (error) {
       this.baseCtx.logger('plugins').warn(`保存禁用列表失败：${toMessage(error)}`)
+    }
+  }
+
+  private enabledFile(): string {
+    return path.join(this.config.userDataDir, 'enabled-plugins.json')
+  }
+
+  private readEnabled(): PluginId[] {
+    try {
+      const parsed = JSON.parse(readFileSync(this.enabledFile(), 'utf8')) as unknown
+      return Array.isArray(parsed)
+        ? parsed.filter((id): id is string => typeof id === 'string')
+        : []
+    } catch {
+      return []
+    }
+  }
+
+  private persistEnabled(): void {
+    try {
+      mkdirSync(path.dirname(this.enabledFile()), { recursive: true })
+      // 只记录对 defaultDisabled 插件的显式启用；普通插件启用不需要写文件
+      writeFileSync(this.enabledFile(), JSON.stringify([...this.userEnabled], null, 2), 'utf8')
+    } catch (error) {
+      this.baseCtx.logger('plugins').warn(`保存启用列表失败：${toMessage(error)}`)
     }
   }
 }

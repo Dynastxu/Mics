@@ -157,6 +157,7 @@ const rows = computed<ListRow[]>(() =>
       badges: [
         { label: plugin.source === 'builtin' ? '内置' : '第三方' },
         ...formBadges(plugin),
+        ...(plugin.manifest.experimental ? [{ label: '实验性', accent: true }] : []),
         ...(plugin.core ? [{ label: 'core' }] : []),
         ...(plugin.essential ? [{ label: '必需' }] : []),
         ...(plugin.profileLocked
@@ -567,7 +568,12 @@ onBeforeUnmount(() => {
     <section v-else class="inspector__detail">
       <header class="inspector__detail-head">
         <div>
-          <h2 class="inspector__detail-title">{{ selectedInfo?.name }}</h2>
+          <div class="inspector__detail-heading">
+            <h2 class="inspector__detail-title">{{ selectedInfo?.name }}</h2>
+            <span v-if="selectedInfo?.manifest.experimental" class="mics-badge mics-badge--accent">
+              实验性
+            </span>
+          </div>
           <p class="inspector__detail-meta mics-mono">
             {{ selectedInfo?.id }} · v{{ selectedInfo?.version }}
           </p>
@@ -857,6 +863,13 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.inspector__detail-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .inspector__detail-title {
