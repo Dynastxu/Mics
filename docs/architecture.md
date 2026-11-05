@@ -79,10 +79,10 @@ cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式
 
 事件有两层，不能混：
 
-| 层 | 用法 | 能跨进程吗 |
-| --- | --- | --- |
-| Cordis 事件 | `ctx.emit` / `waterfall` / `bail` / `serial` / `parallel`，上面的 `EVENT_MODES` | 不能：参数里有 `next()`、`ctx`，不可序列化 |
-| Runtime topic | `ctx.ipc.emit/on`，payload 必须可序列化 | 能：主进程经 `mics:event` 广播到每个窗口 |
+| 层            | 用法                                                                            | 能跨进程吗                                 |
+| ------------- | ------------------------------------------------------------------------------- | ------------------------------------------ |
+| Cordis 事件   | `ctx.emit` / `waterfall` / `bail` / `serial` / `parallel`，上面的 `EVENT_MODES` | 不能：参数里有 `next()`、`ctx`，不可序列化 |
+| Runtime topic | `ctx.ipc.emit/on`，payload 必须可序列化                                         | 能：主进程经 `mics:event` 广播到每个窗口   |
 
 两者靠**前缀**区分：topic 一律以 `ipc:` 开头。
 
@@ -171,7 +171,10 @@ Service 是「一个名字一个实现」，而有些能力需要**多份实现*
 
 - 设置界面：插件管理页的插件详情通过 `configuration/list|set|reset` 渲染简单类型；
   设置项多或需要专门界面的插件用 `settingsView` 指向自己的页面，详情里只给入口，
-  双方共享同一套 schema 校验。
+  双方共享同一套 schema 校验。所有设置页统一用 `@mics/ui` 的
+  `SettingsPage` / `SettingsGroup` / `SettingsRow` 三层模板，其它插件可以通过
+  `ctx.ui.registerSettingsGroup({ pageId, ... })` 往任意设置页追加分组。
+  见 [settings-ui.md](settings-ui.md)。
 - profile：`boot.config.json` 的 `profile` 指向 `userData/profiles/<name>.json`。
   `enable` / `disable` 是强制开关（`disable` 优先），`settings` 是 schema 原始类型键的
   默认值（用户保存过的值优先）。
@@ -379,13 +382,13 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 
 - **状态**（目录是「已安装」的唯一事实来源）：
 
-  | 状态     | 含义                                                          | 界面                         |
-  | -------- | ------------------------------------------------------------- | ---------------------------- |
-  | 启用     | 目录在、entry 的 fiber active                                 | 开关打开                     |
-  | 等待依赖 | entry 在、fiber pending：`inject` 的服务没人提供              | 徽标「等待依赖」+ 缺哪些服务 |
-  | 禁用     | 目录在、entry `disabled: true`（写回 `cordis.yml`）           | 开关关闭                     |
-  | 失败     | entry 在、没有 fiber（import 失败）或 `apply` 抛错            | 红色徽标 + 错误              |
-  | 未安装   | 目录不存在                                                    | **不显示**（不是第五种开关） |
+  | 状态     | 含义                                                | 界面                         |
+  | -------- | --------------------------------------------------- | ---------------------------- |
+  | 启用     | 目录在、entry 的 fiber active                       | 开关打开                     |
+  | 等待依赖 | entry 在、fiber pending：`inject` 的服务没人提供    | 徽标「等待依赖」+ 缺哪些服务 |
+  | 禁用     | 目录在、entry `disabled: true`（写回 `cordis.yml`） | 开关关闭                     |
+  | 失败     | entry 在、没有 fiber（import 失败）或 `apply` 抛错  | 红色徽标 + 错误              |
+  | 未安装   | 目录不存在                                          | **不显示**（不是第五种开关） |
 
 - **状态来源**：`entry.fiber.state` 与 `entry.disabled` 是唯一事实，内核只做映射
   （`applyFiberState`）。状态变化来自 fiber 的 `internal/status`，不靠轮询。
@@ -411,22 +414,22 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 `app.getPath('userData')`（Windows 上是 `%APPDATA%\Mics\`，目录名由 `productName` 决定）
 是唯一的可写根：
 
-| 目录                                 | 内容                                                                                           | 归属                           |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------ |
-| `.minecraft/`                        | 游戏根，结构对齐原版启动器：`versions/`、`libraries/`、`assets/`，见下                         | 下载管线（写）/ 启动管线（读） |
-| `cache/downloads/`                   | 按 URL / sha1 复用的下载缓存；大文件分段的断点状态以 `.part.segments.json` 与 `.part` 相邻存放 | 下载管线                       |
-| `plugins/`                           | 第三方插件本体                                                                                 | 插件管理                       |
-| `logs/`                              | 每次启动一个 `mics-<时间>.log`                                                                 | 日志插件                       |
-| `profiles/`                          | `boot.config.json` 指向的 profile                                                              | 内核                           |
-| `cordis.yml`                         | 插件树：每个主进程插件的入口、配置与 `disabled`（Include 写回）                                 | 内核（Include）                |
-| `disabled-plugins.json`              | 纯渲染插件（没有主进程入口）的开关；其余开关已并入 `cordis.yml`                                | 内核                           |
+| 目录                    | 内容                                                                                           | 归属                           |
+| ----------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------ |
+| `.minecraft/`           | 游戏根，结构对齐原版启动器：`versions/`、`libraries/`、`assets/`，见下                         | 下载管线（写）/ 启动管线（读） |
+| `cache/downloads/`      | 按 URL / sha1 复用的下载缓存；大文件分段的断点状态以 `.part.segments.json` 与 `.part` 相邻存放 | 下载管线                       |
+| `plugins/`              | 第三方插件本体                                                                                 | 插件管理                       |
+| `logs/`                 | 每次启动一个 `mics-<时间>.log`                                                                 | 日志插件                       |
+| `profiles/`             | `boot.config.json` 指向的 profile                                                              | 内核                           |
+| `cordis.yml`            | 插件树：每个主进程插件的入口、配置与 `disabled`（Include 写回）                                | 内核（Include）                |
+| `disabled-plugins.json` | 纯渲染插件（没有主进程入口）的开关；其余开关已并入 `cordis.yml`                                | 内核                           |
 
 游戏数据与应用数据分开放：`.minecraft` 可以整目录备份或搬到别的盘，而 `plugins` /
 `logs` / `profiles` / `cache` 是启动器自己的东西。插件在根下新增目录前先确认没有
 其它归属方，避免两个插件写同一路径。
 
 下载管线的单文件传输默认一条 HTTP 连接；「下载设置 → 大文件分段」可对达到分段阈值
-的文件启用多条 Range 连接（阈值与连接数都在设置页按数字填写，默认 8 MB / 8 条，
+的文件启用多条 Range 连接（阈值与连接数都在设置页按数字填写，默认 1 MB / 8 条，
 1 条即关闭分段）。
 传输层先探测 `bytes=0-0`，只有服务端返回 206 与有效 `Content-Range` 时才分段；
 否则自动回退单连接。分段进度写在 `.part.segments.json`，暂停、失败与应用重启后

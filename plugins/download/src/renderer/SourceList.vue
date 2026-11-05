@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends { enabled: boolean }">
-import { ToggleSwitch } from '@mics/ui'
+import { SettingsGroup, ToggleSwitch } from '@mics/ui'
 
 defineProps<{
   items: T[]
@@ -29,34 +29,28 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <section class="mics-section">
-    <div class="settings-sources__head">
-      <div class="settings-sources__heading">
-        <h2 class="mics-section__title">{{ title }}</h2>
-        <span class="settings-sources__note">{{ note }}</span>
-      </div>
-      <div class="settings-sources__actions">
-        <button class="mics-button mics-button--ghost mics-button--small" @click="emit('add')">
-          添加源
-        </button>
-        <button
-          class="mics-button mics-button--ghost mics-button--small"
-          title="恢复默认值"
-          :disabled="isDefault"
-          @click="emit('reset')"
-        >
-          重置
-        </button>
-        <button
-          class="mics-button mics-button--small"
-          :class="saved ? 'mics-button--ghost' : 'mics-button--primary'"
-          :disabled="saved"
-          @click="emit('save')"
-        >
-          {{ saved ? '已保存' : '保存' }}
-        </button>
-      </div>
-    </div>
+  <SettingsGroup :title="title" :description="note" :form="false">
+    <template #actions>
+      <button class="mics-button mics-button--ghost mics-button--small" @click="emit('add')">
+        添加源
+      </button>
+      <button
+        class="mics-button mics-button--ghost mics-button--small"
+        title="恢复默认值"
+        :disabled="isDefault"
+        @click="emit('reset')"
+      >
+        重置
+      </button>
+      <button
+        class="mics-button mics-button--small"
+        :class="saved ? 'mics-button--ghost' : 'mics-button--primary'"
+        :disabled="saved"
+        @click="emit('save')"
+      >
+        {{ saved ? '已保存' : '保存' }}
+      </button>
+    </template>
 
     <div class="mics-list">
       <div v-if="items.length === 0" class="mics-empty">{{ emptyText }}</div>
@@ -161,38 +155,10 @@ const emit = defineEmits<{
         </div>
       </div>
     </div>
-  </section>
+  </SettingsGroup>
 </template>
 
 <style scoped>
-.settings-sources__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.settings-sources__heading {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.settings-sources__note {
-  color: var(--mics-fg-muted);
-  font-size: 11.5px;
-}
-
-.settings-sources__actions {
-  flex: none;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
 .settings-source {
   display: flex;
   align-items: center;

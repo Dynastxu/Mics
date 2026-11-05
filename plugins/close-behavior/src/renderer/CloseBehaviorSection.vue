@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Context } from 'cordis'
-import { ToggleSwitch } from '@mics/ui'
+import { usePluginContext } from '@mics/sdk/renderer'
+import { SettingsGroup, SettingsRow, ToggleSwitch } from '@mics/ui'
 import {
   CLOSE_ACTION_OPTIONS,
   CLOSE_BEHAVIOR_CHANGED,
@@ -14,13 +14,12 @@ import {
 } from '../shared'
 
 /**
- * 注册方传入自己的插件 Context。
+ * 这个组件由 close-behavior 自己注册到通用设置页。
  *
- * 这个组件渲染在 `mics.settings` 的通用页里，`usePluginContext()` 会拿到
- * mics.settings 的上下文；RPC 与事件必须用 close-behavior 自己的 ctx，
- * 否则 callerId 与监听器归属都会错。
+ * shell 在渲染追加分组时注入了注册方的作用域，因此这里拿到的就是
+ * close-behavior 自己的 ctx；RPC 的 callerId 与事件监听器归属都正确。
  */
-const props = defineProps<{ ctx: Context }>()
+const ctx = usePluginContext()
 
 const options = CLOSE_ACTION_OPTIONS
 const loading = ref(true)
@@ -50,7 +49,7 @@ function apply(settings: CloseSettings): void {
 
 async function load(): Promise<void> {
   try {
-    apply(await props.ctx.ipc.invoke<CloseSettings>('mics.close-behavior', 'settings/get'))
+    apply(await ctx.ipc.invoke<CloseSettings>('mics.close-behavior', 'settings/get'))
     error.value = ''
   } catch (cause) {
     error.value = messageOf(cause)
@@ -65,7 +64,7 @@ async function save(): Promise<void> {
   error.value = ''
   try {
     apply(
-      await props.ctx.ipc.invoke<CloseSettings>('mics.close-behavior', 'settings/set', {
+      await ctx.ipc.invoke<CloseSettings>('mics.close-behavior', 'settings/set', {
         closeAction: closeAction.value,
         lowMemoryTray: lowMemoryTray.value
       })
@@ -95,10 +94,10 @@ let offChanged: (() => void) | undefined
 
 onMounted(() => {
   // 通用页在页面栈里保持挂载：确认框勾选「不再提示」改了同一个值，重新可见时同步一次
-  offViewActivated = props.ctx.on('ui/viewActivated', (viewId: string) => {
+  offViewActivated = ctx.on('ui/viewActivated', (viewId: string) => {
     if (viewId === 'settings.general') void load()
   })
-  offChanged = props.ctx.on(CLOSE_BEHAVIOR_CHANGED, (settings) => {
+  offChanged = ctx.on(CLOSE_BEHAVIOR_CHANGED, (settings) => {
     if (saving.value) return
     if (!isCloseAction(settings?.closeAction)) return
     apply({
@@ -116,61 +115,35 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="close-behavior-section">
-    <p v-if="error" class="close-behavior__error">{{ error }}</p>
+  <SettingsGroup title="关闭与托盘" :loading="loading" :error="error">
+    <SettingsRow label="关闭主窗口时" :hint="runsInTray ? trayHint : undefined">
+      <select v-model="closeAction" class="mics-select" :disabled="saving" @change="save">
+        <option v-for="option in options" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
+      </select>
+      <template #actions>
+        <button
+          class="mics-button mics-button--ghost mics-button--small"
+          :disabled="saving || savedAction === DEFAULT_CLOSE_ACTION"
+          @click="reset"
+        >
+          重置
+        </button>
+      </template>
+    </SettingsRow>
 
-    <div v-if="loading" class="mics-empty">正在读取设置…</div>
-
-    <div v-else class="mics-form">
-      <div class="mics-field">
-        <div>
-          <div class="mics-field__label">关闭主窗口时</div>
-          <div v-if="runsInTray" class="mics-field__hint">{{ trayHint }}</div>
-        </div>
-        <div class="mics-field__control">
-          <select v-model="closeAction" class="mics-select" :disabled="saving" @change="save">
-            <option v-for="option in options" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </option>
-          </select>
-          <button
-            class="mics-button mics-button--ghost mics-button--small"
-            :disabled="saving || savedAction === DEFAULT_CLOSE_ACTION"
-            @click="reset"
-          >
-            重置
-          </button>
-        </div>
-      </div>
-
-      <div class="mics-field">
-        <div>
-          <div class="mics-field__label">低内存托盘模式</div>
-          <div class="mics-field__hint">
-            最小化到托盘时销毁主窗口以释放界面内存；恢复时重新加载，未提交的表单状态不会保留。
-          </div>
-        </div>
-        <div class="mics-field__control">
-          <ToggleSwitch
-            :model-value="lowMemoryTray"
-            :disabled="saving"
-            label="低内存托盘模式"
-            title="开启后最小化到托盘会销毁主窗口"
-            @update:model-value="setLowMemory"
-          />
-        </div>
-      </div>
-    </div>
-  </div>
+    <SettingsRow
+      label="低内存托盘模式"
+      hint="最小化到托盘时销毁主窗口以释放界面内存；恢复时重新加载，未提交的表单状态不会保留。"
+    >
+      <ToggleSwitch
+        :model-value="lowMemoryTray"
+        :disabled="saving"
+        label="低内存托盘模式"
+        title="开启后最小化到托盘会销毁主窗口"
+        @update:model-value="setLowMemory"
+      />
+    </SettingsRow>
+  </SettingsGroup>
 </template>
-
-<style scoped>
-.close-behavior__error {
-  margin: 0 0 10px;
-  padding: 9px 12px;
-  border: 1px solid var(--mics-danger);
-  border-radius: 8px;
-  color: var(--mics-danger);
-  font-size: 12px;
-}
-</style>

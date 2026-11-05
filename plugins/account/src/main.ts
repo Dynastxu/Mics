@@ -100,9 +100,6 @@ export function apply(ctx: Context): void {
 
   ctx.ipc.handle('accounts/list', (): AccountSnapshot => store.snapshot())
 
-  /** 正版登录是否已配置 Azure 应用；账户页据此在登录前给出提示 */
-  ctx.ipc.handle('accounts/config', () => ({ microsoftConfigured: microsoft.configured() }))
-
   ctx.ipc.handle<{ name?: string }>('accounts/offline', (params): AccountSummary => {
     const playerName = sanitizePlayerName(params?.name)
     const uuid = offlineUuid(playerName)

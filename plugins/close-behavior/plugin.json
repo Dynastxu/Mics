@@ -13,6 +13,7 @@
     "configuration": {
       "title": "关闭与托盘",
       "description": "关闭主窗口时的行为与低内存托盘模式",
+      "settingsView": "settings.general",
       "properties": {
         "closeAction": {
           "type": "enum",

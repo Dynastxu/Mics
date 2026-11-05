@@ -474,7 +474,7 @@ export const MIN_DOWNLOAD_SEGMENTS = 1
 export const MAX_DOWNLOAD_SEGMENTS = 16
 
 /** 分段阈值默认值（MB），最小 1 MB；只有达到该大小的文件才值得分段 */
-export const DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD = '8'
+export const DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD = '1'
 
 /** 分段阈值换算成字节时不会溢出的最大 MB 数 */
 const MAX_DOWNLOAD_SEGMENT_THRESHOLD_MB = Math.floor(Number.MAX_SAFE_INTEGER / 1024 / 1024)

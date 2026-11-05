@@ -8,6 +8,7 @@ import {
   normalizeLogMaxFiles
 } from '@mics/sdk'
 import type { LogStatus } from '@mics/sdk'
+import { SettingsGroup, SettingsRow } from '@mics/ui'
 
 const ctx = usePluginContext()
 const DEFAULT_MAX = String(DEFAULT_LOG_MAX_FILES)
@@ -72,70 +73,51 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="mics-page">
-    <header class="mics-page__header">
-      <h1 class="mics-page__title">日志设置</h1>
-    </header>
+  <SettingsGroup title="日志" :loading="loading" :error="error">
+    <SettingsRow
+      label="保留文件数"
+      :hint="`每次启动生成一个日志文件，超出后删除最旧的（${RANGE}）`"
+      html-for="logger-max-files"
+    >
+      <input
+        id="logger-max-files"
+        v-model="maxFiles"
+        class="mics-input"
+        inputmode="numeric"
+        @change="save"
+      />
+      <template #actions>
+        <button
+          class="mics-button mics-button--ghost mics-button--small"
+          title="恢复默认值"
+          :disabled="maxFiles === DEFAULT_MAX"
+          @click="reset"
+        >
+          重置
+        </button>
+      </template>
+    </SettingsRow>
 
-    <p v-if="error" class="logger__error">{{ error }}</p>
+    <SettingsRow label="日志目录">
+      <span class="mics-mono mics-muted logger__path" :title="directory">{{ directory }}</span>
+      <template #actions>
+        <button
+          class="mics-button mics-button--ghost mics-button--small"
+          :disabled="!directory"
+          @click="openDirectory"
+        >
+          打开目录
+        </button>
+      </template>
+    </SettingsRow>
 
-    <div v-if="loading" class="mics-empty">正在读取设置…</div>
-
-    <div v-else class="mics-form">
-      <div class="mics-field">
-        <div>
-          <div class="mics-field__label">最大保存数量</div>
-          <div class="mics-field__hint">
-            每次启动生成一个日志文件，超出后删除最旧的（{{ RANGE }}）
-          </div>
-        </div>
-        <div class="mics-field__control">
-          <input v-model="maxFiles" class="mics-input" inputmode="numeric" @change="save" />
-          <button
-            class="mics-button mics-button--ghost mics-button--small"
-            title="恢复默认值"
-            :disabled="maxFiles === DEFAULT_MAX"
-            @click="reset"
-          >
-            重置
-          </button>
-        </div>
-      </div>
-
-      <div class="mics-field">
-        <div class="mics-field__label">日志目录</div>
-        <div class="mics-field__control">
-          <span class="mics-mono mics-muted logger__path" :title="directory">{{ directory }}</span>
-          <button
-            class="mics-button mics-button--ghost mics-button--small"
-            :disabled="!directory"
-            @click="openDirectory"
-          >
-            打开目录
-          </button>
-        </div>
-      </div>
-
-      <div class="mics-field">
-        <div class="mics-field__label">当前日志</div>
-        <div class="mics-field__control">
-          <span class="mics-mono mics-muted logger__path" :title="file">{{ currentFile }}</span>
-        </div>
-      </div>
-    </div>
-  </div>
+    <SettingsRow label="当前日志">
+      <span class="mics-mono mics-muted logger__path" :title="file">{{ currentFile }}</span>
+    </SettingsRow>
+  </SettingsGroup>
 </template>
 
 <style scoped>
-.logger__error {
-  margin: 0;
-  padding: 9px 12px;
-  border: 1px solid var(--mics-danger);
-  border-radius: 8px;
-  color: var(--mics-danger);
-  font-size: 12px;
-}
-
 .logger__path {
   flex: 1;
   min-width: 0;

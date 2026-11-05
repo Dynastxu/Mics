@@ -105,17 +105,8 @@ export interface MinecraftIdentity {
 const MICROSOFT_CLIENT_ID = '6a84cdcd-c2f8-47d3-94eb-769bc10cefed'
 
 export class MicrosoftAuth {
-  /** 已注册 Mics 的 Azure 应用（Entra 个人账户），登录总是可用 */
-  configured(): boolean {
-    return true
-  }
-
-  private requireClientId(): string {
-    return MICROSOFT_CLIENT_ID
-  }
-
   async startDeviceCode(): Promise<DeviceCodeInfo> {
-    const clientId = this.requireClientId()
+    const clientId = MICROSOFT_CLIENT_ID
     const authority = authorityOf(clientId)
     const data = await requestJson<Record<string, unknown>>(AUTHORITIES[authority].deviceCode, {
       method: 'POST',
@@ -145,7 +136,7 @@ export class MicrosoftAuth {
 
   /** 轮询一次；仍在等待用户在浏览器里授权时返回 null */
   async pollDeviceCode(deviceCode: string): Promise<MicrosoftTokens | null> {
-    const clientId = this.requireClientId()
+    const clientId = MICROSOFT_CLIENT_ID
     try {
       const data = await requestJson<Record<string, unknown>>(
         AUTHORITIES[authorityOf(clientId)].token,
@@ -173,7 +164,7 @@ export class MicrosoftAuth {
   }
 
   async refresh(refreshToken: string): Promise<MicrosoftTokens> {
-    const clientId = this.requireClientId()
+    const clientId = MICROSOFT_CLIENT_ID
     const authority = authorityOf(clientId)
     let data: Record<string, unknown>
     try {

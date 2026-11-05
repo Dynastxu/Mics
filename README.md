@@ -49,15 +49,15 @@ pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
    ├─ 通用                  mics.settings
    ├─ 插件管理               mics.plugin-inspector
    ├─ 启动设置               mics.launch
-   ├─ 下载设置               mics.download
-   └─ 日志设置               mics.logger
+   └─ 下载设置               mics.download
 ```
 
 每一个叶子节点都是一个 `nav` 贡献，对应一个页面。分组本身由 `navGroups` 声明，
 子项由各插件独立挂载——新增一个下载分类只需要新增一个插件目录。
 
-「通用」页里还包含「关闭与托盘」区块，它不是独立页面，而是由 `mics.close-behavior`
-通过 `ctx.ui.registerSettingsSection()` 注册的设置区块——设置页不硬编码任何具体插件。
+「通用」页里还包含「关闭与托盘」「日志」等分组，它们不是独立页面，而是由各插件
+通过 `ctx.ui.registerSettingsGroup({ pageId: 'settings.general', ... })` 追加的分组——
+设置页不硬编码任何具体插件。
 
 窗口是无边框的：顶部标题栏（品牌 + 最小化/最大化/关闭）、左侧导航容器与底部状态栏
 都由 shell 绘制，没有系统菜单栏（`Menu.setApplicationMenu(null)`）。
@@ -98,7 +98,7 @@ mics/
 │  ├─ close-behavior/       # 关闭行为：询问退出 / 最小化至托盘 + 托盘菜单
 │  ├─ settings/             # 设置分组 + 通用设置页
 │  ├─ plugin-inspector/     # 插件管理页（安装 / 启用 / 禁用 / 重载 / 卸载）
-│  └─ logger/               # 按启动分文件的日志服务 + 日志设置
+│  └─ logger/               # 按启动分文件的日志服务 + 通用设置页的日志分组
 ├─ examples/
 │  └─ hello-tool/           # 验收用示例插件：页面 + 主进程 RPC + 文件读写 + 设置项 + 卸载脚本
 ├─ scripts/build-plugins.mjs
@@ -210,7 +210,7 @@ interface LaunchCredentials {
 - 实例详情的 Mod 列表：左侧显示 jar 内嵌图标（没有图标也保留空位），右侧是删除按钮与启停开关（`.jar` ↔ `.jar.disabled`）；删除会二次确认，避免误删。
 - 整合包页复用同一套目录交互（来源 / MC 版本 / 加载器 / 类型筛选，详情与版本列表）。选择版本后先输入实例名：默认取整合包名，非法字符即时清理，重名由主进程校验，不通过时不能提交。
 - 整合包安装支持 Modrinth `.mrpack` 与 CurseForge 整合包 zip：主进程先下载归档、解析 `modrinth.index.json` / `manifest.json`，从清单确定游戏版本与加载器，再走与原版安装相同的下载管线；包内 Mod 与游戏文件进同一个队列，`overrides/` 等覆盖文件在所有任务完成后才合并，避免被下载结果覆盖。Quilt 整合包暂不支持，会在安装前给出明确提示。准备阶段还没有文件级任务，下载页会显示当前步骤：归档、加载器安装器与依赖库等传输都会显示实时速度和已下载字节，解析、解压等无法度量进度的步骤显示不确定态进度条。
-- 下载队列会优先启动大文件，减少「最后只剩几个大文件、每个文件一条连接」的长尾；「设置 → 下载设置 → 大文件分段」可以对达到分段阈值的文件启用单文件多 Range 连接（连接数默认 8，范围 1–16，1 即关闭分段），阈值也在同一页按 MB 填写（默认 8 MB，最小 1 MB）。服务端不支持 `Accept-Ranges`、文件大小未知或校验值变化时会自动退回单连接，暂停/继续仍按分段断点恢复。
+- 下载队列会优先启动大文件，减少「最后只剩几个大文件、每个文件一条连接」的长尾；「设置 → 下载设置 → 大文件分段」可以对达到分段阈值的文件启用单文件多 Range 连接（连接数默认 8，范围 1–16，1 即关闭分段），阈值也在同一页按 MB 填写（默认 1 MB，最小 1）。服务端不支持 `Accept-Ranges`、文件大小未知或校验值变化时会自动退回单连接，暂停/继续仍按分段断点恢复。
 - 下载页的速度只统计真正走网络的字节：命中下载缓存、复用共享库或跳过已存在的文件时进度会前进，但不会虚增速度。缓存占用与清空按钮在「设置 → 下载设置 → 已用缓存」；传输进行中不允许清空，避免正在写入缓存的整合包归档被删掉。
 - 资源包 / 光影包 / 数据包页复用同一套目录交互（来源 / MC 版本，详情与版本列表）。选择版本后选实例，文件分别写进 `<实例>/resourcepacks`、`<实例>/shaderpacks`、`<实例>/saves/<存档>/datapacks`；数据包额外选一次存档，一次只能装一个存档。三类都只落盘、不修改游戏配置，需要进游戏自行启用；实例详情的「存档」标签列出存档与已装数据包数量。
 
@@ -238,7 +238,7 @@ export default defineMainPlugin({
 ```
 
 - 每次启动创建一个 `<userData>/logs/mics-<时间>.log`；默认保留最近 5 个，
-  可在「设置 → 日志设置」中调整（1–50）；
+  可在「设置 → 通用 → 日志」中调整（1–50）；
 - 正文沿用 cordis 的 `%s` / `%d` / `%o` 占位符，传 `Error` 时记录堆栈；
 - 启动、插件扫描 / 激活 / 禁用 / 安装 / 卸载、启动游戏、下载与配置变更都会写 **INFO**；
   启动阶段的日志由 cordis 缓冲区补录，日志插件晚于内核激活也不会丢；
@@ -336,6 +336,9 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
 - 插件可以用清单里的 `contributes.configuration` 声明设置；点开插件后在该详情页里
   直接编辑，`ctx.storage` 自动补默认值并校验，agent 通过 `configuration/*` 读写。
   设置项较多、需要自定义界面的插件写 `settingsView` 指向自己的页面，详情里就只给入口。
+- 设置页统一用 `@mics/ui` 的 `SettingsPage` / `SettingsGroup` / `SettingsRow` 三层模板；
+  其它插件可用 `ctx.ui.registerSettingsGroup({ pageId, ... })` 往任意设置页追加分组，
+  详见 [docs/settings-ui.md](docs/settings-ui.md)。
 - `boot.config.json` 的 `profile` 指向 `<userData>/profiles/<name>.json`，可强制启用/禁用
   一批插件并给设置项提供默认值；插件开关持久化在 `<userData>/cordis.yml`（生成文件）。
 - 开发模式会做清理审计：插件重载后 `ipcMain` / `window` 监听器 / 定时器 / 视图数量

@@ -386,6 +386,7 @@ export async function buildLaunchPlan(
 
   const classpath = [clientJar, ...librariesInClasspath, ...nativesDir.jars]
 
+  // 运行时唯一的夹取点：schema 负责写入校验，但 buildLaunchArgs 也可能被直接调用
   const memoryMb = Math.max(1024, Math.min(32768, Math.round(options.memoryMb ?? 4096)))
   const credentials = options.credentials
   const variables: Record<string, string> = {

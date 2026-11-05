@@ -1,5 +1,14 @@
-import { inject, type InjectionKey } from 'vue'
+import {
+  computed,
+  defineComponent,
+  h,
+  inject,
+  provide,
+  type ComputedRef,
+  type InjectionKey
+} from 'vue'
 import type { Context, Plugin } from 'cordis'
+import type { SettingsGroupContribution } from './contract/services'
 import './contract/events'
 import './contract/services'
 
@@ -15,6 +24,44 @@ export function usePluginContext(): Context {
     throw new Error('[mics] usePluginContext() 只能在插件提供的页面组件内使用')
   }
   return ctx
+}
+
+/**
+ * 读取其它插件追加到某个设置页的分组，按 `order` 排序后交给 `<SettingsPage>`。
+ *
+ * 每个分组都包了一层作用域：分组组件里 `usePluginContext()` 拿到的是注册方
+ * 插件，而不是渲染这个页面的宿主插件。
+ */
+export function useSettingsExtensions(pageId: string): ComputedRef<SettingsGroupContribution[]> {
+  const ctx = usePluginContext()
+  return computed(() =>
+    [...ctx.ui.settingsGroups(pageId)]
+      .sort(
+        (left, right) =>
+          (left.order ?? 100) - (right.order ?? 100) || left.id.localeCompare(right.id)
+      )
+      .map(scopedSettingsGroup)
+  )
+}
+
+/** 注册信息是 markRaw 的稳定对象：按对象身份缓存包装组件，避免无关注册导致分组重挂载 */
+const scopedGroups = new WeakMap<SettingsGroupContribution, SettingsGroupContribution>()
+
+function scopedSettingsGroup(group: SettingsGroupContribution): SettingsGroupContribution {
+  const cached = scopedGroups.get(group)
+  if (cached) return cached
+  const context = group.context as Context | undefined
+  if (!context) return group
+  const component = defineComponent({
+    name: `SettingsGroupScope(${group.id})`,
+    setup() {
+      provide(PLUGIN_CONTEXT_KEY, context)
+      return () => h(group.component, group.props)
+    }
+  })
+  const wrapped = { ...group, component }
+  scopedGroups.set(group, wrapped)
+  return wrapped
 }
 
 /**

@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import type { Context } from 'cordis'
+import { GENERAL_SETTINGS_PAGE } from '@mics/sdk'
 import { defineRendererPlugin } from '@mics/sdk/renderer'
 import CloseBehaviorSection from './CloseBehaviorSection.vue'
 import ClosePromptHost from './ClosePromptHost.vue'
@@ -12,13 +13,13 @@ export const inject = ['ui', 'ipc']
 export function apply(ctx: Context): void {
   let active = true
 
-  // 通用设置页的 section；props.ctx 让区块使用 close-behavior 自己的上下文
-  ctx.ui.registerSettingsSection({
+  // 追加到通用设置页的分组；shell 会为它注入 close-behavior 自己的上下文
+  ctx.ui.registerSettingsGroup({
     id: 'close-behavior',
+    pageId: GENERAL_SETTINGS_PAGE,
     title: '关闭与托盘',
     order: 20,
-    component: CloseBehaviorSection,
-    props: { ctx }
+    component: CloseBehaviorSection
   })
 
   setResponder(async (action, remember) => {

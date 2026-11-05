@@ -91,10 +91,15 @@ export function apply(ctx: Context): void {
   const readBehavior = (): RepeatLaunchBehavior =>
     normalizeBehavior(ctx.storage.get<string>(BEHAVIOR_KEY, 'prompt'))
 
+  /**
+   * 当前生效的最大内存。
+   *
+   * 范围由清单 schema（1024–32768）校验，storage 取值时也会按 schema 归一化；
+   * 这里只做类型兜底，运行时夹取统一放在 buildLaunchArgs()，避免两处规则漂移。
+   */
   const readMemory = (): number => {
-    const value = Number(ctx.storage.get<string>('maxMemory', '4096'))
-    if (!Number.isFinite(value)) return 4096
-    return Math.max(1024, Math.min(32768, Math.round(value)))
+    const value = Number(ctx.storage.get<unknown>('maxMemory', 4096))
+    return Number.isFinite(value) ? value : 4096
   }
 
   /** 正在准备（校验 / 下载 / spawn）的实例，避免页面重挂载后的重复点击 */
@@ -210,8 +215,7 @@ export function apply(ctx: Context): void {
           .require<AuthCredentialsCapability>(AUTH_CREDENTIALS)
           .resolve(accountId)
 
-        const memory = Number(ctx.storage.get<string>('maxMemory', '4096'))
-        const memoryMb = Number.isFinite(memory) ? memory : 4096
+        const memoryMb = readMemory()
         log.info(
           '开始启动实例 %s（版本 %s，账户 %s，内存 %dMB）',
           instance.id,

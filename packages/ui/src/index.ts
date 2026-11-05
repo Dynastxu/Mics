@@ -5,6 +5,9 @@
  * 使用它的插件需要在 plugin.json 里声明 `styles`：组件自带的 scoped 样式会一起进
  * 插件的 dist/style.css。
  *
+ * 设置页用 SettingsPage / SettingsGroup / SettingsRow 三层模板，见
+ * docs/settings-ui.md。
+ *
  * 这里放的是「纯 Vue 组件」：不依赖 cordis，也不做运行时注册，
  * 插件在自己的 bundle 里静态引入即可（类型完整、按需打包）。
  */
@@ -24,6 +27,10 @@ export { default as ListPager } from './ListPager.vue'
 export { default as MicsIcon } from './MicsIcon.vue'
 export { documentVisibilityGate, iconPlaybackGateKey, type IconPlaybackGate } from './iconAnimation'
 export { default as PackInstallDialog } from './PackInstallDialog.vue'
+export { default as SettingsGroup } from './settings/SettingsGroup.vue'
+export { default as SettingsPage } from './settings/SettingsPage.vue'
+export { default as SettingsRow } from './settings/SettingsRow.vue'
+export type { SettingsExtension } from './settings/types'
 export { default as ToggleSwitch } from './ToggleSwitch.vue'
 export { defaultSelection, filterRows, isFilterActive, matchesQuery } from './list'
 export type { FilterRowsOptions } from './list'

@@ -8,7 +8,7 @@ import type {
   NavGroupContribution,
   PluginInfo,
   RuntimeSnapshot,
-  SettingsSection,
+  SettingsGroupContribution,
   StatusBarContribution,
   ThemeContribution
 } from '@mics/sdk'
@@ -43,8 +43,8 @@ export interface WorkbenchStore {
   commands: CommandInfo[]
   themes: ThemeContribution[]
   runtimeStatus: StatusItem[]
-  /** 通用设置页的插件 section；由 ctx.ui.registerSettingsSection 写入 */
-  settingsSections: SettingsSection[]
+  /** 各设置页上由插件追加的分组；由 ctx.ui.registerSettingsGroup 写入 */
+  settingsGroups: SettingsGroupContribution[]
   layout?: LayoutContribution
   themeId: string
   /** 当前页面对应的导航项 id */
@@ -67,7 +67,7 @@ export const store = reactive<WorkbenchStore>({
   commands: [],
   themes: [],
   runtimeStatus: [],
-  settingsSections: [],
+  settingsGroups: [],
   layout: undefined,
   themeId: '',
   activeView: '',

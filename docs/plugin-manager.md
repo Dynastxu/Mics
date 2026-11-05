@@ -180,20 +180,21 @@ dev server 会把 `v=` 当成依赖版本、回一年期 `immutable` 缓存，�
 
 ## 6. 运行时分工
 
-| 层                                     | 负责                                                                                    | 在哪                                                                                      |
-| -------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| 三态 / 内置保护 / 安装 / 卸载 / 持久化 | 内核 `PluginsService`                                                                   | `plugins/kernel/src/services/plugins.ts`                                                  |
-| 页面与样式卸载、缓存绕过               | 渲染端 `PluginsService`                                                                 | `apps/desktop/src/renderer/runtime/services/plugins.ts`                                   |
-| 选文件夹（系统文件选择器）、安装预览   | 插件管理页主进程部分                                                                    | `plugins/plugin-inspector/src/main.ts`                                                    |
-| 确认框、风险提示                       | 插件管理页渲染端（`@mics/ui` ConfirmDialog）                                            | `plugins/plugin-inspector/src/renderer/InspectorView.vue`                                 |
-| 安装事务（暂存 / 原子替换 / 校验）     | `@mics/plugin-loader`                                                                   | `packages/plugin-loader/src/install.ts`                                                   |
-| 卸载脚本执行与超时                     | `@mics/plugin-loader`                                                                   | `packages/plugin-loader/src/uninstall.ts`                                                 |
-| `mics-plugin://` id → 目录映射         | bootstrap                                                                               | `apps/desktop/src/main/protocol.ts`                                                       |
-| 清单扫描 / 校验（含配置 schema）       | `@mics/plugin-loader`                                                                   | `packages/plugin-loader/src/discovery.ts`                                                 |
-| 配置 schema / 默认值 / 校验            | `StorageService` + `ConfigurationService`                                               | `plugins/kernel/src/services/{storage,configuration}.ts`                                  |
-| 配置编辑界面                           | 插件管理页的插件详情（`PluginSettingsPanel`）；声明 `settingsView` 的插件跳到自己的页面 | `plugins/plugin-inspector/src/renderer/{InspectorView,PluginSettingsPanel}.vue`           |
-| profile 读取与启用集合合并             | bootstrap + `PluginsService`                                                            | `apps/desktop/src/main/config.ts`、`plugins/kernel/src/services/plugins.ts`               |
-| dev 清理审计                           | 内核 / 渲染端 cleanupAudit                                                              | `plugins/kernel/src/cleanupAudit.ts`、`apps/desktop/src/renderer/runtime/cleanupAudit.ts` |
+| 层                                     | 负责                                                                                                                      | 在哪                                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 三态 / 内置保护 / 安装 / 卸载 / 持久化 | 内核 `PluginsService`                                                                                                     | `plugins/kernel/src/services/plugins.ts`                                                  |
+| 页面与样式卸载、缓存绕过               | 渲染端 `PluginsService`                                                                                                   | `apps/desktop/src/renderer/runtime/services/plugins.ts`                                   |
+| 选文件夹（系统文件选择器）、安装预览   | 插件管理页主进程部分                                                                                                      | `plugins/plugin-inspector/src/main.ts`                                                    |
+| 确认框、风险提示                       | 插件管理页渲染端（`@mics/ui` ConfirmDialog）                                                                              | `plugins/plugin-inspector/src/renderer/InspectorView.vue`                                 |
+| 安装事务（暂存 / 原子替换 / 校验）     | `@mics/plugin-loader`                                                                                                     | `packages/plugin-loader/src/install.ts`                                                   |
+| 卸载脚本执行与超时                     | `@mics/plugin-loader`                                                                                                     | `packages/plugin-loader/src/uninstall.ts`                                                 |
+| `mics-plugin://` id → 目录映射         | bootstrap                                                                                                                 | `apps/desktop/src/main/protocol.ts`                                                       |
+| 清单扫描 / 校验（含配置 schema）       | `@mics/plugin-loader`                                                                                                     | `packages/plugin-loader/src/discovery.ts`                                                 |
+| 配置 schema / 默认值 / 校验            | `StorageService` + `ConfigurationService`                                                                                 | `plugins/kernel/src/services/{storage,configuration}.ts`                                  |
+| 配置编辑界面                           | 插件管理页的插件详情（`PluginSettingsPanel`，行复用 `SettingsRow`）；声明 `settingsView` 的插件跳到自己的页面             | `plugins/plugin-inspector/src/renderer/{InspectorView,PluginSettingsPanel}.vue`           |
+| 设置页模板 / 追加分组                  | `@mics/ui` 的 `SettingsPage` / `SettingsGroup` / `SettingsRow` + `ctx.ui.registerSettingsGroup` / `useSettingsExtensions` | `packages/ui/src/settings/`、`packages/sdk/src/{contract/services.ts,renderer.ts}`        |
+| profile 读取与启用集合合并             | bootstrap + `PluginsService`                                                                                              | `apps/desktop/src/main/config.ts`、`plugins/kernel/src/services/plugins.ts`               |
+| dev 清理审计                           | 内核 / 渲染端 cleanupAudit                                                                                                | `plugins/kernel/src/cleanupAudit.ts`、`apps/desktop/src/renderer/runtime/cleanupAudit.ts` |
 
 ### 6.1 为什么主进程插件也走 `cordis` shim
 
@@ -279,10 +280,47 @@ const report = await ctx.ipc.invoke('mics.kernel', 'plugins/diagnostics')
    `configuration/reset`；返回值是 `PluginConfigurationInfo`，包含每个键的
    `value` 与 `source`（`user` / `profile` / `default` / `unset`）。
 
-需要自定义界面时（日志目录、下载源编辑器等），插件仍然贡献自己的设置页，并在
+需要自定义界面时（下载源编辑器等），插件仍然贡献自己的设置页，并在
 `contributes.configuration` 里把 `settingsView` 指向该视图 id：插件详情里就只留
 「打开设置页」入口，同一项设置只有一个编辑位置。这类页面继续用 `ctx.storage`，
 因此共享同一套默认值与校验。
+
+只有少量设置、又不想单独占一个导航项的插件，可以不要自己的页面：把
+`settingsView` 指向 `settings.general`，同时往通用页追加一个分组。日志与关闭行为
+就是这样做的（都没有独立设置页，设置项分别在「设置 → 通用」的「日志」「关闭与托盘」里）。
+
+设置页本身也不再各写各的：`@mics/ui` 提供三层模板——`SettingsPage`（页面壳）、
+`SettingsGroup`（分组：标题 / 说明 / 分组操作）、`SettingsRow`（一行：标题 /
+说明 / 控件 / 行尾操作）。页面自己的分组写在默认插槽，其它插件可以往任意设置页
+追加分组：
+
+```ts
+ctx.ui.registerSettingsGroup({
+  id: 'close-behavior',
+  pageId: 'settings.general',
+  title: '关闭与托盘',
+  order: 20,
+  component: CloseBehaviorSection
+})
+```
+
+页面用 `useSettingsExtensions(pageId)` 收集追加分组，并按 `order` 接在自己的分组之后：
+
+```vue
+<script setup lang="ts">
+const extensions = useSettingsExtensions('settings.general')
+</script>
+
+<template>
+  <SettingsPage title="通用" :extensions="extensions">
+    <SettingsGroup title="外观"> ... </SettingsGroup>
+  </SettingsPage>
+</template>
+```
+
+渲染时 shell 会为追加分组注入注册方的作用域，分组组件里直接 `usePluginContext()`
+拿到的就是注册方自己的 `ctx`。旧接口 `registerSettingsSection` 仍然可用，
+等价于 `pageId: 'settings.general'`。模板细节见 [settings-ui.md](settings-ui.md)。
 
 ```json
 {
@@ -363,7 +401,8 @@ pnpm dev
     依赖它的插件出现在「被依赖」。
 14. 调用 `plugins/diagnostics` → 返回与界面一致的 `PluginGraphReport`；禁用提供方后
     `unmet` / 依赖方的「未满足」随之出现。
-15. 点开 `mics.logger` → 详情里出现「设置」，显示「打开设置页」；点进去改保留数为 10 →
+15. 点开 `mics.logger` → 详情里出现「设置」，显示「打开设置页」；点进去跳到
+    **设置 → 通用** 的「日志」分组（左侧没有独立的「日志设置」页），改保留数为 10 →
     `plugin-storage/mics.logger.json` 写入 10，重启后仍生效。点开声明了 schema 又没有
     `settingsView` 的插件（可用 `examples/hello-tool` 验证）→ 详情里直接出现表单，
     改值后写入 `plugin-storage/<id>.json`，输入越界值被拒绝并显示错误。
@@ -375,6 +414,9 @@ pnpm dev
     应打印注册堆栈。
 18. 两个渲染端插件注册同一个 `ctx.ui.registerView(id, …)` → 第二个插件激活失败并指出
     已由哪个插件注册；插件上下文里访问 `ctx.bridge` 不可用（通过 `ctx.ipc` 调用主进程）。
+19. 打开 **设置 → 通用**：顺序是外观 →「关闭与托盘」→「日志」→ 数据与运行环境；
+    禁用 close-behavior 后「关闭与托盘」立即消失，重新启用后回到同一位置，
+    分组里的 IPC 调用仍以 close-behavior 的 callerId 发出。
 
 ## 10. 第一版明确不做
 

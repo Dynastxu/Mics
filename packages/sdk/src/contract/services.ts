@@ -75,7 +75,10 @@ export interface IpcServiceApi {
     topic: K,
     listener: (payload: WirePayload<K>, envelope: RuntimeEventEnvelope) => void
   ): Disposable
-  on(topic: string, listener: (payload: unknown, envelope: RuntimeEventEnvelope) => void): Disposable
+  on(
+    topic: string,
+    listener: (payload: unknown, envelope: RuntimeEventEnvelope) => void
+  ): Disposable
   /**
    * 广播事件。
    *
@@ -220,12 +223,46 @@ export interface RendererStatusBarItem {
   command?: string
 }
 
+/** 通用设置页的视图 id；没有页面 id 概念的旧 section 默认挂在这里 */
+export const GENERAL_SETTINGS_PAGE = 'settings.general'
+
+/**
+ * 追加到某个基础设置模板（`SettingsPage`）的分组。
+ *
+ * 插件在渲染端 `apply()` 里注册；分组组件通常直接返回一个 `<SettingsGroup>`，
+ * 自己决定标题、错误提示和行的布局。渲染时 shell 会把注册方的作用域注入进去，
+ * 组件里可以直接 `usePluginContext()`，不会误用宿主页面的上下文。
+ */
+export interface SettingsGroupRegistration {
+  /** 同一页面内唯一；跨插件重复会注册失败 */
+  id: string
+  /** 追加到哪个设置页；与 `contributes.nav[].id` 一致，如 settings.general */
+  pageId: string
+  /** 诊断与排序用的标题；实际标题由分组组件渲染 */
+  title?: string
+  /** 同页追加顺序，缺省 100 */
+  order?: number
+  component: Component
+  props?: Record<string, unknown>
+}
+
+/** 已注册的分组：注册信息 + 注册方归属与作用域 */
+export interface SettingsGroupContribution extends SettingsGroupRegistration {
+  /** 注册方插件 id */
+  pluginId?: PluginId
+  /**
+   * 注册方作用域；渲染端用它给分组提供 usePluginContext()。
+   * 类型保持 unknown：这份数据会进 reactive store，cordis 的 Context
+   * 不适合被 Vue 的深层解包类型推导。
+   */
+  context?: unknown
+}
+
 /**
  * 通用设置页里的一个 section。
  *
- * 插件在渲染端 `apply()` 里注册；通用设置页只负责包一层 `mics-section` 并按
- * `order` 渲染。`props` 用来把注册方自己的 cordis Context 传进组件，避免 section
- * 误用通用设置页所属插件的上下文。
+ * @deprecated 用 `SettingsGroupRegistration` + `ctx.ui.registerSettingsGroup()`；
+ * 旧接口等价于 pageId = 'settings.general'。
  */
 export interface SettingsSection {
   id: string
@@ -238,12 +275,16 @@ export interface SettingsSection {
 export interface UiServiceApi {
   /** 注册导航项对应的页面组件；viewId 与清单里 contributes.nav[].id 一致 */
   registerView(viewId: string, component: Component): Disposable
-  /** 向通用设置页注册一个 section；插件卸载时自动移除 */
+  /** 向基础设置页追加一个分组；插件卸载时自动移除 */
+  registerSettingsGroup(group: SettingsGroupRegistration): Disposable
+  /** 某个设置页上由其它插件追加的分组；返回的数组是响应式的 */
+  settingsGroups(pageId: string): SettingsGroupContribution[]
+  /** @deprecated 用 registerSettingsGroup({ pageId: 'settings.general', ... }) */
   registerSettingsSection(section: SettingsSection): Disposable
+  /** @deprecated 用 settingsGroups('settings.general') */
+  settingsSections(): SettingsSection[]
   registerStatusBarItem(item: RendererStatusBarItem): Disposable
   componentOf(viewId: string): Component | undefined
-  /** 通用设置页用；返回的数组是响应式的，注册 / 卸载会触发更新 */
-  settingsSections(): SettingsSection[]
   /** 切换到清单里已注册的导航页面；页面不存在（插件缺失或被禁用）时返回 false */
   navigate(viewId: string): boolean
 }

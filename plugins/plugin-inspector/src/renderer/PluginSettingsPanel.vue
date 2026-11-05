@@ -6,7 +6,7 @@ import type {
   ConfigurationValue,
   PluginConfigurationInfo
 } from '@mics/sdk'
-import { ToggleSwitch } from '@mics/ui'
+import { SettingsRow, ToggleSwitch } from '@mics/ui'
 
 /**
  * 清单 schema 的设置表单。
@@ -77,57 +77,56 @@ function booleanValue(value: boolean): boolean {
   <div class="settings">
     <p v-if="error" class="settings__error">{{ error }}</p>
 
-    <div v-for="property in config.properties" :key="property.key" class="mics-field">
-      <div>
-        <div class="mics-field__label">{{ property.title ?? property.key }}</div>
-        <div v-if="property.description" class="mics-field__hint">
-          {{ property.description }}
-        </div>
-      </div>
-
-      <div class="mics-field__control settings__control">
-        <ToggleSwitch
-          v-if="property.type === 'boolean'"
-          :model-value="Boolean(property.value)"
-          :disabled="isBusy(property)"
-          :label="property.title ?? property.key"
-          @update:model-value="save(property, booleanValue($event))"
-        />
-        <select
-          v-else-if="property.type === 'enum'"
-          class="mics-select"
-          :value="textOf(property.value)"
-          :disabled="isBusy(property)"
-          @change="save(property, inputValue($event))"
+    <SettingsRow
+      v-for="property in config.properties"
+      :key="property.key"
+      :label="property.title ?? property.key"
+      :hint="property.description"
+    >
+      <ToggleSwitch
+        v-if="property.type === 'boolean'"
+        :model-value="Boolean(property.value)"
+        :disabled="isBusy(property)"
+        :label="property.title ?? property.key"
+        @update:model-value="save(property, booleanValue($event))"
+      />
+      <select
+        v-else-if="property.type === 'enum'"
+        class="mics-select"
+        :value="textOf(property.value)"
+        :disabled="isBusy(property)"
+        @change="save(property, inputValue($event))"
+      >
+        <option
+          v-for="option in property.options ?? []"
+          :key="String(option.value)"
+          :value="option.value"
         >
-          <option
-            v-for="option in property.options ?? []"
-            :key="String(option.value)"
-            :value="option.value"
-          >
-            {{ option.label ?? option.value }}
-          </option>
-        </select>
-        <input
-          v-else-if="property.type === 'number' || property.type === 'integer'"
-          class="mics-input"
-          type="number"
-          :value="textOf(property.value)"
-          :min="property.minimum"
-          :max="property.maximum"
-          :disabled="isBusy(property)"
-          @change="save(property, Number(inputValue($event)))"
-        />
-        <input
-          v-else
-          class="mics-input"
-          type="text"
-          :value="textOf(property.value)"
-          :disabled="isBusy(property)"
-          @change="save(property, inputValue($event))"
-        />
+          {{ option.label ?? option.value }}
+        </option>
+      </select>
+      <input
+        v-else-if="property.type === 'number' || property.type === 'integer'"
+        class="mics-input"
+        type="number"
+        :value="textOf(property.value)"
+        :min="property.minimum"
+        :max="property.maximum"
+        :disabled="isBusy(property)"
+        @change="save(property, Number(inputValue($event)))"
+      />
+      <input
+        v-else
+        class="mics-input"
+        type="text"
+        :value="textOf(property.value)"
+        :disabled="isBusy(property)"
+        @change="save(property, inputValue($event))"
+      />
 
-        <span v-if="property.unit" class="mics-muted">{{ property.unit }}</span>
+      <span v-if="property.unit" class="mics-muted">{{ property.unit }}</span>
+
+      <template #actions>
         <button
           v-if="property.source === 'user'"
           class="mics-button mics-button--ghost mics-button--small"
@@ -138,8 +137,8 @@ function booleanValue(value: boolean): boolean {
           恢复默认
         </button>
         <span v-else-if="property.source === 'profile'" class="mics-badge">profile</span>
-      </div>
-    </div>
+      </template>
+    </SettingsRow>
   </div>
 </template>
 
@@ -151,11 +150,5 @@ function booleanValue(value: boolean): boolean {
   border-radius: 8px;
   color: var(--mics-danger);
   font-size: 12px;
-}
-
-.settings__control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 </style>

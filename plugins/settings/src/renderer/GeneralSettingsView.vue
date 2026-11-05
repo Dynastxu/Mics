@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { usePluginContext } from '@mics/sdk/renderer'
+import { ref } from 'vue'
+import { usePluginContext, useSettingsExtensions } from '@mics/sdk/renderer'
+import { SettingsGroup, SettingsPage, SettingsRow } from '@mics/ui'
 
 const ctx = usePluginContext()
 const app = ctx.plugins.snapshot().app
@@ -9,12 +10,8 @@ const themes = ctx.theme.available()
 const themeId = ref(ctx.theme.current() ?? themes[0]?.id ?? '')
 const language = ref('zh-CN')
 
-/** 其它插件注册到通用设置页的 section；按 order 稳定排序 */
-const sections = computed(() =>
-  [...ctx.ui.settingsSections()].sort(
-    (left, right) => (left.order ?? 100) - (right.order ?? 100) || left.id.localeCompare(right.id)
-  )
-)
+/** 其它插件追加到通用设置页的分组；排在页面自己的分组之后 */
+const extensions = useSettingsExtensions('settings.general')
 
 function changeTheme(event: Event): void {
   themeId.value = (event.target as HTMLSelectElement).value
@@ -23,76 +20,45 @@ function changeTheme(event: Event): void {
 </script>
 
 <template>
-  <div class="mics-page">
-    <header class="mics-page__header">
-      <h1 class="mics-page__title">通用</h1>
-    </header>
+  <SettingsPage title="通用" :extensions="extensions">
+    <SettingsGroup title="外观">
+      <SettingsRow label="主题" html-for="settings-theme">
+        <select id="settings-theme" class="mics-select" :value="themeId" @change="changeTheme">
+          <option v-for="theme in themes" :key="theme.id" :value="theme.id">
+            {{ theme.label }}
+          </option>
+        </select>
+      </SettingsRow>
 
-    <section class="mics-section">
-      <h2 class="mics-section__title">外观</h2>
-      <div class="mics-form">
-        <div class="mics-field">
-          <div class="mics-field__label">主题</div>
-          <div class="mics-field__control">
-            <select class="mics-select" :value="themeId" @change="changeTheme">
-              <option v-for="theme in themes" :key="theme.id" :value="theme.id">
-                {{ theme.label }}
-              </option>
-            </select>
-          </div>
-        </div>
+      <SettingsRow label="语言" html-for="settings-language">
+        <select id="settings-language" v-model="language" class="mics-select">
+          <option value="zh-CN">简体中文</option>
+        </select>
+      </SettingsRow>
+    </SettingsGroup>
 
-        <div class="mics-field">
-          <div class="mics-field__label">语言</div>
-          <div class="mics-field__control">
-            <select v-model="language" class="mics-select">
-              <option value="zh-CN">简体中文</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    </section>
+    <template #footer>
+      <SettingsGroup title="数据与运行环境">
+        <SettingsRow v-if="app.profile" label="配置档">
+          <span class="mics-badge">{{ app.profile }}</span>
+        </SettingsRow>
 
-    <section v-for="section in sections" :key="section.id" class="mics-section">
-      <h2 v-if="section.title" class="mics-section__title">{{ section.title }}</h2>
-      <component :is="section.component" v-bind="section.props" />
-    </section>
+        <SettingsRow label="数据目录">
+          <span class="mics-mono mics-muted settings__path">{{ app.userDataPath }}</span>
+        </SettingsRow>
 
-    <section class="mics-section">
-      <h2 class="mics-section__title">数据与运行环境</h2>
-      <div class="mics-form">
-        <div v-if="app.profile" class="mics-field">
-          <div class="mics-field__label">配置档</div>
-          <div class="mics-field__control">
-            <span class="mics-badge">{{ app.profile }}</span>
-          </div>
-        </div>
+        <SettingsRow label="运行时">
+          <span class="mics-muted">
+            Electron {{ app.electron }} · Chromium {{ app.chrome }} · Node {{ app.node }}
+          </span>
+        </SettingsRow>
 
-        <div class="mics-field">
-          <div class="mics-field__label">数据目录</div>
-          <div class="mics-field__control">
-            <span class="mics-mono mics-muted settings__path">{{ app.userDataPath }}</span>
-          </div>
-        </div>
-
-        <div class="mics-field">
-          <div class="mics-field__label">运行时</div>
-          <div class="mics-field__control">
-            <span class="mics-muted">
-              Electron {{ app.electron }} · Chromium {{ app.chrome }} · Node {{ app.node }}
-            </span>
-          </div>
-        </div>
-
-        <div class="mics-field">
-          <div class="mics-field__label">平台</div>
-          <div class="mics-field__control">
-            <span class="mics-muted">{{ app.platform }}</span>
-          </div>
-        </div>
-      </div>
-    </section>
-  </div>
+        <SettingsRow label="平台">
+          <span class="mics-muted">{{ app.platform }}</span>
+        </SettingsRow>
+      </SettingsGroup>
+    </template>
+  </SettingsPage>
 </template>
 
 <style scoped>

@@ -26,8 +26,6 @@ const error = ref('')
 const busy = ref(false)
 const login = ref<DeviceLoginStart | null>(null)
 const status = ref<'idle' | 'starting' | 'waiting' | 'error'>('idle')
-/** 正版登录依赖部署方自己的 Azure 应用；未配置时先提示去填 client id */
-const microsoftReady = ref(true)
 const copied = ref(false)
 /** 用户是否已经点过「复制并跳转至登录」；没点之前不显示「等待授权」 */
 const opened = ref(false)
@@ -73,19 +71,6 @@ function reset(): void {
   status.value = 'idle'
   copied.value = false
   opened.value = false
-}
-
-async function loadMicrosoftConfig(): Promise<void> {
-  try {
-    const config = await ctx.ipc.invoke<{ microsoftConfigured: boolean }>(
-      'mics.account',
-      'accounts/config'
-    )
-    microsoftReady.value = config.microsoftConfigured
-  } catch {
-    // 读不到配置时按已配置处理，真正的错误会在登录时给出
-    microsoftReady.value = true
-  }
 }
 
 async function copyText(value: string): Promise<boolean> {
@@ -250,8 +235,6 @@ function switchTab(next: 'microsoft' | 'offline'): void {
 
 /** 切回正版页签：恢复同一个设备码的轮询，过期才要求重新开始 */
 async function resumeMicrosoft(): Promise<void> {
-  await loadMicrosoftConfig()
-
   const flow = login.value
   if (status.value === 'waiting' && flow) {
     if (Date.now() > flow.expiresAt) {
@@ -292,8 +275,7 @@ watch(
       offlineInput.value?.focus()
       return
     }
-    await loadMicrosoftConfig()
-    if (props.autoStart && microsoftReady.value) void startMicrosoft()
+    if (props.autoStart) void startMicrosoft()
     else loginButton.value?.focus()
   }
 )
@@ -390,14 +372,11 @@ onUnmounted(() => {
               ref="loginButton"
               class="mics-button mics-button--primary"
               type="button"
-              :disabled="busy || !microsoftReady"
+              :disabled="busy"
               @click="startMicrosoft"
             >
               {{ status === 'starting' ? '正在获取登录码…' : '使用 Microsoft 登录' }}
             </button>
-            <p v-if="!microsoftReady" class="account-dialog__hint">
-              先在「插件管理 → 账户」填写以 Mics 注册的 Azure 应用 client id。
-            </p>
           </template>
         </div>
 

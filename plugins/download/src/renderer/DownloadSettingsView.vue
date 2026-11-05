@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { usePluginContext } from '@mics/sdk/renderer'
+import { usePluginContext, useSettingsExtensions } from '@mics/sdk/renderer'
+import { SettingsGroup, SettingsPage, SettingsRow } from '@mics/ui'
 import {
   DEFAULT_DOWNLOAD_CACHE_LIMIT,
   DEFAULT_DOWNLOAD_CONCURRENCY,
@@ -29,10 +30,10 @@ import SourceEditorDialog from './SourceEditorDialog.vue'
 import LoaderSourceDialog from './LoaderSourceDialog.vue'
 import ModSourceDialog from './ModSourceDialog.vue'
 import SourceList from './SourceList.vue'
-import SettingsField from './SettingsField.vue'
 import { useSourceDrag } from './useSourceDrag'
 
 const ctx = usePluginContext()
+const extensions = useSettingsExtensions('settings.download')
 const loading = ref(true)
 const concurrency = ref(DEFAULT_DOWNLOAD_CONCURRENCY)
 const segments = ref(DEFAULT_DOWNLOAD_SEGMENTS)
@@ -567,225 +568,243 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="mics-page">
-    <header class="mics-page__header">
-      <h1 class="mics-page__title">下载设置</h1>
-    </header>
-
-    <div v-if="loading" class="mics-empty">正在读取设置…</div>
-
-    <template v-else>
-      <section class="mics-section">
-        <h2 class="mics-section__title">下载行为</h2>
-        <div class="mics-form">
-          <SettingsField label="最大并发" hint="同时下载的文件数（1–128）">
-            <input
-              v-model="concurrency"
-              class="mics-input settings-number"
-              inputmode="numeric"
-              @input="queueConcurrencySave"
-              @change="saveConcurrency"
-            />
-            <button
-              class="mics-button mics-button--ghost mics-button--small settings-row-action"
-              title="恢复默认值"
-              :disabled="concurrency === DEFAULT_DOWNLOAD_CONCURRENCY"
-              @click="resetConcurrency"
-            >
-              重置
-            </button>
-          </SettingsField>
-
-          <SettingsField label="大文件分段">
-            <template #hint>
-              达到分段阈值且服务端支持 Range 时，单文件使用的连接数（{{ MIN_DOWNLOAD_SEGMENTS }}–{{
-                MAX_DOWNLOAD_SEGMENTS
-              }}）
-            </template>
-            <input
-              v-model="segments"
-              class="mics-input settings-number"
-              inputmode="numeric"
-              @input="queueSegmentsSave"
-              @change="saveSegments"
-            />
-            <button
-              class="mics-button mics-button--ghost mics-button--small settings-row-action"
-              title="恢复默认值"
-              :disabled="segmentsAreDefault"
-              @click="resetSegments"
-            >
-              重置
-            </button>
-          </SettingsField>
-
-          <SettingsField label="分段阈值" hint="只有达到该大小的文件才启用多连接">
-            <input
-              v-model="segmentThreshold"
-              class="mics-input settings-number"
-              inputmode="numeric"
-              @input="queueSegmentThresholdSave"
-              @change="saveSegmentThreshold"
-            />
-            <span class="settings-unit">MB (> 1)</span>
-            <button
-              class="mics-button mics-button--ghost mics-button--small settings-row-action"
-              title="恢复默认值"
-              :disabled="segmentThresholdIsDefault"
-              @click="resetSegmentThreshold"
-            >
-              重置
-            </button>
-          </SettingsField>
-
-          <SettingsField label="缓存上限" hint="超出后清理最旧的文件，不缓存会停用并清空缓存">
-            <select v-model="cacheLimitMode" class="mics-select" @change="saveCacheLimit">
-              <option value="limit">限制大小</option>
-              <option value="off">不缓存</option>
-              <option value="unlimited">无限制</option>
-            </select>
-            <template v-if="cacheLimitMode === 'limit'">
-              <input
-                v-model="cacheLimitMb"
-                class="mics-input settings-number"
-                inputmode="numeric"
-                @input="queueCacheLimitSave"
-                @change="saveCacheLimit"
-              />
-              <span class="settings-unit">MB</span>
-            </template>
-            <button
-              class="mics-button mics-button--ghost mics-button--small settings-row-action"
-              title="恢复默认值"
-              :disabled="cacheLimitIsDefault"
-              @click="resetCacheLimit"
-            >
-              重置
-            </button>
-          </SettingsField>
-
-          <SettingsField label="已用缓存" hint="重装或安装到其它实例时，缓存里的文件会直接复用">
-            <span class="settings-cache">
-              {{ cacheLoading ? '统计中…' : `${fmtBytes(cacheBytes)} · ${cacheFiles} 个文件` }}
-            </span>
-            <button
-              class="mics-button mics-button--small settings-row-action"
-              :class="confirmClear ? 'mics-button--danger' : 'mics-button--ghost'"
-              :disabled="cacheClearing || cacheLoading || (cacheBytes === 0 && !confirmClear)"
-              @click="requestClearCache"
-            >
-              {{ confirmClear ? '确认清空' : '清空' }}
-            </button>
-          </SettingsField>
-        </div>
-
-        <p v-if="cacheError" class="mics-notice">{{ cacheError }}</p>
-      </section>
-
-      <SourceList
-        :items="sources"
-        title="原版下载源"
-        note="自上而下优先级递减"
-        empty-text="尚未配置下载源"
-        :saved="saved"
-        :is-default="sourcesAreDefault"
-        :drag-index="sourceDrag.dragIndex.value"
-        :over-index="sourceDrag.overIndex.value"
-        toggle-title="关闭后跳过该下载源"
-        :get-display-name="displayName"
-        @add="openEditor(null)"
-        @reset="resetSources"
-        @save="saveSources"
-        @edit="openEditor"
-        @delete="removeSource"
-        @toggle="setSourceEnabled"
-        @drag-start="sourceDrag.onDragStart"
-        @drag-over="sourceDrag.onDragOver"
-        @drag-end="sourceDrag.resetDrag"
-        @drop="onSourceDrop"
-      />
-
-      <SourceList
-        :items="loaderSources"
-        title="模组加载器下载源"
-        note="自上而下优先级递减"
-        empty-text="尚未配置加载器下载源"
-        :saved="loaderSaved"
-        :is-default="loaderSourcesAreDefault"
-        :drag-index="loaderDrag.dragIndex.value"
-        :over-index="loaderDrag.overIndex.value"
-        toggle-title="关闭后跳过该下载源"
-        :get-display-name="loaderDisplayName"
-        @add="openLoaderEditor(null)"
-        @reset="resetLoaderSources"
-        @save="saveLoaderSources"
-        @edit="openLoaderEditor"
-        @delete="removeLoaderSource"
-        @toggle="setLoaderSourceEnabled"
-        @drag-start="loaderDrag.onDragStart"
-        @drag-over="loaderDrag.onDragOver"
-        @drag-end="loaderDrag.resetDrag"
-        @drop="onLoaderDrop"
+  <SettingsPage title="下载设置" :loading="loading" :extensions="extensions">
+    <SettingsGroup title="下载行为" :error="cacheError">
+      <SettingsRow
+        label="最大并发"
+        hint="同时下载的文件数（1–128）"
+        html-for="download-concurrency"
       >
-        <template #before-name="{ item }">
-          <span class="mics-badge">{{ LOADER_LABELS[item.kind] }}</span>
+        <input
+          id="download-concurrency"
+          v-model="concurrency"
+          class="mics-input settings-number"
+          inputmode="numeric"
+          @input="queueConcurrencySave"
+          @change="saveConcurrency"
+        />
+        <template #actions>
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            title="恢复默认值"
+            :disabled="concurrency === DEFAULT_DOWNLOAD_CONCURRENCY"
+            @click="resetConcurrency"
+          >
+            重置
+          </button>
         </template>
-      </SourceList>
+      </SettingsRow>
 
-      <SourceList
-        :items="modSources"
-        title="Mod 下载源"
-        note="可添加镜像；CurseForge 需要 API Key"
-        empty-text="尚未配置 Mod 下载源"
-        :saved="modSaved"
-        :is-default="modSourcesAreDefault"
-        :drag-index="modDrag.dragIndex.value"
-        :over-index="modDrag.overIndex.value"
-        toggle-title="关闭后跳过该来源"
-        :get-display-name="modDisplayName"
-        @add="openModEditor(null)"
-        @reset="resetModSources"
-        @save="saveModSources"
-        @edit="openModEditor"
-        @delete="removeModSource"
-        @toggle="setModSourceEnabled"
-        @drag-start="modDrag.onDragStart"
-        @drag-over="modDrag.onDragOver"
-        @drag-end="modDrag.resetDrag"
-        @drop="onModDrop"
+      <SettingsRow label="大文件分段" html-for="download-segments">
+        <template #hint>
+          达到分段阈值且服务端支持 Range 时，单文件使用的连接数（{{ MIN_DOWNLOAD_SEGMENTS }}–{{
+            MAX_DOWNLOAD_SEGMENTS
+          }}）
+        </template>
+        <input
+          id="download-segments"
+          v-model="segments"
+          class="mics-input settings-number"
+          inputmode="numeric"
+          @input="queueSegmentsSave"
+          @change="saveSegments"
+        />
+        <template #actions>
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            title="恢复默认值"
+            :disabled="segmentsAreDefault"
+            @click="resetSegments"
+          >
+            重置
+          </button>
+        </template>
+      </SettingsRow>
+
+      <SettingsRow
+        label="分段阈值"
+        hint="只有达到该大小的文件才启用多连接"
+        html-for="download-segment-threshold"
       >
-        <template #before-name="{ item }">
-          <span class="mics-badge">{{ MOD_SOURCE_LABELS[item.kind] }}</span>
+        <input
+          id="download-segment-threshold"
+          v-model="segmentThreshold"
+          class="mics-input settings-number"
+          inputmode="numeric"
+          @input="queueSegmentThresholdSave"
+          @change="saveSegmentThreshold"
+        />
+        <span class="settings-unit">MB (≥ 1)</span>
+        <template #actions>
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            title="恢复默认值"
+            :disabled="segmentThresholdIsDefault"
+            @click="resetSegmentThreshold"
+          >
+            重置
+          </button>
         </template>
-        <template #after-name="{ item }">
-          <span v-if="modSourceNeedsKey(item) && !item.key.trim()" class="settings-source__state">
-            缺少 API Key
-          </span>
+      </SettingsRow>
+
+      <SettingsRow
+        label="缓存上限"
+        hint="超出后清理最旧的文件，不缓存会停用并清空缓存"
+        html-for="download-cache-mode"
+      >
+        <select
+          id="download-cache-mode"
+          v-model="cacheLimitMode"
+          class="mics-select"
+          @change="saveCacheLimit"
+        >
+          <option value="limit">限制大小</option>
+          <option value="off">不缓存</option>
+          <option value="unlimited">无限制</option>
+        </select>
+        <template v-if="cacheLimitMode === 'limit'">
+          <input
+            v-model="cacheLimitMb"
+            class="mics-input settings-number"
+            :aria-label="'缓存上限（MB）'"
+            inputmode="numeric"
+            @input="queueCacheLimitSave"
+            @change="saveCacheLimit"
+          />
+          <span class="settings-unit">MB</span>
         </template>
-      </SourceList>
+        <template #actions>
+          <button
+            class="mics-button mics-button--ghost mics-button--small"
+            title="恢复默认值"
+            :disabled="cacheLimitIsDefault"
+            @click="resetCacheLimit"
+          >
+            重置
+          </button>
+        </template>
+      </SettingsRow>
 
-      <SourceEditorDialog
-        :open="editorOpen"
-        :source="editorSource"
-        @submit="applyEditor"
-        @cancel="closeEditor"
-      />
+      <SettingsRow label="已用缓存" hint="重装或安装到其它实例时，缓存里的文件会直接复用">
+        <span class="settings-cache">
+          {{ cacheLoading ? '统计中…' : `${fmtBytes(cacheBytes)} · ${cacheFiles} 个文件` }}
+        </span>
+        <template #actions>
+          <button
+            class="mics-button mics-button--small"
+            :class="confirmClear ? 'mics-button--danger' : 'mics-button--ghost'"
+            :disabled="cacheClearing || cacheLoading || (cacheBytes === 0 && !confirmClear)"
+            @click="requestClearCache"
+          >
+            {{ confirmClear ? '确认清空' : '清空' }}
+          </button>
+        </template>
+      </SettingsRow>
+    </SettingsGroup>
 
-      <LoaderSourceDialog
-        :open="loaderEditorOpen"
-        :source="loaderEditorSource"
-        @submit="applyLoaderEditor"
-        @cancel="closeLoaderEditor"
-      />
+    <SourceList
+      :items="sources"
+      title="原版下载源"
+      note="自上而下优先级递减"
+      empty-text="尚未配置下载源"
+      :saved="saved"
+      :is-default="sourcesAreDefault"
+      :drag-index="sourceDrag.dragIndex.value"
+      :over-index="sourceDrag.overIndex.value"
+      toggle-title="关闭后跳过该下载源"
+      :get-display-name="displayName"
+      @add="openEditor(null)"
+      @reset="resetSources"
+      @save="saveSources"
+      @edit="openEditor"
+      @delete="removeSource"
+      @toggle="setSourceEnabled"
+      @drag-start="sourceDrag.onDragStart"
+      @drag-over="sourceDrag.onDragOver"
+      @drag-end="sourceDrag.resetDrag"
+      @drop="onSourceDrop"
+    />
 
-      <ModSourceDialog
-        :open="modEditorOpen"
-        :source="modEditorSource"
-        @submit="applyModEditor"
-        @cancel="closeModEditor"
-      />
-    </template>
-  </div>
+    <SourceList
+      :items="loaderSources"
+      title="模组加载器下载源"
+      note="自上而下优先级递减"
+      empty-text="尚未配置加载器下载源"
+      :saved="loaderSaved"
+      :is-default="loaderSourcesAreDefault"
+      :drag-index="loaderDrag.dragIndex.value"
+      :over-index="loaderDrag.overIndex.value"
+      toggle-title="关闭后跳过该下载源"
+      :get-display-name="loaderDisplayName"
+      @add="openLoaderEditor(null)"
+      @reset="resetLoaderSources"
+      @save="saveLoaderSources"
+      @edit="openLoaderEditor"
+      @delete="removeLoaderSource"
+      @toggle="setLoaderSourceEnabled"
+      @drag-start="loaderDrag.onDragStart"
+      @drag-over="loaderDrag.onDragOver"
+      @drag-end="loaderDrag.resetDrag"
+      @drop="onLoaderDrop"
+    >
+      <template #before-name="{ item }">
+        <span class="mics-badge">{{ LOADER_LABELS[item.kind] }}</span>
+      </template>
+    </SourceList>
+
+    <SourceList
+      :items="modSources"
+      title="Mod 下载源"
+      note="可添加镜像；CurseForge 需要 API Key"
+      empty-text="尚未配置 Mod 下载源"
+      :saved="modSaved"
+      :is-default="modSourcesAreDefault"
+      :drag-index="modDrag.dragIndex.value"
+      :over-index="modDrag.overIndex.value"
+      toggle-title="关闭后跳过该来源"
+      :get-display-name="modDisplayName"
+      @add="openModEditor(null)"
+      @reset="resetModSources"
+      @save="saveModSources"
+      @edit="openModEditor"
+      @delete="removeModSource"
+      @toggle="setModSourceEnabled"
+      @drag-start="modDrag.onDragStart"
+      @drag-over="modDrag.onDragOver"
+      @drag-end="modDrag.resetDrag"
+      @drop="onModDrop"
+    >
+      <template #before-name="{ item }">
+        <span class="mics-badge">{{ MOD_SOURCE_LABELS[item.kind] }}</span>
+      </template>
+      <template #after-name="{ item }">
+        <span v-if="modSourceNeedsKey(item) && !item.key.trim()" class="settings-source__state">
+          缺少 API Key
+        </span>
+      </template>
+    </SourceList>
+
+    <SourceEditorDialog
+      :open="editorOpen"
+      :source="editorSource"
+      @submit="applyEditor"
+      @cancel="closeEditor"
+    />
+
+    <LoaderSourceDialog
+      :open="loaderEditorOpen"
+      :source="loaderEditorSource"
+      @submit="applyLoaderEditor"
+      @cancel="closeLoaderEditor"
+    />
+
+    <ModSourceDialog
+      :open="modEditorOpen"
+      :source="modEditorSource"
+      @submit="applyModEditor"
+      @cancel="closeModEditor"
+    />
+  </SettingsPage>
 </template>
 
 <style scoped>
@@ -802,18 +821,10 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-.settings-row-action {
-  margin-left: auto;
-}
-
 .settings-cache {
   color: var(--mics-fg-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-}
-
-.mics-notice {
-  margin-top: 10px;
 }
 
 .settings-source__state {
