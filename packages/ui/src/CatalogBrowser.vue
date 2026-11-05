@@ -818,53 +818,54 @@ defineExpose({
 <template>
   <div ref="pageEl" class="mics-page">
     <template v-if="activeItem">
-      <header class="catalog-detail__header">
-        <div class="catalog-detail__nav">
-          <button
-            class="mics-button mics-button--ghost mics-button--small"
-            type="button"
-            :title="`回到${entityLabel}搜索`"
-            @click="goHome"
+      <!-- 导航单独占一行，避免挤占标题区宽度 -->
+      <div class="catalog-detail__nav">
+        <button
+          class="mics-button mics-button--ghost mics-button--small catalog-detail__nav-button"
+          type="button"
+          aria-label="主页"
+          :title="`回到${entityLabel}搜索`"
+          @click="goHome"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.7"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              <path d="M9 22V12h6v10" />
-            </svg>
-            主页
-          </button>
-          <button
-            class="mics-button mics-button--ghost mics-button--small"
-            type="button"
-            :title="backTitle || undefined"
-            @click="closeItem"
+            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <path d="M9 22V12h6v10" />
+          </svg>
+        </button>
+        <button
+          class="mics-button mics-button--ghost mics-button--small catalog-detail__nav-button"
+          type="button"
+          aria-label="返回"
+          :title="backTitle || undefined"
+          @click="closeItem"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.7"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="m15 6-6 6 6 6" />
-            </svg>
-            返回
-          </button>
-        </div>
+            <path d="m15 6-6 6 6 6" />
+          </svg>
+        </button>
+      </div>
 
+      <header class="catalog-detail__header">
         <img
           v-if="activeItem.icon && !detailIconFailed"
           class="catalog-detail__icon"
@@ -1100,12 +1101,26 @@ defineExpose({
   gap: 14px;
 }
 
+/* 页面顶端独立一行，横向排列；在 .mics-page 行间距的基础上再拉开一档 */
 .catalog-detail__nav {
-  flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 2px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* 只有图案的方形按钮：平时无边框，悬停才描边 */
+.catalog-detail__nav-button {
+  width: 28px;
+  padding: 0;
+  border-color: transparent;
+  color: var(--mics-fg-muted);
+}
+
+.catalog-detail__nav-button:hover {
+  border-color: var(--mics-accent);
+  color: var(--mics-accent);
 }
 
 /* 详情操作行：左对齐，页面追加的按钮与默认按钮同一行、同一间距 */
