@@ -1,5 +1,4 @@
 import { Context } from 'cordis'
-import type { LogWriteRequest } from '@mics/sdk'
 import { emitRuntime } from '@mics/sdk'
 import { installLogSink, logError, logInfo, logWarn } from './logging'
 import { failBootScreen, hideBootScreen } from '../boot-screen'
@@ -31,10 +30,9 @@ export async function boot(): Promise<void> {
   // 等 IPC 通道可用后再接日志出口：之后的启动信息与插件加载日志都会进主进程日志文件
   await ctx.inject(['ipc'], () => {})
   installLogSink((level, args) => {
-    const request: LogWriteRequest = { level, args }
-    void ctx.ipc.invoke('mics.logger', 'log/write', request).catch(() => {
-      // 日志服务还没激活或主进程正在退出：渲染端不因此阻塞
-    })
+    // 写日志走事件而不是 RPC：logger 插件未启用时没有订阅者，事件直接丢弃，
+    // 渲染端不会因此等待或报错。
+    ctx.ipc.emit('ipc:log/write', { level, args, scope: 'renderer' })
   })
   logInfo('渲染器启动 · 平台 %s', ctx.bridge.platform)
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { emitNotification } from '@mics/sdk'
 import type {
   GameVersion,
   InstallStartResult,
@@ -10,7 +11,6 @@ import type {
   ModSummary,
   ModVersion,
   ModVersionRequest,
-  NotificationsServiceApi,
   PackKind
 } from '@mics/sdk'
 import { usePluginContext, useOpenExternal } from '@mics/sdk/renderer'
@@ -120,17 +120,7 @@ function notify(version: CatalogVersion, instanceCount: number): void {
     duration: 0
   }
 
-  // 优先走通知插件暴露的全局入口；它不受插件 fiber 之间服务可见性的影响。
-  const globalApi = (
-    globalThis as typeof globalThis & {
-      __MICS_NOTIFICATIONS__?: NotificationsServiceApi
-    }
-  ).__MICS_NOTIFICATIONS__
-  if (globalApi) {
-    globalApi.show(options)
-    return
-  }
-  ctx.notifications.show(options)
+  emitNotification(ctx, options)
 }
 
 async function install(payload: { instanceNames: string[] }): Promise<void> {

@@ -5,7 +5,7 @@
   "description": "资源包目录：从 Modrinth / CurseForge 搜索资源包，安装到实例的 resourcepacks 目录。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",
-  "dependencies": ["mics.download.manager", "mics.notifications"],
+  "dependencies": ["mics.download.manager"],
   "permissions": ["shell:openExternal"],
   "contributes": {
     "nav": [

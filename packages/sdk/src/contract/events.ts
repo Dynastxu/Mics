@@ -2,6 +2,7 @@ import type { Context } from 'cordis'
 import type { CapabilityProviderInfo } from './capability'
 import type { PluginId } from './manifest'
 import type { ModProjectKind, ModSourceKind } from './mod'
+import type { NotificationOptions } from './notifications'
 import type { RpcRequest, RpcResponse } from './runtime'
 
 /**
@@ -91,6 +92,14 @@ export interface MicsEvents {
   /** 通知：某能力的提供方发生变化（新增、撤销、被更高优先级顶替）。 */
   'capability/changed'(name: string, providers: CapabilityProviderInfo[]): void
 
+  /**
+   * 通知：请求显示一条界面通知。
+   *
+   * 由 `mics.notifications` 订阅；插件被禁用时没有订阅者，事件自然丢弃，
+   * 调用方不依赖通知插件的生命周期。
+   */
+  'notification/show'(options: NotificationOptions | string): void
+
   /** 通知：导航切换到指定页面；插件可在页面重新可见时刷新数据。 */
   'ui/viewActivated'(viewId: string): void
 
@@ -121,6 +130,7 @@ export const EVENT_MODES = {
   'ipc/before': 'waterfall',
   'ipc/after': 'emit',
   'capability/changed': 'emit',
+  'notification/show': 'emit',
   'ui/viewActivated': 'emit',
   'catalog/describe': 'waterfall'
 } as const satisfies Record<keyof MicsEvents, EventDispatchMode>

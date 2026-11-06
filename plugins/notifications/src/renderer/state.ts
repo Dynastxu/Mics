@@ -2,7 +2,7 @@ import { reactive } from 'vue'
 import type { NotificationItem, NotificationLevel, NotificationOptions } from '@mics/sdk'
 
 /**
- * 通知队列是模块级状态：服务负责入队/定时，宿主组件负责绘制。
+ * 通知队列是模块级状态：事件监听负责入队/定时，宿主组件负责绘制。
  *
  * 两者分开后宿主不需要从 cordis 上下文取服务，插件被禁用时宿主随覆盖层一起
  * 卸载，队列与定时器由插件 fiber 清理。

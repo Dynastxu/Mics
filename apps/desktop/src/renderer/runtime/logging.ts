@@ -4,8 +4,8 @@ import type { LogLevel } from '@mics/sdk'
  * 渲染进程的日志出口。
  *
  * 渲染进程没有文件系统权限：真正的落盘由主进程的 `mics.logger` 完成。
- * 这里只保留一个可替换的出口（由 boot() 注入到主进程的 RPC），
- * 主进程日志服务尚未就绪时退回控制台，保证日志不会丢得无声无息。
+ * 这里只保留一个可替换的出口（由 boot() 注入 `ipc:log/write` 事件），
+ * 主进程日志插件未启用时退回控制台，保证日志不会丢得无声无息。
  */
 export type RendererLogSink = (level: LogLevel, args: unknown[]) => void
 
@@ -39,7 +39,7 @@ function print(level: LogLevel, args: unknown[]): void {
 }
 
 function write(level: LogLevel, args: unknown[]): void {
-  // 开发期同时写 DevTools 控制台：主进程日志服务未就绪时 RPC 会静默失败，
+  // 开发期同时写 DevTools 控制台：日志插件未启用时事件没有订阅者，
   // 控制台是排查启动问题的唯一兜底。
   if (import.meta.env.DEV) print(level, args)
   if (sink) {

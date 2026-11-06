@@ -1,8 +1,12 @@
+import type { Context } from 'cordis'
+import { pluginIdOf } from './services'
+
 /**
- * 日志服务的共享契约。
+ * 日志的共享契约。
  *
- * `mics.logger` 插件在主进程提供 `ctx.logs`，其它插件通过 `inject: ['logs']` 使用。
- * 日志按「每次启动一个文件」写入 `<userData>/logs`，保留数量可在设置中调整。
+ * 日志不是服务：主进程插件直接用 cordis 的 `ctx.logger(...)`，渲染进程插件用
+ * `writeLog()` 发出 `ipc:log/write` 事件，`mics.logger` 只是这些输出的可选观察者。
+ * 禁用日志插件不会让任何插件停在等待服务的状态。
  */
 
 /** 日志级别，从低到高 */
@@ -29,20 +33,6 @@ export interface LogScope {
   error(message: unknown, ...args: unknown[]): void
 }
 
-/**
- * 主进程日志服务。
- *
- * 直接调用时作用域自动取调用方插件 id；需要固定标签时先用 `scope(name)`。
- */
-export interface LogsServiceApi extends LogScope {
-  /** 显式指定作用域；调用方插件 id 不再参与 */
-  scope(name: string): LogScope
-  /** 本次启动对应的日志文件绝对路径 */
-  readonly file: string
-  /** 日志目录绝对路径 */
-  readonly directory: string
-}
-
 /** 日志插件设置 */
 export interface LogSettings {
   /** 保留的日志文件个数（1–50） */
@@ -57,15 +47,48 @@ export interface LogStatus extends LogSettings {
 }
 
 /**
- * 渲染进程写入主进程日志的请求（RPC：`mics.logger` / `log/write`）。
+ * 写入主进程日志的请求（事件：`ipc:log/write`）。
  *
- * 渲染进程没有文件系统权限，日志统一交给主进程落盘；
- * 作用域优先取调用方插件 id（与 IPC 的 callerId 一样是尽力而为的标识，不是安全边界）。
+ * 渲染进程没有文件系统权限，日志统一交给主进程落盘；作用域由 `writeLog()`
+ * 自动取调用方插件 id，也可以显式传入。
  */
 export interface LogWriteRequest {
   level: LogLevel
   /** 沿用 cordis 的 `%s` / `%d` / `%o` 参数形态 */
   args: unknown[]
+  /** 日志行里的来源标签；缺省由 logger 插件退回 `renderer` */
+  scope?: string
+}
+
+declare module 'cordis' {
+  interface Events {
+    /**
+     * 写日志请求。
+     *
+     * `mics.logger` 订阅这个事件；插件被禁用时没有监听者，事件自然丢弃，
+     * 调用方不会因此失败或等待。
+     */
+    'ipc:log/write'(request: LogWriteRequest): void
+  }
+}
+
+/**
+ * 通过事件写一条日志。
+ *
+ * 不要求调用方注入日志服务：主进程插件也可以直接使用 cordis 的
+ * `ctx.logger(...)`，它会由 `mics.logger` 的导出器写入文件。
+ */
+export function writeLog(
+  ctx: Context,
+  level: LogLevel,
+  message: unknown,
+  ...args: unknown[]
+): void {
+  ctx.ipc.emit('ipc:log/write', {
+    level,
+    args: [message, ...args],
+    scope: pluginIdOf(ctx)
+  })
 }
 
 /** 默认保留最近 5 个日志文件（含本次启动的文件） */

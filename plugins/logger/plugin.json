@@ -2,13 +2,12 @@
   "id": "mics.logger",
   "name": "日志",
   "version": "0.1.0",
-  "description": "按启动分文件的日志服务：其它插件通过 ctx.logs 写入，启动阶段日志自动补录，渲染进程经 RPC 汇总；保留数量、目录与当前日志在通用设置页里调整。",
+  "description": "按启动分文件的日志观察者：主进程经 ctx.logger 输出、渲染进程经 ipc:log/write 事件写入，启动阶段日志自动补录；保留数量、目录与当前日志在通用设置页里调整。可随时禁用，禁用后只是不再落盘。",
   "author": "mics",
   "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
   "activation": ["*"],
-  "essential": true,
   "dependencies": ["mics.kernel"],
   "contributes": {
     "configuration": {

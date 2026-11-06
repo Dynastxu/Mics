@@ -6,7 +6,7 @@ import type { LogStatus, LogWriteRequest } from '@mics/sdk'
 import { isLogLevel } from '@mics/sdk'
 import { defineMainPlugin } from '@mics/sdk/main'
 import { LogSink } from './sink'
-import { LogsService } from './service'
+import { LogWriter } from './writer'
 import { readLogSettings, writeLogSettings } from './settings'
 
 export const name = 'mics.logger'
@@ -47,18 +47,18 @@ function readBuffer(ctx: Context): Message[] {
 /** 开发模式下把日志同时打印到控制台；debug 只进文件，避免刷屏 */
 
 function writeRendererLog(
-  logs: LogsService,
+  logs: LogWriter,
   request: LogWriteRequest | undefined,
-  callerId: string | undefined
+  scope: string | undefined
 ): void {
   const level = isLogLevel(request?.level) ? request.level : 'info'
   // 参数来自渲染进程：只接受有限数量，避免一次 RPC 把日志文件撑爆
   const args = Array.isArray(request?.args) ? request.args.slice(0, 32) : [request ?? '']
-  logs.record(level, callerId ?? 'renderer', args, Date.now())
+  logs.record(level, scope ?? 'renderer', args, Date.now())
   // 渲染端日志不经过 ctx.logger，ConsoleExporter 看不到；开发构建在终端补一行，
   // 否则排查启动问题时只能翻日志文件。
   if (!app.isPackaged && level !== 'debug') {
-    const label = `[renderer:${callerId ?? 'renderer'}]`
+    const label = `[renderer:${scope ?? 'renderer'}]`
     // 与 ctx.logger 一致：支持 %s / %d / %o 占位符
     const line = `${label} ${utilFormat(args[0] as string, ...args.slice(1))}`
     if (level === 'error') console.error(line)
@@ -70,15 +70,17 @@ function writeRendererLog(
 /**
  * 日志插件（主进程）。
  *
- * - 提供 `ctx.logs` 服务，其它插件用 `inject: ['logs']` 调用；
- * - 每次启动创建一个日志文件，保留数量由设置页控制（默认 5）；
+ * - 订阅 `ipc:log/write` 事件，接收渲染进程发来的日志（事件没有订阅者时自然丢弃）；
  * - 同时把 cordis 的 `ctx.logger(...)` 输出写入同一个文件，
- *   因此内核与已有插件不需要改代码就能被记录；
- * - 启动早于本插件的日志从 cordis 缓冲区补录，渲染进程的日志经 RPC 汇总。
+ *   因此主进程插件与内核不需要改代码就能被记录；
+ * - 每次启动创建一个日志文件，保留数量由设置页控制（默认 5）；
+ * - 启动早于本插件的日志从 cordis 缓冲区补录。
+ *
+ * 本插件可以被禁用：所有写日志的调用方都不依赖它，禁用后只是不再落盘。
  */
 export function apply(ctx: Context): void {
   const directory = path.join(app.getPath('userData'), 'logs')
-  const logs = new LogsService(ctx, {
+  const logs = new LogWriter({
     sink: acquireSink(directory),
     maxFiles: readLogSettings(ctx.storage).maxFiles
     // 控制台输出由 Cordis 的 ConsoleExporter 负责（bootstrap 在开发构建挂载），
@@ -117,10 +119,10 @@ export function apply(ctx: Context): void {
     }
   })
 
-  // 渲染进程没有文件系统权限：日志经这条 RPC 汇总到主进程写入同一文件；
-  // 作用域优先取调用方插件 id（与 IPC callerId 一样是尽力而为的标识）
-  ctx.ipc.handle<LogWriteRequest>('log/write', (request, meta) => {
-    writeRendererLog(logs, request, meta.callerId)
+  // 渲染进程没有文件系统权限：日志经 `ipc:log/write` 事件汇总到主进程；
+  // 作用域由 `writeLog()` 带上，缺省时退回 renderer。
+  ctx.on('ipc:log/write', (request) => {
+    writeRendererLog(logs, request, request.scope)
   })
 
   const status = (): LogStatus => logs.status()

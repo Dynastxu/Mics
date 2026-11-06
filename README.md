@@ -94,11 +94,11 @@ mics/
 │  ├─ download-datapack/    # 数据包目录
 │  ├─ download-resourcepack/# 资源包目录
 │  ├─ download-shader/      # 光影包目录
-│  ├─ notifications/        # 右下角通知服务（ctx.notifications + toast 宿主）
+│  ├─ notifications/        # 右下角通知宿主（订阅 notification/show）
 │  ├─ close-behavior/       # 关闭行为：询问退出 / 最小化至托盘 + 托盘菜单
 │  ├─ settings/             # 设置分组 + 通用设置页
 │  ├─ plugin-inspector/     # 插件管理页（安装 / 启用 / 禁用 / 重载 / 卸载）
-│  ├─ logger/               # 按启动分文件的日志服务 + 通用设置页的日志分组
+│  ├─ logger/               # 按启动分文件的日志观察者 + 通用设置页的日志分组
 │  └─ minekuai/             # 麦块开放API：按英文原文匹配中文名称/描述
 ├─ examples/
 │  └─ hello-tool/           # 验收用示例插件：页面 + 主进程 RPC + 文件读写 + 设置项 + 卸载脚本
@@ -218,25 +218,30 @@ interface LaunchCredentials {
 
 ## 日志
 
-`mics.logger` 是主进程插件，提供 `ctx.logs`；其它插件在清单里声明依赖，再注入即可：
+日志不是必须注入的服务，而是「输出 + 可选观察者」：主进程插件直接用 cordis 的
+`ctx.logger(...)`，渲染进程插件用 `writeLog()` 发出 `ipc:log/write` 事件。
+`mics.logger` 启用时订阅这些来源并写入文件；禁用后事件自然丢弃，不影响调用方。
 
 ```ts
 import { defineMainPlugin } from '@mics/sdk/main'
 
 export const name = 'mics.my-plugin'
-export const inject = ['logs']
 
 export default defineMainPlugin({
   name,
-  inject,
   apply(ctx) {
-    // 作用域自动取调用方插件 id：mics.my-plugin
-    ctx.logs.info('开始处理 %s', 'download')
-
-    // 需要固定标签时显式指定
-    ctx.logs.scope('download').warn('镜像不可用，回退到官方源')
+    // 作用域就是这里的标签
+    ctx.logger('mics.my-plugin').info('开始处理 %s', 'download')
   }
 })
+```
+
+渲染进程：
+
+```ts
+import { writeLog } from '@mics/sdk'
+
+writeLog(ctx, 'info', '开始处理 %s', 'download')
 ```
 
 - 每次启动创建一个 `<userData>/logs/mics-<时间>.log`；默认保留最近 5 个，
@@ -244,13 +249,11 @@ export default defineMainPlugin({
 - 正文沿用 cordis 的 `%s` / `%d` / `%o` 占位符，传 `Error` 时记录堆栈；
 - 启动、插件扫描 / 激活 / 禁用 / 安装 / 卸载、启动游戏、下载与配置变更都会写 **INFO**；
   启动阶段的日志由 cordis 缓冲区补录，日志插件晚于内核激活也不会丢；
-- 渲染进程的日志经 `mics.logger/log/write` 汇总到同一个文件，作用域取调用方插件 id；
+- 渲染进程的日志经 `ipc:log/write` 事件汇总到同一个文件，作用域由 `writeLog()` 带上；
 - 日志文件保留 debug 级别；开发模式下 info / warn / error 同时打印到控制台；
 - 已有 `ctx.logger(...)` 的输出也会写进同一个文件，存量插件不需要改代码；
-- `ctx.logs` 是主进程服务；渲染进程插件可调用 `mics.logger` 的 `log/write`（作用域自动取调用方 id），
-  或经自己的主进程插件转发；
-- `mics.logger` 是必需插件（其它插件可能依赖 `logs` 服务），不可在插件管理里禁用，
-  清单里声明 `"dependencies": ["mics.logger"]` 可让内核先激活它。
+- `mics.logger` 可以被禁用：它不提供任何插件必须注入的服务，禁用后只是不再落盘；
+  插件不需要在清单里声明对它的 `dependencies`。
 
 ## 通用组件
 
@@ -328,9 +331,9 @@ demo 在 `packages/ui/demo`，直接复用 shell 的 `main.css`，改 `packages/
 - 插件不再懒加载：主进程由 Cordis Include 在启动时整树挂载（`userData/cordis.yml`），
   渲染进程也在启动时把所有插件的渲染半边加载一次。导航仍由清单在代码加载前渲染，
   因此首屏不依赖插件执行。`activation` 字段现在只影响诊断展示。
-- 右下角通知：渲染端插件声明 `inject: ['notifications']` 后调用
-  `ctx.notifications.show({ title, message, level })`；`mics.notifications`
-  随外壳启动，并把通知宿主挂到 `body` 上，不占用导航页。
+- 右下角通知：渲染端插件调用 `emitNotification(ctx, { title, message, level })`，
+  `mics.notifications` 订阅 `notification/show` 并把宿主挂到 `body` 上。
+  通知插件没有 inject 依赖，禁用后事件自然丢弃，不占用导航页。
 - `ctx.effect()`、`ctx.ipc.handle()`、`ctx.ui.registerView()` 等注册都绑定在调用方插件
   的 fiber 上，插件禁用或卸载时自动清理；主进程插件的开关状态持久化在
   `userData/cordis.yml` 的 `disabled` 字段，纯渲染插件仍写 `userData/disabled-plugins.json`。

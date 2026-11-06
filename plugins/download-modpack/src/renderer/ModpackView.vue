@@ -4,6 +4,7 @@ import {
   INSTANCE_NAME_MAX_LENGTH,
   MOD_LOADER_LABELS,
   MOD_LOADERS,
+  emitNotification,
   sanitizeInstanceName,
   validateInstanceName
 } from '@mics/sdk'
@@ -17,8 +18,7 @@ import type {
   ModSourceKind,
   ModSummary,
   ModVersion,
-  ModVersionRequest,
-  NotificationsServiceApi
+  ModVersionRequest
 } from '@mics/sdk'
 import { usePluginContext, useOpenExternal } from '@mics/sdk/renderer'
 import { CatalogBrowser, InstanceInstallDialog } from '@mics/ui'
@@ -180,16 +180,7 @@ function notify(message: string): void {
     // 安装通知不自动消失，避免用户切回窗口时已经错过
     duration: 0
   }
-  const globalApi = (
-    globalThis as typeof globalThis & {
-      __MICS_NOTIFICATIONS__?: NotificationsServiceApi
-    }
-  ).__MICS_NOTIFICATIONS__
-  if (globalApi) {
-    globalApi.show(options)
-    return
-  }
-  ctx.notifications.show(options)
+  emitNotification(ctx, options)
 }
 
 async function install(name: string): Promise<void> {

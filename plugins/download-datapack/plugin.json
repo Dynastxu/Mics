@@ -5,7 +5,7 @@
   "description": "数据包目录：从 Modrinth / CurseForge 搜索数据包，安装到实例的指定存档。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",
-  "dependencies": ["mics.download.manager", "mics.notifications"],
+  "dependencies": ["mics.download.manager"],
   "permissions": ["shell:openExternal"],
   "contributes": {
     "nav": [

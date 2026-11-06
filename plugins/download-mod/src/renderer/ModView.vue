@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { MOD_LOADER_LABELS, MOD_LOADERS, MOD_OPEN_INTENT_KEY } from '@mics/sdk'
+import {
+  MOD_LOADER_LABELS,
+  MOD_LOADERS,
+  MOD_OPEN_INTENT_KEY,
+  emitNotification,
+  writeLog
+} from '@mics/sdk'
 import type {
   ModLoader,
   ModOpenIntent,
@@ -10,8 +16,7 @@ import type {
   ModVersion,
   ModVersionRequest,
   ModCategory,
-  GameVersion,
-  NotificationsServiceApi
+  GameVersion
 } from '@mics/sdk'
 import { usePluginContext, useOpenExternal } from '@mics/sdk/renderer'
 import { CatalogBrowser } from '@mics/ui'
@@ -182,12 +187,7 @@ function openDownloadSettings(): void {
 function onInstallStarted(_jobId: string, instanceCount: number): void {
   const version = installVersion.value
   closeInstall()
-  void ctx.ipc
-    .invoke('mics.logger', 'log/write', {
-      level: 'debug',
-      args: ['[notifications] 显示安装通知：%s', version?.name ?? '']
-    })
-    .catch(() => undefined)
+  writeLog(ctx, 'debug', '[notifications] 显示安装通知：%s', version?.name ?? '')
   const options = {
     level: 'info' as const,
     title: '已开始安装',
@@ -198,18 +198,7 @@ function onInstallStarted(_jobId: string, instanceCount: number): void {
     duration: 0
   }
 
-  // 优先走通知插件暴露的全局入口；它不受插件 fiber 之间服务可见性的影响。
-  const globalApi = (
-    globalThis as typeof globalThis & {
-      __MICS_NOTIFICATIONS__?: NotificationsServiceApi
-    }
-  ).__MICS_NOTIFICATIONS__
-  if (globalApi) {
-    globalApi.show(options)
-    return
-  }
-
-  ctx.notifications.show(options)
+  emitNotification(ctx, options)
 }
 </script>
 

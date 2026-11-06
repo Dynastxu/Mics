@@ -5,8 +5,6 @@ import type {} from '@cordisjs/plugin-timer'
 import type { CapabilitiesServiceApi } from './capability'
 import type { PluginConfigurationInfo } from './configuration'
 import type { PluginGraphReport } from './diagnostics'
-import type { LogsServiceApi } from './logs'
-import type { NotificationsServiceApi } from './notifications'
 import type { Permission, PluginId } from './manifest'
 import type { PluginFailureStage, PluginInstallSummary } from './plugins'
 import type {
@@ -329,10 +327,7 @@ declare module 'cordis' {
     configuration: ConfigurationServiceApi
     /** 主窗口生命周期（销毁 / 重建）；由内核包装宿主桥接提供 */
     mainWindow: MainWindowServiceApi
-    /** 由 mics.logger 插件提供；其它插件通过 inject: ['logs'] 使用 */
-    logs: LogsServiceApi
     ui: UiServiceApi
-    notifications: NotificationsServiceApi
     theme: ThemeServiceApi
     bridge: BridgeApi
   }

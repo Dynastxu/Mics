@@ -1,11 +1,9 @@
-import type { Context } from 'cordis'
-import { Service } from 'cordis'
 import type { LogLevel, LogScope, LogStatus } from '@mics/sdk'
-import { normalizeLogMaxFiles, pluginIdOf } from '@mics/sdk'
+import { normalizeLogMaxFiles } from '@mics/sdk'
 import { formatArgs, formatLine } from './format'
 import { LogSink } from './sink'
 
-export interface LogsServiceOptions {
+export interface LogWriterOptions {
   /** 进程内共享的写入端：插件重载时复用同一个文件，而不是再开一份 */
   sink: LogSink
   maxFiles: number
@@ -13,7 +11,7 @@ export interface LogsServiceOptions {
   mirror?: (level: LogLevel, scope: string, text: string) => void
 }
 
-/** 一条已经产生、但日志服务尚未就绪的历史消息（来自 cordis logger 缓冲区） */
+/** 一条已经产生、但日志插件尚未就绪的历史消息（来自 cordis logger 缓冲区） */
 export interface LogHistoryEntry {
   ts: number
   name: string
@@ -25,21 +23,18 @@ const DEFAULT_SCOPE = 'mics'
 const MAX_SCOPE_LENGTH = 48
 
 /**
- * 主进程日志服务（`ctx.logs`）。
+ * 日志文件的写入端。
  *
- * 直接调用时，借助 cordis 的调用方追踪把作用域取成插件 id：
- * `ctx.logs.info('x')` → `[mics.download] x`。需要固定标签时用 `scope(name)`。
- * 所有输出落到本次启动的单个文件，由 LogSink 负责创建与轮转。
+ * 它不是 cordis 服务：主进程插件用 `ctx.logger(...)` 输出，渲染进程插件用
+ * `writeLog()` 发出事件，`mics.logger` 只负责订阅这些来源并落盘。因此日志
+ * 插件可以被禁用而不影响任何调用方。
  */
-export class LogsService extends Service {
-  static inject: string[] = []
-
+export class LogWriter {
   private readonly sink: LogSink
-  private readonly mirror?: LogsServiceOptions['mirror']
+  private readonly mirror?: LogWriterOptions['mirror']
   private limit: number
 
-  constructor(ctx: Context, options: LogsServiceOptions) {
-    super(ctx, 'logs')
+  constructor(options: LogWriterOptions) {
     this.limit = normalizeLogMaxFiles(options.maxFiles)
     this.sink = options.sink
     this.mirror = options.mirror
@@ -56,22 +51,6 @@ export class LogsService extends Service {
 
   get maxFiles(): number {
     return this.limit
-  }
-
-  debug(message: unknown, ...args: unknown[]): void {
-    this.write('debug', this.callerScope(), [message, ...args])
-  }
-
-  info(message: unknown, ...args: unknown[]): void {
-    this.write('info', this.callerScope(), [message, ...args])
-  }
-
-  warn(message: unknown, ...args: unknown[]): void {
-    this.write('warn', this.callerScope(), [message, ...args])
-  }
-
-  error(message: unknown, ...args: unknown[]): void {
-    this.write('error', this.callerScope(), [message, ...args])
   }
 
   scope(name: string): LogScope {
@@ -96,8 +75,8 @@ export class LogsService extends Service {
   }
 
   /**
-   * 供 cordis logger 导出器使用：级别与作用域已由 logger 消息给出，
-   * 这里只负责格式化并落盘。
+   * 供 cordis logger 导出器与 `ipc:log/write` 事件使用：级别与作用域已由
+   * 消息/请求给出，这里只负责格式化并落盘。
    */
   record(level: LogLevel, scope: string, args: unknown[], ts: number): void {
     this.append(level, scope, formatArgs(args), ts)
@@ -128,11 +107,6 @@ export class LogsService extends Service {
     } catch {
       // 控制台镜像只是开发便利，失败不能影响落盘
     }
-  }
-
-  /** 调用方插件 id（由 cordis 追踪）；不在插件作用域时用默认标签 */
-  private callerScope(): string {
-    return scopeLabel(pluginIdOf(this.ctx))
   }
 }
 

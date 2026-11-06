@@ -1,5 +1,12 @@
+import type { Context } from 'cordis'
+import { emitEvent } from './events'
+
 /**
- * 渲染进程通知服务（`ctx.notifications`）。
+ * 通知的共享契约。
+ *
+ * 通知不是服务：插件用 `emitNotification()` 发出 `notification/show` 事件，
+ * `mics.notifications` 只是这个事件的可选订阅者。禁用通知插件不会让任何插件
+ * 停在等待服务的状态。
  *
  * 通知只在界面内显示，不做系统托盘/系统通知；需要系统通知的场景应由主进程
  * 另行申请 `notifications:show` 权限。这里的通道面向「操作已受理、请去某页
@@ -25,11 +32,7 @@ export interface NotificationItem {
   createdAt: number
 }
 
-export interface NotificationsServiceApi {
-  /** 当前展示中的通知；按加入顺序排列 */
-  readonly items: readonly NotificationItem[]
-  /** 推送一条通知，返回可用于主动关闭的 id */
-  show(options: NotificationOptions | string): string
-  dismiss(id: string): void
-  clear(): void
+/** 通过事件发起通知，不需要 inject 通知插件。 */
+export function emitNotification(ctx: Context, options: NotificationOptions | string): void {
+  emitEvent(ctx, 'notification/show', options)
 }
