@@ -1,4 +1,5 @@
 import { Context, Service } from 'cordis'
+import * as CordisRuntime from 'cordis'
 import type { Fiber, Plugin } from 'cordis'
 import { FIBER_ACTIVE, type PluginId } from '@mics/sdk'
 import {
@@ -135,6 +136,12 @@ let fiber: Fiber | undefined
 let ipc: RemoteIpcService | undefined
 let storage: RemoteStorageService | undefined
 let stopping = false
+
+/**
+ * 插件产物把 `cordis` 解析成 shim，运行时从 globalThis 上取。
+ * 主进程由 bootstrap 设置；子进程里由这里设置，插件代码无感。
+ */
+;(globalThis as { __MICS_CORDIS__?: unknown }).__MICS_CORDIS__ = CordisRuntime
 
 async function start(message: BootstrapMessage): Promise<void> {
   ctx = new Context()

@@ -247,6 +247,7 @@ async function start(): Promise<void> {
   const config: KernelConfig = {
     app: createAppInfo(boot.profile),
     kernel: boot.kernel,
+    sandbox: boot.sandbox,
     plugins: scan.plugins,
     pluginRoots,
     userPluginRoot,

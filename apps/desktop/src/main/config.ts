@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import type { AppInfo, ProfileConfig } from '@mics/sdk'
+import type { AppInfo, ProfileConfig, SandboxMode } from '@mics/sdk'
 
 export interface BootConfig {
   /** 内核插件 id；bootstrap 只认识它 */
@@ -12,6 +12,8 @@ export interface BootConfig {
   disabled: string[]
   /** 部署 profile 名；对应 userData/profiles/<name>.json */
   profile?: string
+  /** 沙箱模式；缺省 off（插件全部跑在主进程） */
+  sandbox?: SandboxMode
 }
 
 /**
@@ -59,7 +61,11 @@ export function loadBootConfig(onWarning: ConfigWarning = consoleWarning): BootC
         disabled: Array.isArray(raw.disabled)
           ? raw.disabled.filter((item): item is string => typeof item === 'string')
           : [],
-        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined
+        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined,
+        sandbox:
+          raw.sandbox === 'audit' || raw.sandbox === 'enforce' || raw.sandbox === 'off'
+            ? (raw.sandbox as SandboxMode)
+            : undefined
       }
     } catch (error) {
       onWarning(`读取 ${file} 失败：${(error as Error).message}`)

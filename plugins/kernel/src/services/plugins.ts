@@ -37,6 +37,7 @@ import type {
   PluginUnmetRef,
   ProfileLock,
   RuntimeSnapshot,
+  SandboxMode,
   ScanError,
   StorageServiceApi
 } from '@mics/sdk'
@@ -61,6 +62,7 @@ import {
   type IpcRegistrationSnapshot
 } from '../cleanupAudit'
 import { readTreeFile, writeTreeFile } from './treeFile'
+import { PluginWorkerHost } from './pluginWorkerHost'
 
 /** 等插件真正停下来的上限；超过就认为它没救，交给失败态与用户重试 */
 const STOP_TIMEOUT_MS = 10_000
@@ -72,6 +74,8 @@ interface Entry {
   /** 停止超时过：旧代码可能仍在跑，重启应用前拒绝再次激活 */
   restartRequired?: boolean
   fiber?: Fiber
+  /** 子进程插件：非 full 信任级别的插件跑在独立进程里 */
+  worker?: PluginWorkerHost
   /** fiber 是由 Cordis Loader 的 entry 建立的：停用时必须一并移除树节点 */
   loaderEntry?: boolean
   /** 清单依赖的问题（缺失 / 自依赖 / 循环），激活前就能确定 */
@@ -1020,6 +1024,13 @@ export class PluginsService extends Service {
       }
 
       if (entry.record.entryMain) {
+        // 非 full 信任级别的插件跑在独立进程里：先于 Loader 判断，
+        // 否则 Loader 会在主进程里把它挂起来。
+        if (this.shouldRunInWorker(entry)) {
+          await this.startInWorker(entry)
+          return
+        }
+
         // 优先交给 Cordis Loader：插件树、fiber 建立与卸载都由它负责，
         // 内核只保留清单、依赖闭包与状态映射。Loader 不可用时退回直接挂载。
         const loader = this.loaderService()
@@ -1081,6 +1092,28 @@ export class PluginsService extends Service {
 
   /** 停掉 fiber；返回 true 表示超时（代码可能还在跑） */
   private async stop(entry: Entry): Promise<boolean> {
+    // 子进程插件没有 fiber，停的是进程
+    if (entry.worker) {
+      const worker = entry.worker
+      const id = entry.record.manifest.id
+      entry.worker = undefined
+      try {
+        await withTimeout(
+          worker.dispose(),
+          STOP_TIMEOUT_MS,
+          `插件 ${id} 的子进程停止超时（${STOP_TIMEOUT_MS}ms）`
+        )
+        this.baseCtx.logger('plugins').debug('插件 %s 的子进程已停止', id)
+        return false
+      } catch (error) {
+        const message = toMessage(error)
+        entry.failure = { stage: 'timeout', message, at: Date.now() }
+        entry.restartRequired = true
+        this.baseCtx.logger('plugins').warn(`插件 ${id} 的子进程停止异常：${message}`)
+        return true
+      }
+    }
+
     const fiber = entry.fiber
     entry.fiber = undefined
     entry.waitingFor = undefined
@@ -1691,6 +1724,113 @@ export class PluginsService extends Service {
       temp: os.tmpdir(),
       home: os.homedir()
     })
+  }
+
+  private sandboxMode(): SandboxMode {
+    return this.config.sandbox ?? 'off'
+  }
+
+  /** 只有声明了非 full 信任级别、又带主进程入口的插件才进子进程 */
+  private shouldRunInWorker(entry: Entry): boolean {
+    if (this.sandboxMode() === 'off') return false
+    if (!entry.record.entryMain) return false
+    return (entry.record.manifest.permissions?.trust ?? 'full') !== 'full'
+  }
+
+  /** worker 运行时由构建脚本产出到内核自己的 dist 里 */
+  private workerEntryPath(): string | undefined {
+    const kernel = this.config.plugins.find((record) => record.manifest.id === this.config.kernel)
+    if (!kernel) return undefined
+    return path.join(kernel.dir, 'dist', 'worker.mjs')
+  }
+
+  private async startInWorker(entry: Entry): Promise<void> {
+    const id = entry.record.manifest.id
+    const workerEntry = this.workerEntryPath()
+    if (!workerEntry || !existsSync(workerEntry)) {
+      throw new PluginFailureError(
+        'apply',
+        `插件 ${id} 需要子进程运行，但找不到 worker 入口（先 pnpm build:plugins）`
+      )
+    }
+
+    const storage = this.baseCtx.get('storage') as
+      | (StorageServiceApi & {
+          keysFor?: (pluginId: PluginId) => string[]
+          getFor?: (pluginId: PluginId, key: string) => unknown
+          setFor?: (pluginId: PluginId, key: string, value: unknown) => void
+          deleteFor?: (pluginId: PluginId, key: string) => void
+        })
+      | undefined
+
+    // 启动快照：worker 里 storage 是同步 API，读的是这份内存副本
+    const snapshot: Record<string, unknown> = {}
+    for (const key of storage?.keysFor?.(id) ?? []) {
+      snapshot[key] = storage?.getFor?.(id, key)
+    }
+
+    const host = await PluginWorkerHost.start({
+      id,
+      entry: entry.record.entryMain as string,
+      workerEntry,
+      permissions: this.resolvePermissionPaths(entry.record.manifest, entry.record.dir),
+      storage: snapshot,
+      paths: {
+        userData: this.config.userDataDir,
+        pluginDir: entry.record.dir,
+        temp: os.tmpdir(),
+        home: os.homedir()
+      },
+      app: { version: this.config.app.version, isDev: this.config.app.isDev },
+      enforce: this.sandboxMode() === 'enforce',
+      onRegister: (method) => this.attachWorkerHandler(entry, method),
+      onUnregister: (method) => this.detachWorkerHandler(entry, method),
+      onStorageSet: (key, value) => {
+        try {
+          storage?.setFor?.(id, key, value)
+        } catch (error) {
+          this.baseCtx.logger('plugins').warn('插件 %s 的配置写入被拒绝：%s', id, toMessage(error))
+        }
+      },
+      onStorageDelete: (key) => storage?.deleteFor?.(id, key),
+      onLog: (level, message) => {
+        const logger = this.baseCtx.logger(id)
+        if (level === 'error') logger.error(message)
+        else if (level === 'warn') logger.warn(message)
+        else logger.info(message)
+      }
+    })
+
+    entry.worker = host
+    await host.whenReady()
+    this.setState(entry, 'active')
+    this.announceActivated(entry)
+    emitEvent(this.baseCtx, 'plugin/activated', id)
+  }
+
+  private attachWorkerHandler(entry: Entry, method: string): void {
+    const id = entry.record.manifest.id
+    const ipc = this.baseCtx.get('ipc') as
+      | (IpcServiceApi & {
+          handleFor?: (
+            target: PluginId,
+            method: string,
+            handler: (params: unknown) => unknown
+          ) => void
+        })
+      | undefined
+    ipc?.handleFor?.(id, method, (params) => {
+      const worker = entry.worker
+      if (!worker) throw new Error(`插件 ${id} 的子进程尚未就绪`)
+      return worker.invoke(method, params)
+    })
+  }
+
+  private detachWorkerHandler(entry: Entry, method: string): void {
+    const ipc = this.baseCtx.get('ipc') as
+      | (IpcServiceApi & { unhandleFor?: (target: PluginId, method: string) => void })
+      | undefined
+    ipc?.unhandleFor?.(entry.record.manifest.id, method)
   }
 
   /**

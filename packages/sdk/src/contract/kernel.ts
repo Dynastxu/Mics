@@ -64,11 +64,24 @@ export interface ProfileConfig {
   settings: Record<PluginId, Record<string, unknown>>
 }
 
+/**
+ * 沙箱模式。
+ *
+ * - `off`：全部插件跑在主进程内（默认，与今天一致）；
+ * - `audit`：`trust` 不是 `full` 的插件跑进子进程，但**不加**引擎限制；
+ * - `enforce`：同上，并加 `--permission`，文件与子进程由引擎强制。
+ *
+ * 从 `off` 切到 `audit`/`enforce` 只会影响声明了 `trust: isolated|sandboxed` 的插件。
+ */
+export type SandboxMode = 'off' | 'audit' | 'enforce'
+
 /** bootstrap 传给内核插件的配置 */
 export interface KernelConfig {
   app: AppInfo
   /** 内核自身 id，默认 mics.kernel */
   kernel: string
+  /** 沙箱模式；缺省 off */
+  sandbox?: SandboxMode
   /** 首次扫描结果（bootstrap 为了找到内核已经扫过一遍） */
   plugins: PluginRecord[]
   /** 内置插件根目录，只读 */
