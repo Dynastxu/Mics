@@ -1,0 +1,14 @@
+{
+  "name": "@mics/plugin-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "插件子进程的运行时：cordis 上下文 + 宿主服务代理",
+  "exports": {
+    ".": "./src/protocol.ts",
+    "./worker": "./src/worker.ts"
+  },
+  "peerDependencies": {
+    "cordis": ">=4.0.0-rc.12"
+  }
+}
