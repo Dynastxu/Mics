@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Context, Fiber, Plugin } from 'cordis'
@@ -50,7 +51,9 @@ import {
   PLUGIN_SCHEME,
   PluginFailureError,
   PluginUninstallError,
-  pluginIdOf
+  pluginIdOf,
+  resolvePermissions,
+  type ResolvedPermissions
 } from '@mics/sdk'
 import {
   reportIpcRegistrations,
@@ -769,7 +772,11 @@ export class PluginsService extends Service {
     if (existing?.record.source === 'builtin') {
       throw new Error(`插件 id ${result.record.manifest.id} 属于内置插件，不能安装同名插件`)
     }
-    return this.summarize(result.record, existing?.record.manifest.version)
+    return this.summarize(
+      result.record,
+      existing?.record.manifest.version,
+      path.join(this.config.userPluginRoot, result.record.manifest.id)
+    )
   }
 
   /**
@@ -1651,7 +1658,11 @@ export class PluginsService extends Service {
     this.ipcAuditBaselines.delete(id)
   }
 
-  private summarize(record: PluginRecord, installedVersion?: string): PluginInstallSummary {
+  private summarize(
+    record: PluginRecord,
+    installedVersion?: string,
+    installedDir?: string
+  ): PluginInstallSummary {
     const { manifest } = record
     return {
       id: manifest.id,
@@ -1663,8 +1674,23 @@ export class PluginsService extends Service {
       hasRenderer: Boolean(record.entryRenderer),
       hasUninstall: Boolean(record.entryUninstall),
       installedVersion,
+      // 预览时按「安装后的位置」展开 ${pluginDir}，避免显示临时目录
+      permissions: this.resolvePermissionPaths(
+        manifest,
+        installedDir ?? record.dir
+      ),
       warnings: [...record.warnings]
     }
+  }
+
+  /** 把清单里的权限展开成可展示、可直接用于启动参数的形状 */
+  private resolvePermissionPaths(manifest: PluginRecord['manifest'], pluginDir: string): ResolvedPermissions {
+    return resolvePermissions(manifest.permissions, {
+      userData: this.config.userDataDir,
+      pluginDir,
+      temp: os.tmpdir(),
+      home: os.homedir()
+    })
   }
 
   /**
@@ -1787,6 +1813,7 @@ export class PluginsService extends Service {
       uninstallable: !builtin,
       hasUninstall: Boolean(entry.record.entryUninstall),
       manifest,
+      permissions: this.resolvePermissionPaths(manifest, entry.record.dir),
       hasMain: Boolean(entry.record.entryMain),
       hasRenderer: Boolean(entry.record.entryRenderer),
       rendererUrl: this.resolveRenderUrl(entry.record, renderer),

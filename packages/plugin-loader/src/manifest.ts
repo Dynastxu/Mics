@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { validateConfigurationContribution } from '@mics/sdk'
 import type { PluginContributions, PluginManifest } from '@mics/sdk'
+import { validatePermissions } from './permissions'
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
@@ -304,11 +305,11 @@ export function validateManifest(raw: unknown): ValidationResult {
   }
 
   if (raw.permissions !== undefined) {
-    if (!isStringArray(raw.permissions)) {
-      errors.push('permissions 必须是字符串数组')
-    } else {
-      manifest.permissions = raw.permissions as NonNullable<PluginManifest['permissions']>
-    }
+    const permissions = validatePermissions(raw.permissions, errors, warnings)
+    if (permissions) manifest.permissions = permissions
+  } else {
+    // 没有声明 = 今天的行为：主进程内、完全权限
+    manifest.permissions = { trust: 'full' }
   }
 
   const contributions = validateContributions(raw.contributes, errors, warnings)

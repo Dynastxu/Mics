@@ -1,4 +1,5 @@
 import type { PluginId, PluginManifest } from './manifest'
+import type { ResolvedPermissions } from '../permissions'
 import type { PluginFailure, PluginSource, PluginStatus, ProfileLock } from './plugins'
 
 export type PluginState =
@@ -46,6 +47,12 @@ export interface PluginInfo {
   hasUninstall: boolean
   /** 完整清单，渲染端据此生成导航、命令、主题等 */
   manifest: PluginManifest
+  /**
+   * 归一化并展开变量后的权限声明。
+   *
+   * 界面直接用它渲染「这个插件能做什么」；清单里的原始写法在 `manifest.permissions`。
+   */
+  permissions: ResolvedPermissions
   hasMain: boolean
   hasRenderer: boolean
   /** 形如 mics-plugin://mics.download.mod/dist/renderer.mjs */

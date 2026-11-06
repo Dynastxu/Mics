@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
-import { pluginIdOf } from '@mics/sdk'
+import { pluginIdOf, trustLabel } from '@mics/sdk'
 import type {
   PluginConfigurationInfo,
   PluginContributionRef,
@@ -17,7 +17,9 @@ import type {
   PluginInstallSummary,
   PluginProvideRef,
   PluginStatus,
-  PluginUninstallOutcome
+  PluginUninstallOutcome,
+  ResolvedPermissions,
+  TrustLevel
 } from '@mics/sdk'
 import { ConfirmDialog, DataBrowser, ToggleSwitch } from '@mics/ui'
 import type { FilterGroup, ListRow } from '@mics/ui'
@@ -58,6 +60,16 @@ const selectedInfo = computed(() => pluginOf(selectedId.value))
 const selectedConfig = computed(() =>
   configs.value.find((config) => config.pluginId === selectedId.value)
 )
+/** 详情页的权限区块；页面插件没有文件/进程能力，不显示 */
+const selectedPermissions = computed(() => {
+  const info = selectedInfo.value
+  if (!info || !info.hasMain) return undefined
+  return {
+    trust: info.permissions.trust,
+    lines: describePermissions(info.permissions),
+    unresolved: info.permissions.unresolved
+  }
+})
 const scanIssues = computed(() => graph.value?.scanIssues ?? [])
 const unmetOfSelected = computed(() =>
   (graph.value?.unmet ?? []).filter((item) => item.neededBy.includes(selectedId.value))
@@ -67,17 +79,18 @@ const installLines = computed<string[]>(() => {
   const candidate = installCandidate.value
   if (!candidate) return []
   const plugin = candidate.plugin
+  const trust = plugin.permissions.trust
   return [
     `${plugin.id} · v${plugin.version}`,
     plugin.author ? `作者：${plugin.author}` : '',
-    `能力：${capabilityLabel(plugin)}`,
+    `形态：${capabilityLabel(plugin)}`,
+    ...describePermissions(plugin.permissions),
+    plugin.hasMain ? `信任级别：${trustLabel(trust)}` : '',
+    plugin.hasMain ? TRUST_HINTS[trust] : '',
     plugin.hasUninstall ? '包含卸载脚本（卸载时会清理插件自己创建的内容）' : '',
     plugin.installedVersion
       ? `将替换已安装的 v${plugin.installedVersion}，安装后保持禁用`
       : '安装后默认禁用，需要手动启用',
-    plugin.hasMain
-      ? '风险提示：主进程插件拥有与 Mics 相同的权限，可以读写文件、联网与执行命令。'
-      : '',
     ...plugin.warnings.map((warning) => `注意：${warning}`)
   ].filter(Boolean)
 })
@@ -208,6 +221,45 @@ function capabilityLabel(plugin: PluginInstallSummary): string {
   if (plugin.hasMain) return '仅后台'
   if (plugin.hasRenderer) return '仅页面'
   return '仅清单'
+}
+
+/** 信任级别的一句话解释；安装确认与详情页共用 */
+const TRUST_HINTS: Record<TrustLevel, string> = {
+  full: '完全权限：与 MICS 本身同权限，可以读写任意文件、执行任意程序、访问网络。',
+  isolated: '独立进程：崩溃不会影响主程序，但仍拥有完整的文件与进程权限。',
+  sandboxed: '受限权限：只能访问下面列出的资源，越界会被系统拒绝。'
+}
+
+/** 把权限声明摊平成给人看的几行；声明为空时返回空数组 */
+function describePermissions(permissions: ResolvedPermissions): string[] {
+  const lines: string[] = []
+  const scopes = permissions.fs
+
+  if (scopes.read.resolved.length) lines.push(`读取：${scopes.read.resolved.join('、')}`)
+  if (scopes.write.resolved.length) lines.push(`写入：${scopes.write.resolved.join('、')}`)
+  if (scopes.meta.resolved.length) lines.push(`查看：${scopes.meta.resolved.join('、')}`)
+  if (permissions.exec.length) {
+    lines.push(`执行：${permissions.exec.map((rule) => rule.bin).join('、')}`)
+  }
+
+  const net = permissions.net
+  if (net) {
+    if (net.mode === 'none') lines.push('联网：禁止')
+    else if (net.mode === 'all') lines.push('联网：不限')
+    else lines.push(`联网：${(net.hosts ?? []).join('、')}`)
+  }
+
+  const os = permissions.os
+  const system: string[] = []
+  if (os?.openExternal) system.push('打开外部链接')
+  if (os?.notifications) system.push('发送通知')
+  if (os?.clipboard === 'write') system.push('写剪贴板')
+  if (os?.clipboard === 'read') system.push('读写剪贴板')
+  if (os?.dialogs === 'open') system.push('选择文件')
+  if (os?.dialogs === 'save') system.push('保存文件')
+  if (system.length) lines.push(`系统：${system.join('、')}`)
+
+  return lines
 }
 
 function failureHint(stage: PluginFailureStage): string {
@@ -678,6 +730,18 @@ onBeforeUnmount(() => {
         <PluginSettingsPanel v-else :config="selectedConfig" @updated="replaceConfig" />
       </section>
 
+      <section v-if="selectedPermissions" class="inspector__permissions">
+        <h3>权限 · {{ trustLabel(selectedPermissions.trust) }}</h3>
+        <p class="inspector__muted">{{ TRUST_HINTS[selectedPermissions.trust] }}</p>
+        <ul v-if="selectedPermissions.lines.length">
+          <li v-for="line in selectedPermissions.lines" :key="line">{{ line }}</li>
+        </ul>
+        <p v-else class="inspector__muted">没有声明额外权限。</p>
+        <p v-if="selectedPermissions.unresolved.length" class="inspector__notice">
+          未能展开的路径：{{ selectedPermissions.unresolved.join('、') }}
+        </p>
+      </section>
+
       <div v-if="selectedNode" class="inspector__columns">
         <section class="inspector__column">
           <h3>依赖</h3>
@@ -927,20 +991,23 @@ onBeforeUnmount(() => {
 
 .inspector__column h3,
 .inspector__settings h3,
-.inspector__unmet h3 {
+.inspector__unmet h3,
+.inspector__permissions h3 {
   margin: 0 0 6px;
   color: var(--mics-fg-muted);
   font-size: 12px;
   font-weight: 600;
 }
 
-.inspector__settings {
+.inspector__settings,
+.inspector__permissions {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--mics-border);
 }
 
-.inspector__settings .inspector__muted {
+.inspector__settings .inspector__muted,
+.inspector__permissions .inspector__muted {
   margin: 0 0 8px;
   font-size: 12px;
 }
@@ -951,7 +1018,8 @@ onBeforeUnmount(() => {
 }
 
 .inspector__column ul,
-.inspector__unmet ul {
+.inspector__unmet ul,
+.inspector__permissions ul {
   margin: 0;
   padding: 0;
   list-style: none;
