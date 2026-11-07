@@ -63,6 +63,7 @@ import {
   type IpcRegistrationSnapshot
 } from '../cleanupAudit'
 import { readTreeFile, writeTreeFile } from './treeFile'
+import { HostService } from './host'
 import { PluginWorkerHost, ensureWriteRoots } from './pluginWorkerHost'
 
 /** 等插件真正停下来的上限；超过就认为它没救，交给失败态与用户重试 */
@@ -1808,6 +1809,16 @@ export class PluginsService extends Service {
         }
       },
       onStorageDelete: (key) => storage?.deleteFor?.(id, key),
+      onHostCall: async (method, args) => {
+        const host = this.baseCtx.get('host') as HostService | undefined
+        if (!host) throw new Error('宿主能力不可用')
+        if (method === 'openExternal') {
+          await host.openExternalFor(id, String(args))
+          return undefined
+        }
+        if (method === 'openPath') return await host.openPathFor(String(args))
+        throw new Error(`未知的宿主调用：${method}`)
+      },
       onLog: (level, message) => {
         const logger = this.baseCtx.logger(id)
         if (level === 'error') logger.error(message)

@@ -210,16 +210,25 @@ export interface PluginHostApp {
   isDev: boolean
 }
 
+/** 走宿主代做的系统交互；子进程里没有 `electron`，只能到这里要 */
+export interface HostShellApi {
+  /** 用系统浏览器打开链接（需要 `shell:openExternal` 权限） */
+  openExternal(url: string): Promise<void>
+  /** 在文件管理器里定位文件；返回空串表示成功（与 Electron 的 `shell.openPath` 一致） */
+  openPath(path: string): Promise<string>
+}
+
 /**
  * 宿主能力。
  *
  * `app.getPath('userData')` 与 `app.getVersion()` 是插件最常用的两个 Electron 接口，
  * 但子进程里没有 `electron` 模块。这个服务在**两种执行位置同形**：
- * 进程内由内核提供，子进程里由启动参数注入，插件代码不需要区分。
+ * 进程内由内核提供，子进程里由启动参数注入并回调用宿主。
  */
 export interface HostServiceApi {
   readonly paths: PluginHostPaths
   readonly app: PluginHostApp
+  readonly shell: HostShellApi
 }
 
 // ---------------------------------------------------------------------------

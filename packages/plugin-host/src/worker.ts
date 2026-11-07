@@ -25,6 +25,21 @@ function send(message: WorkerToHost): void {
   process.send?.(message)
 }
 
+/** 宿主代做系统交互：请求在子进程发起，真正执行在宿主 */
+const hostPending = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (error: Error) => void }
+>()
+let hostSeq = 0
+
+function hostCall<T>(method: 'openExternal' | 'openPath', args: unknown): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = ++hostSeq
+    hostPending.set(id, { resolve: resolve as (value: unknown) => void, reject })
+    send({ t: 'host-call', id, method, args })
+  })
+}
+
 class RemoteIpcService extends Service {
   static inject: string[] = []
 
@@ -122,6 +137,10 @@ class RemoteHostService extends Service {
   readonly paths: PluginPaths
   readonly app: PluginAppInfo
   readonly pluginId: PluginId
+  readonly shell = {
+    openExternal: (url: string): Promise<void> => hostCall('openExternal', url),
+    openPath: (target: string): Promise<string> => hostCall('openPath', target)
+  }
 
   constructor(ctx: Context, pluginId: PluginId, paths: PluginPaths, app: PluginAppInfo) {
     super(ctx, 'host')
@@ -236,7 +255,13 @@ process.on('message', (message: HostToWorker) => {
   if (message.t === 'bootstrap') void start(message)
   else if (message.t === 'invoke') void invoke(message)
   else if (message.t === 'event') void dispatchEvent(message)
-  else if (message.t === 'dispose') void stop()
+  else if (message.t === 'host-result') {
+    const entry = hostPending.get(message.id)
+    if (!entry) return
+    hostPending.delete(message.id)
+    if (message.ok) entry.resolve(message.value)
+    else entry.reject(new Error(String(message.error)))
+  } else if (message.t === 'dispose') void stop()
 })
 
 process.on('uncaughtException', (error) => {

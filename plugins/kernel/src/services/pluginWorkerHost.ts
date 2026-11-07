@@ -42,6 +42,8 @@ export interface WorkerHostOptions {
   onStorageSet?: (key: string, value: unknown) => void
   onStorageDelete?: (key: string) => void
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
+  /** 子进程请求宿主代做系统交互 */
+  onHostCall?: (method: 'openExternal' | 'openPath', args: unknown) => Promise<unknown>
   onExit?: (code: number | null) => void
 }
 
@@ -273,8 +275,27 @@ export class PluginWorkerHost {
       case 'log':
         this.options.onLog?.(message.level, message.message)
         return
+      case 'host-call':
+        void this.handleHostCall(message)
+        return
       case 'disposed':
         return
+    }
+  }
+
+  /** 子进程的系统交互请求转发给宿主实现 */
+  private async handleHostCall(message: Extract<WorkerToHost, { t: 'host-call' }>): Promise<void> {
+    try {
+      if (!this.options.onHostCall) throw new Error('宿主没有提供系统交互能力')
+      const value = await this.options.onHostCall(message.method, message.args)
+      this.post({ t: 'host-result', id: message.id, ok: true, value })
+    } catch (error) {
+      this.post({
+        t: 'host-result',
+        id: message.id,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })
     }
   }
 

@@ -1,7 +1,15 @@
 import os from 'node:os'
+import { shell } from 'electron'
 import type { Context } from 'cordis'
 import { Service } from 'cordis'
-import type { KernelConfig, PluginHostApp, PluginHostPaths, PluginId } from '@mics/sdk'
+import type {
+  HostShellApi,
+  KernelConfig,
+  PermissionsServiceApi,
+  PluginHostApp,
+  PluginHostPaths,
+  PluginId
+} from '@mics/sdk'
 import { pluginIdOf } from '@mics/sdk'
 
 /**
@@ -40,5 +48,35 @@ export class HostService extends Service {
 
   get app(): PluginHostApp {
     return { version: this.config.app.version, isDev: this.config.app.isDev }
+  }
+
+  /**
+   * 系统交互的代做入口。
+   *
+   * `openExternal` 要求调用方声明 `shell:openExternal`（v1 字符串或
+   * `os.openExternal`），与内核 `host/openExternal` RPC 用的是同一条检查。
+   */
+  get shell(): HostShellApi {
+    return {
+      openExternal: async (url: string): Promise<void> => {
+        await this.openExternalFor(pluginIdOf(this.ctx), url)
+      },
+      openPath: async (target: string): Promise<string> => {
+        return await shell.openPath(target)
+      }
+    }
+  }
+
+  /** 内核代子进程插件调用：显式传插件 id，不走调用方追踪 */
+  async openExternalFor(pluginId: PluginId | undefined, url: string): Promise<void> {
+    const permissions = this.ctx.get('permissions') as PermissionsServiceApi | undefined
+    if (pluginId && permissions && !permissions.allows(pluginId, 'shell:openExternal')) {
+      throw new Error(`插件 ${pluginId} 缺少 shell:openExternal 权限`)
+    }
+    await shell.openExternal(url)
+  }
+
+  async openPathFor(target: string): Promise<string> {
+    return await shell.openPath(target)
   }
 }

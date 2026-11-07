@@ -52,7 +52,29 @@ export interface EventMessage {
   payload?: unknown
 }
 
-export type HostToWorker = BootstrapMessage | InvokeMessage | EventMessage | { t: 'dispose' }
+/** 子进程请求宿主代做一件事（系统交互） */
+export interface HostCallMessage {
+  t: 'host-call'
+  id: number
+  method: 'openExternal' | 'openPath'
+  args: unknown
+}
+
+/** 宿主对 `host-call` 的回复 */
+export interface HostResultMessage {
+  t: 'host-result'
+  id: number
+  ok: boolean
+  value?: unknown
+  error?: string
+}
+
+export type HostToWorker =
+  | BootstrapMessage
+  | InvokeMessage
+  | EventMessage
+  | HostResultMessage
+  | { t: 'dispose' }
 
 export type WorkerToHost =
   | { t: 'ready'; methods: string[] }
@@ -65,6 +87,7 @@ export type WorkerToHost =
   | { t: 'result'; id: number; ok: false; error: string }
   | { t: 'event-result'; id: number; ok: true; value: unknown }
   | { t: 'event-result'; id: number; ok: false; error: string }
+  | HostCallMessage
   | { t: 'log'; level: 'info' | 'warn' | 'error'; message: string }
   | { t: 'disposed' }
 
