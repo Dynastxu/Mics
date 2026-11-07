@@ -209,9 +209,33 @@ async function stop(): Promise<void> {
   setTimeout(() => process.exit(0), 30)
 }
 
+async function dispatchEvent(message: Extract<HostToWorker, { t: 'event' }>): Promise<void> {
+  try {
+    const target = ctx
+    if (!target) throw new Error('插件上下文尚未建立')
+    let value: unknown
+    if (message.mode === 'waterfall') {
+      // 链尾直接把传入值返回：没有监听器改写时结果不变
+      value = await target.waterfall(message.topic, message.payload, () => message.payload)
+    } else {
+      target.emit(message.topic, message.payload)
+      value = undefined
+    }
+    send({ t: 'event-result', id: message.id, ok: true, value })
+  } catch (error) {
+    send({
+      t: 'event-result',
+      id: message.id,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    })
+  }
+}
+
 process.on('message', (message: HostToWorker) => {
   if (message.t === 'bootstrap') void start(message)
   else if (message.t === 'invoke') void invoke(message)
+  else if (message.t === 'event') void dispatchEvent(message)
   else if (message.t === 'dispose') void stop()
 })
 

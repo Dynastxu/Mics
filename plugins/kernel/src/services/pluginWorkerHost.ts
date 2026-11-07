@@ -195,6 +195,16 @@ export class PluginWorkerHost {
     })
   }
 
+  /** 派发事件到子进程；`waterfall` 会带回监听器改写后的结果 */
+  dispatchEvent(topic: string, payload: unknown, mode: 'emit' | 'waterfall'): Promise<unknown> {
+    if (this.disposed) return Promise.reject(new Error(`插件 ${this.id} 的子进程已停止`))
+    return new Promise((resolve, reject) => {
+      const id = ++this.seq
+      this.pending.set(id, { resolve, reject })
+      this.post({ t: 'event', id, topic, mode, payload })
+    })
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return
     const done = new Promise<void>((resolve) => {
@@ -245,6 +255,14 @@ export class PluginWorkerHost {
         this.options.onStorageDelete?.(message.key)
         return
       case 'result': {
+        const entry = this.pending.get(message.id)
+        if (!entry) return
+        this.pending.delete(message.id)
+        if (message.ok) entry.resolve(message.value)
+        else entry.reject(new Error(message.error))
+        return
+      }
+      case 'event-result': {
         const entry = this.pending.get(message.id)
         if (!entry) return
         this.pending.delete(message.id)

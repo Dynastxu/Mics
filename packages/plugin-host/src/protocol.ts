@@ -38,7 +38,21 @@ export interface InvokeMessage {
   params?: unknown
 }
 
-export type HostToWorker = BootstrapMessage | InvokeMessage | { t: 'dispose' }
+/**
+ * 宿主派发事件给子进程。
+ *
+ * - `emit`：只通知，不关心返回值；
+ * - `waterfall`：监听器可以改写结果，必须等它返回。
+ */
+export interface EventMessage {
+  t: 'event'
+  id: number
+  topic: string
+  mode: 'emit' | 'waterfall'
+  payload?: unknown
+}
+
+export type HostToWorker = BootstrapMessage | InvokeMessage | EventMessage | { t: 'dispose' }
 
 export type WorkerToHost =
   | { t: 'ready'; methods: string[] }
@@ -49,6 +63,8 @@ export type WorkerToHost =
   | { t: 'storage:delete'; key: string }
   | { t: 'result'; id: number; ok: true; value: unknown }
   | { t: 'result'; id: number; ok: false; error: string }
+  | { t: 'event-result'; id: number; ok: true; value: unknown }
+  | { t: 'event-result'; id: number; ok: false; error: string }
   | { t: 'log'; level: 'info' | 'warn' | 'error'; message: string }
   | { t: 'disposed' }
 

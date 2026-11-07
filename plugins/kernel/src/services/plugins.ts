@@ -17,6 +17,7 @@ import {
 } from '@mics/plugin-loader'
 import type {
   CapabilitiesServiceApi,
+  CatalogDescriptor,
   CommandsServiceApi,
   Disposable,
   IpcServiceApi,
@@ -76,6 +77,8 @@ interface Entry {
   fiber?: Fiber
   /** 子进程插件：非 full 信任级别的插件跑在独立进程里 */
   worker?: PluginWorkerHost
+  /** 子进程插件的事件转发监听器；停止时逐个移除 */
+  workerBridge?: Array<() => void>
   /** fiber 是由 Cordis Loader 的 entry 建立的：停用时必须一并移除树节点 */
   loaderEntry?: boolean
   /** 清单依赖的问题（缺失 / 自依赖 / 循环），激活前就能确定 */
@@ -1097,6 +1100,9 @@ export class PluginsService extends Service {
       const worker = entry.worker
       const id = entry.record.manifest.id
       entry.worker = undefined
+      // 先摘事件转发，避免停进程过程中还在往里派发
+      for (const dispose of entry.workerBridge ?? []) dispose()
+      entry.workerBridge = undefined
       try {
         await withTimeout(
           worker.dispose(),
@@ -1812,6 +1818,7 @@ export class PluginsService extends Service {
 
     entry.worker = host
     await host.whenReady()
+    this.bridgeWorkerEvents(entry, host)
     this.setState(entry, 'active')
     this.announceActivated(entry)
     emitEvent(this.baseCtx, 'plugin/activated', id)
@@ -1840,6 +1847,40 @@ export class PluginsService extends Service {
       | (IpcServiceApi & { unhandleFor?: (target: PluginId, method: string) => void })
       | undefined
     ipc?.unhandleFor?.(entry.record.manifest.id, method)
+  }
+
+  /**
+   * 在宿主侧代理子进程插件关心的事件。
+   *
+   * 监听器挂在**内核**上下文上，所以子进程被停掉时必须逐个移除，
+   * 否则会留下指向已退出进程的转发器。
+   *
+   * 只代理这两类：`plugins/changed`（通知）与 `catalog/describe`（可改写结果的
+   * waterfall）。全量转发会把每次事件都变成一轮 IPC。
+   */
+  private bridgeWorkerEvents(entry: Entry, host: PluginWorkerHost): void {
+    const id = entry.record.manifest.id
+    const warn = (error: unknown): void => {
+      this.baseCtx
+        .logger('plugins')
+        .warn('事件转发到 %s 失败：%s', id, toMessage(error))
+    }
+
+    const disposeChanged = this.baseCtx.on('plugins/changed', () => {
+      void host.dispatchEvent('plugins/changed', undefined, 'emit').catch(warn)
+    })
+
+    const disposeDescribe = this.baseCtx.on('catalog/describe', async (descriptor, next) => {
+      const current = await next()
+      const bridged = (await host.dispatchEvent(
+        'catalog/describe',
+        current,
+        'waterfall'
+      )) as CatalogDescriptor | undefined
+      return bridged ?? current
+    })
+
+    entry.workerBridge = [() => disposeChanged(), () => disposeDescribe()]
   }
 
   /**
