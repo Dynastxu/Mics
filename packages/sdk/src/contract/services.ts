@@ -194,6 +194,35 @@ export interface PermissionsServiceApi {
 }
 
 // ---------------------------------------------------------------------------
+// 宿主能力：子进程里替代 electron 的只读信息
+// ---------------------------------------------------------------------------
+
+export interface PluginHostPaths {
+  userData: string
+  /** 调用方插件自己的目录 */
+  pluginDir: string
+  temp: string
+  home: string
+}
+
+export interface PluginHostApp {
+  version: string
+  isDev: boolean
+}
+
+/**
+ * 宿主能力。
+ *
+ * `app.getPath('userData')` 与 `app.getVersion()` 是插件最常用的两个 Electron 接口，
+ * 但子进程里没有 `electron` 模块。这个服务在**两种执行位置同形**：
+ * 进程内由内核提供，子进程里由启动参数注入，插件代码不需要区分。
+ */
+export interface HostServiceApi {
+  readonly paths: PluginHostPaths
+  readonly app: PluginHostApp
+}
+
+// ---------------------------------------------------------------------------
 // 配置：清单 schema + 当前值，设置页与 agent 共用
 // ---------------------------------------------------------------------------
 
@@ -321,6 +350,8 @@ declare module 'cordis' {
     commands: CommandsServiceApi
     storage: StorageServiceApi
     permissions: PermissionsServiceApi
+    /** 宿主能力：路径与版本信息，进程内与子进程同形 */
+    host: HostServiceApi
     /** 能力注册表：definition / provider / consumer 三角的注册与查找 */
     capabilities: CapabilitiesServiceApi
     /** 配置 schema 与当前值；设置页与 agent 共用 */

@@ -1,4 +1,5 @@
 import { fork, type ChildProcess } from 'node:child_process'
+import { mkdirSync } from 'node:fs'
 import type { PluginId, ResolvedPermissions } from '@mics/sdk'
 import type { HostToWorker, WorkerToHost } from '@mics/plugin-host'
 
@@ -79,6 +80,26 @@ export function buildWorkerFlags(options: {
 }
 
 const DISPOSE_TIMEOUT_MS = 5_000
+
+/**
+ * 按声明的可写目录预建目录。
+ *
+ * Node 的 `--allow-fs-write=<dir>` 只允许「在 dir 里创建条目」，**不包括创建 dir 本身**。
+ * 所以插件写 `${userData}/foo/note.txt` 时，`foo` 必须已经存在——由宿主建好，
+ * 插件才能把声明的目录当成「存在且可写」来用。
+ */
+export function ensureWriteRoots(
+  permissions: ResolvedPermissions,
+  onError?: (dir: string, error: unknown) => void
+): void {
+  for (const dir of permissions.fs.write.resolved) {
+    try {
+      mkdirSync(dir, { recursive: true })
+    } catch (error) {
+      onError?.(dir, error)
+    }
+  }
+}
 
 export class PluginWorkerHost {
   readonly id: PluginId

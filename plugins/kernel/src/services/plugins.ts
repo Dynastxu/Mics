@@ -62,7 +62,7 @@ import {
   type IpcRegistrationSnapshot
 } from '../cleanupAudit'
 import { readTreeFile, writeTreeFile } from './treeFile'
-import { PluginWorkerHost } from './pluginWorkerHost'
+import { PluginWorkerHost, ensureWriteRoots } from './pluginWorkerHost'
 
 /** 等插件真正停下来的上限；超过就认为它没救，交给失败态与用户重试 */
 const STOP_TIMEOUT_MS = 10_000
@@ -1769,11 +1769,20 @@ export class PluginsService extends Service {
       snapshot[key] = storage?.getFor?.(id, key)
     }
 
+    const permissions = this.resolvePermissionPaths(entry.record.manifest, entry.record.dir)
+    // 声明的可写目录由宿主动手建好：Node 的 --allow-fs-write 只允许
+    // 「在目录里创建条目」，不包括创建该目录本身。
+    ensureWriteRoots(permissions, (dir, error) => {
+      this.baseCtx
+        .logger('plugins')
+        .warn('插件 %s 的可写目录创建失败：%s（%s）', id, dir, toMessage(error))
+    })
+
     const host = await PluginWorkerHost.start({
       id,
       entry: entry.record.entryMain as string,
       workerEntry,
-      permissions: this.resolvePermissionPaths(entry.record.manifest, entry.record.dir),
+      permissions,
       storage: snapshot,
       paths: {
         userData: this.config.userDataDir,

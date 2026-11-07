@@ -5,7 +5,6 @@ import https from 'node:https'
 import http from 'node:http'
 import os from 'node:os'
 import { copyFile, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
-import { app } from 'electron'
 import type { Context } from 'cordis'
 import {
   defineMainPlugin,
@@ -303,9 +302,17 @@ function artifactPlatformMatches(relative: string): boolean {
  * 会直接拒绝没有 User-Agent 的请求（403）。加载器文件、安装器与元数据请求
  * 都从这里取同一份头，避免某条路径漏掉。
  */
+/**
+ * 当前应用版本，用来拼 User-Agent。
+ *
+ * 由 `apply()` 从 `ctx.host.app.version` 注入：子进程里没有 `electron`，
+ * 用宿主给的版本，两种执行位置拿到的是同一个值。
+ */
+let appVersion = '0.0.0'
+
 function downloadHeaders(): Record<string, string> {
   return {
-    'User-Agent': micsUserAgent(app.getVersion()),
+    'User-Agent': micsUserAgent(appVersion),
     Accept: '*/*'
   }
 }
@@ -345,10 +352,11 @@ function remapVanillaUrl(url: string, src: DownloadSource): string {
 }
 
 export const name = 'mics.download.manager'
-export const inject = ['ipc', 'storage', 'capabilities']
+export const inject = ['ipc', 'storage', 'capabilities', 'host']
 
 export function apply(ctx: Context): void {
   const log = ctx.logger('mics.download.manager')
+  appVersion = ctx.host.app.version
   const tasks = new Map<string, DownloadTask>()
   const jobs = new Map<string, InstallJob>()
   /** 正在传输的任务句柄：暂停/取消时用它中断请求（.part 保留） */
@@ -377,7 +385,7 @@ export function apply(ctx: Context): void {
   const MOD_CACHE_LIMIT = 64
   const MOD_METADATA_TIMEOUT = 40 * 1000
 
-  const dataDir = app.getPath('userData')
+  const dataDir = ctx.host.paths.userData
   const cacheRoot = path.join(dataDir, 'cache', 'downloads')
   /** 自动清理的节流窗口：整批小文件下载完再统一扫描，避免每个任务都全盘统计 */
   const CACHE_PRUNE_DELAY_MS = 5000
@@ -1517,16 +1525,12 @@ export function apply(ctx: Context): void {
     }
     if (recordsDirty) flushRecords()
   }
-  app.on('before-quit', flushOnQuit)
+  // 子进程里没有 `app.before-quit`：把「退出前落盘」挂到插件 dispose 上。
+  // 进程内由内核停止插件触发，子进程由 dispose 触发，两种执行位置一致。
   ctx.effect(() => () => {
-    app.off('before-quit', flushOnQuit)
+    flushOnQuit()
     httpAgent.destroy()
     httpsAgent.destroy()
-    if (persistTimer) {
-      clearTimeout(persistTimer)
-      persistTimer = null
-    }
-    if (recordsDirty) flushRecords()
   })
 
   /** 元数据文本请求：跟随重定向，复用 keep-alive 连接 */

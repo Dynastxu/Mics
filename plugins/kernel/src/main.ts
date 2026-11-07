@@ -4,6 +4,7 @@ import type { KernelConfig, PluginFailureStage, PluginId, RuntimeSnapshot } from
 import { CapabilitiesService } from './services/capabilities'
 import { CommandsService } from './services/commands'
 import { ConfigurationService } from './services/configuration'
+import { HostService } from './services/host'
 import { IpcService } from './services/ipc'
 import { MainWindowService } from './services/mainWindow'
 import { PermissionsService } from './services/permissions'
@@ -41,6 +42,7 @@ export function apply(ctx: Context, config: KernelConfig): void {
 
   ctx.plugin(StorageService, config)
   ctx.plugin(PermissionsService, config)
+  ctx.plugin(HostService, config)
   ctx.plugin(CapabilitiesService)
   ctx.plugin(MainWindowService, config.host?.mainWindow)
   ctx.plugin(PluginsService, config)
