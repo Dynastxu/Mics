@@ -1139,9 +1139,11 @@ export class PluginsService extends Service {
       const worker = entry.worker
       const id = entry.record.manifest.id
       entry.worker = undefined
-      // 先摘事件转发，避免停进程过程中还在往里派发
+      // 先摘事件转发与 RPC 转发器：否则重载时会与新进程的注册撞车，
+      // 调用也会打到已经退出的旧进程上
       for (const dispose of entry.workerBridge ?? []) dispose()
       entry.workerBridge = undefined
+      for (const method of worker.methodNames()) this.detachWorkerHandler(entry, method)
       try {
         await withTimeout(
           worker.dispose(),

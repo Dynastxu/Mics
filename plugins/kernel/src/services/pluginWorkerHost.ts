@@ -196,6 +196,11 @@ export class PluginWorkerHost {
     return this.methods.has(method)
   }
 
+  /** 当前已注册的方法；停止插件时按它逐个撤销 */
+  methodNames(): string[] {
+    return [...this.methods]
+  }
+
   invoke<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (this.disposed) return Promise.reject(new Error(`插件 ${this.id} 的子进程已停止`))
     return new Promise<T>((resolve, reject) => {
@@ -242,9 +247,11 @@ export class PluginWorkerHost {
   ): void {
     switch (message.t) {
       case 'ready':
+        // 插件在 apply 里注册的每个方法都已经先发过 `register`；这里的列表是汇总，
+        // 只补漏，不能重复注册（重复会直接抛「重复注册 RPC 方法」）
         for (const method of message.methods) {
-          this.methods.add(method)
-          this.options.onRegister?.(method)
+          if (this.methods.has(method)) continue
+          this.registerMethod(method)
         }
         resolveReady(message.methods)
         return
@@ -252,12 +259,16 @@ export class PluginWorkerHost {
         rejectReady(new Error(`${message.stage}：${message.message}`))
         return
       case 'register':
-        this.methods.add(message.method)
-        this.options.onRegister?.(message.method)
+        if (this.methods.has(message.method)) return
+        this.registerMethod(message.method)
         return
       case 'unregister':
         this.methods.delete(message.method)
-        this.options.onUnregister?.(message.method)
+        try {
+          this.options.onUnregister?.(message.method)
+        } catch (error) {
+          this.options.onLog?.('warn', `注销 RPC ${message.method} 失败：${String(error)}`)
+        }
         return
       case 'storage:set':
         this.options.onStorageSet?.(message.key, message.value)
@@ -392,6 +403,21 @@ export class PluginWorkerHost {
       fields[field] = (result as Record<string, unknown>)[field]
     }
     return { __micsHandle: id, __micsFields: fields }
+  }
+
+  /**
+   * 注册一个 RPC 方法。
+   *
+   * 宿主侧注册失败（例如同一个方法被注册两次）不能把主进程带崩：
+   * 记一条日志，让插件自己表现为「方法不可用」。
+   */
+  private registerMethod(method: string): void {
+    this.methods.add(method)
+    try {
+      this.options.onRegister?.(method)
+    } catch (error) {
+      this.options.onLog?.('warn', `注册 RPC ${method} 失败：${String(error)}`)
+    }
   }
 
   private failAll(error: Error): void {
