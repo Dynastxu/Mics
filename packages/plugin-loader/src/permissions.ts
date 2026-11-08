@@ -17,7 +17,7 @@ import {
  * 归一化在后，运行时只认 `PluginPermissions`，不再区分版本。
  */
 
-const TRUST_LEVELS: ReadonlySet<string> = new Set<TrustLevel>(['full', 'isolated', 'sandboxed'])
+const TRUST_LEVELS: ReadonlySet<string> = new Set<TrustLevel>(['full', 'sandboxed'])
 const NET_MODES = new Set(['none', 'allowlist', 'all'])
 const CLIPBOARD = new Set(['none', 'write', 'read'])
 const DIALOGS = new Set(['none', 'open', 'save'])

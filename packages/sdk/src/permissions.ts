@@ -135,8 +135,6 @@ export function trustLabel(trust: TrustLevel): string {
   switch (trust) {
     case 'full':
       return '完全权限'
-    case 'isolated':
-      return '独立进程'
     case 'sandboxed':
       return '受限权限'
   }

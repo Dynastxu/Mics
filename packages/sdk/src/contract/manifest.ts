@@ -27,13 +27,15 @@ export type LegacyPermission =
 export type Permission = LegacyPermission
 
 /**
- * 信任级别，决定插件跑在哪里。
+ * 信任级别，决定插件**能做什么**。
  *
- * - `full`：主进程内，与 MICS 本身同权限（今天的行为）；
- * - `isolated`：独立子进程，不加引擎限制——崩溃隔离与审计，但不防越权；
+ * - `full`：主进程内，与 MICS 本身同权限（需要扫系统目录、起子进程、开托盘的那类）；
  * - `sandboxed`：独立子进程 + Node `--permission`，文件与子进程由引擎强制。
+ *
+ * 「跑在哪个进程」不在这里表达：`sandbox` 总开关决定要不要把非 full 的插件
+ * 放进子进程。一个 `full` 插件即使开了沙箱也仍然留在主进程——它就是要高权限。
  */
-export type TrustLevel = 'full' | 'isolated' | 'sandboxed'
+export type TrustLevel = 'full' | 'sandboxed'
 
 /**
  * 文件访问白名单。

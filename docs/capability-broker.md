@@ -150,11 +150,15 @@ create(spec) {
 | --- | --- | --- |
 | launch | **`full`** | 要扫本机 JDK（`C:\Program Files\Java\*` 等任意位置）、起子进程、读游戏目录 |
 | close-behavior | **`full`** | 托盘图标是系统 UI，由插件独占创建才自然 |
-| logger | **`full`**，但已事件化 | 见下 |
+| logger | **`sandboxed`** | 只需要 `${userData}/logs`；日志经 `log/entry` 事件推过来 |
 | account | 待定 | `safeStorage` 可以代理，但要评估「密钥不出宿主」的价值 |
 | plugin-inspector | `full` | 系统对话框 |
 | download-manager / shell | `full`（作为提供方） | 能力实现在宿主 |
 | hello-tool / minekuai | `sandboxed` | 只需要文件白名单 / 无文件访问 |
+
+> `trust` 只有 `full` / `sandboxed` 两个取值。曾经的 `isolated`（子进程但不限权）
+> 已经删除：它不改变任何权限，只会让读者误以为有隔离；真要「进程隔离但不限权」，
+> 应该作为独立的执行属性引入，而不是塞进信任级别。
 
 ### logger 为什么改成事件接收器
 

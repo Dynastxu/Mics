@@ -1815,7 +1815,7 @@ export class PluginsService extends Service {
   private isWorkerRecord(record: PluginRecord): boolean {
     if (this.sandboxMode() === 'off') return false
     if (!record.entryMain) return false
-    return (record.manifest.permissions?.trust ?? 'full') !== 'full'
+    return (record.manifest.permissions?.trust ?? 'full') === 'sandboxed'
   }
 
   /** worker 运行时由构建脚本产出到内核自己的 dist 里 */
@@ -1835,8 +1835,7 @@ export class PluginsService extends Service {
       )
     }
     const permissions = this.resolvePermissionPaths(entry.record.manifest, entry.record.dir)
-    // 强制程度只由插件自己的 trust 决定：sandboxed 才加 --permission，
-    // isolated 只隔离进程。全局开关只管「要不要进子进程」。
+    // 进子进程的必然是 sandboxed；`full` 永远不会走到这里
     const enforce = (permissions.trust ?? 'full') === 'sandboxed'
     this.baseCtx
       .logger('plugins')

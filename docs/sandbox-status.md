@@ -14,14 +14,13 @@
 | `sandbox` | `boot.config.json` | 要不要真的把插件放进子进程（总开关） |
 | `trust` | 每个插件的 `plugin.json` | 放进子进程后限制到什么程度 |
 
-## 2. 四个隔离层
+## 2. 三个隔离层
 
 | 层 | 谁在这里 | 边界由什么提供 | 能做什么 |
 | --- | --- | --- | --- |
 | 渲染进程 | 所有 `renderer` 入口 | Chromium 沙箱：`sandbox: true`、`contextIsolation: true`、无 `nodeIntegration` | 不能碰文件/进程；只能经 `mics:rpc` 调主进程。**所有页面插件共享同一 realm 与 `window.mics`**，互相之间没有隔离 |
-| 主进程 `full` | 内核、launch、download-manager、shell、account、logger、plugin-inspector、close-behavior | 无 | 与宿主同权限 |
-| 子进程 `isolated` | （当前无人使用） | 进程边界 | 崩溃隔离；**不防越权**（仍可读写任意文件） |
-| 子进程 `sandboxed` | hello-tool（示例）、minekuai | 进程边界 + Node `--permission` | 文件与子进程由引擎拒绝；网络不受限 |
+| 主进程 `full` | 内核、launch、download-manager、shell、account、plugin-inspector、close-behavior | 无 | 与宿主同权限；开了沙箱也不会搬走 |
+| 子进程 `sandboxed` | logger、minekuai、hello-tool | 进程边界 + Node `--permission` | 文件与子进程由引擎拒绝；网络不受限 |
 
 `trust` 缺省是 `full`（保持历史行为）。新插件应当显式声明。
 
@@ -80,7 +79,6 @@
 | trust | 位置 | `--permission` | 效果 |
 | --- | --- | --- | --- |
 | `full` | 主进程 | — | 与宿主同权限 |
-| `isolated` | 子进程 | ❌ | 崩溃隔离，不限制系统调用 |
 | `sandboxed` | 子进程 | ✅ | 清单里的 fs / exec 声明生效 |
 
 > 旧写法 `"audit"` / `"enforce"` 仍可用：都会按 `"on"` 处理并打印一条废弃警告。

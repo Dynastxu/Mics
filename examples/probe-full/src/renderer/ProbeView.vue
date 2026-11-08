@@ -49,9 +49,10 @@ onMounted(() => {
 <template>
   <div class="mics-page">
     <header class="mics-page__header">
-      <h1 class="mics-page__title">隔离探针 · isolated</h1>
+      <h1 class="mics-page__title">完整权限探针 · full</h1>
       <p class="mics-page__subtitle">
-        独立进程，但没有引擎级限制。下面每个越权操作都会成功——和 sandboxed 探针对照看。
+        完全权限，跑在主进程。即使开了 <code>sandbox: on</code> 它也不会进子进程，
+        所以下面每个越权操作都会成功——和沙箱探针对照看。
       </p>
     </header>
 

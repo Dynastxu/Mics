@@ -227,7 +227,6 @@ function capabilityLabel(plugin: PluginInstallSummary): string {
 /** 信任级别的一句话解释；安装确认与详情页共用 */
 const TRUST_HINTS: Record<TrustLevel, string> = {
   full: '完全权限：与 MICS 本身同权限，可以读写任意文件、执行任意程序、访问网络。',
-  isolated: '独立进程：崩溃不会影响主程序，但仍拥有完整的文件与进程权限。',
   sandboxed: '受限权限：只能访问下面列出的资源，越界会被系统拒绝。'
 }
 

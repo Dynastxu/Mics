@@ -1,0 +1,24 @@
+{
+  "id": "demo.probe-full",
+  "name": "完整权限探针",
+  "version": "0.1.0",
+  "description": "试验用插件：以 full 信任级别运行。即使开了沙箱它仍留在主进程，越权操作全部成功——作为 sandboxed 探针的对照基线。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "activation": ["onView:probe.full"],
+  "permissions": {
+    "trust": "full"
+  },
+  "contributes": {
+    "nav": [
+      {
+        "id": "probe.full",
+        "title": "完整权限探针",
+        "icon": "plugin",
+        "order": 95
+      }
+    ]
+  }
+}
