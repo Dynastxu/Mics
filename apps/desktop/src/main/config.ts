@@ -47,6 +47,25 @@ function configCandidates(): string[] {
   ]
 }
 
+/**
+ * 解析沙箱开关。
+ *
+ * 只认 `on` / `off`（也接受 `true` / `false`）。
+ * `audit` / `enforce` 是旧写法：两者都按 `on` 处理——权限强制现在只由插件的
+ * `trust` 决定，与这个开关无关。
+ */
+function parseSandbox(value: unknown, onWarning: ConfigWarning): SandboxMode | undefined {
+  if (value === undefined) return undefined
+  if (value === 'on' || value === true) return 'on'
+  if (value === 'off' || value === false) return 'off'
+  if (value === 'audit' || value === 'enforce') {
+    onWarning(`sandbox: "${value}" 已废弃，按 "on" 处理；强制程度由插件的 trust 决定`)
+    return 'on'
+  }
+  onWarning(`sandbox 只接受 "on" / "off"，收到 ${JSON.stringify(value)}，按 off 处理`)
+  return 'off'
+}
+
 export function loadBootConfig(onWarning: ConfigWarning = consoleWarning): BootConfig {
   for (const file of configCandidates()) {
     if (!existsSync(file)) continue
@@ -62,10 +81,7 @@ export function loadBootConfig(onWarning: ConfigWarning = consoleWarning): BootC
           ? raw.disabled.filter((item): item is string => typeof item === 'string')
           : [],
         profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined,
-        sandbox:
-          raw.sandbox === 'audit' || raw.sandbox === 'enforce' || raw.sandbox === 'off'
-            ? (raw.sandbox as SandboxMode)
-            : undefined
+        sandbox: parseSandbox(raw.sandbox, onWarning)
       }
     } catch (error) {
       onWarning(`读取 ${file} 失败：${(error as Error).message}`)

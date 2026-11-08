@@ -1834,16 +1834,16 @@ export class PluginsService extends Service {
       )
     }
     const permissions = this.resolvePermissionPaths(entry.record.manifest, entry.record.dir)
-    // `isolated` 只是进程隔离，不加引擎限制；只有 `sandboxed` 才吃 --permission
-    const enforce =
-      this.sandboxMode() === 'enforce' && (permissions.trust ?? 'full') === 'sandboxed'
+    // 强制程度只由插件自己的 trust 决定：sandboxed 才加 --permission，
+    // isolated 只隔离进程。全局开关只管「要不要进子进程」。
+    const enforce = (permissions.trust ?? 'full') === 'sandboxed'
     this.baseCtx
       .logger('plugins')
       .info(
-        '插件 %s 将在子进程里运行（trust=%s，enforce=%s）',
+        '插件 %s 在子进程里启动（trust=%s，权限强制=%s）',
         id,
         permissions.trust,
-        enforce
+        enforce ? '是' : '否'
       )
 
     const storage = this.baseCtx.get('storage') as

@@ -18,7 +18,7 @@ const roots = [path.join(root, 'plugins'), path.join(root, 'examples')].join(pat
 
 console.log(`[dev] 插件根目录（含示例）：${roots}`)
 if (!process.env.MICS_SANDBOX_HINT) {
-  console.log('[dev] 提示：沙箱默认关闭。要验证隔离，请在 boot.config.json 里加 "sandbox": "enforce"')
+  console.log('[dev] 提示：沙箱默认关闭。要验证隔离，请在 boot.config.json 里加 "sandbox": "on"')
 }
 
 const child = spawn('pnpm', ['dev'], {

@@ -4,8 +4,15 @@
 
 ## 1. 一句话
 
-权限声明、校验、展示已经落地；**进程隔离与引擎级限制只在 `sandbox.mode = enforce` 且插件声明
-`trust: sandboxed` 时生效**，默认关闭。网络目前**没有任何强制**。
+权限声明、校验、展示已经落地；**进程隔离与引擎级限制只在 `sandbox: "on"` 时生效**，
+默认关闭。网络目前**没有任何强制**。
+
+两个轴，不要混：
+
+| 轴 | 在哪 | 决定什么 |
+| --- | --- | --- |
+| `sandbox` | `boot.config.json` | 要不要真的把插件放进子进程（总开关） |
+| `trust` | 每个插件的 `plugin.json` | 放进子进程后限制到什么程度 |
 
 ## 2. 四个隔离层
 
@@ -35,14 +42,14 @@
 | `mics.download` 及 6 个 `mics.download.*` | renderer | —（页面插件） | 权限声明对页面插件无意义 |
 | `mics.settings` / `mics.notifications` / `mics.core-workbench` | renderer / manifest | — | 同上 |
 
-**默认安装下没有任何插件跑在子进程里**：`sandbox.mode` 默认 `off`；即使改成 `audit`，
+**默认安装下没有任何插件跑在子进程里**：`sandbox` 默认 `off`；即使改成 `on`，
 唯一声明了 `sandboxed` 的内置插件 `mics.minekuai` 是 `defaultDisabled`。
 
 ## 4. 权限维度与强制程度
 
 | 维度 | 声明 | 强制手段 | 强度 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| 读/写目录 | `fs.read` / `fs.write` / `fs.meta` | `--allow-fs-read/write`（**目录前缀**，不支持 `*.jar`） | 引擎级 | 仅 `enforce` + `sandboxed` 生效 |
+| 读/写目录 | `fs.read` / `fs.write` / `fs.meta` | `--allow-fs-read/write`（**目录前缀**，不支持 `*.jar`） | 引擎级 | `sandbox: on` 且插件是 `sandboxed` 时生效 |
 | 能否执行程序 | `exec[]` | `--allow-child-process`（全有全无） | 引擎级 | 同上 |
 | 执行哪个程序 | `exec[].bin` / `args` | 无（broker 未实现 exec 路由） | **无** | 未强制 |
 | 原生模块 / worker | — | `--permission` 默认禁止 | 引擎级 | 同上 |
@@ -60,14 +67,24 @@
 `boot.config.json`：
 
 ```json
-{ "sandbox": "off" | "audit" | "enforce" }
+{ "sandbox": "off" | "on" }
 ```
 
-| 模式 | 行为 |
+| 值 | 行为 |
 | --- | --- |
-| `off`（默认） | 所有插件在主进程内挂载，权限只用于展示 |
-| `audit` | 非 `full` 的插件进子进程，**不加** `--permission`（只收集“如果开了会怎样”的数据） |
-| `enforce` | 同上，并加载 `--permission` 与声明出来的白名单 |
+| `off`（默认） | 所有插件在主进程内挂载，权限只用于展示；回退开关 |
+| `on` | 按每个插件的 `trust` 执行（见下表） |
+
+`on` 时各信任级别的行为：
+
+| trust | 位置 | `--permission` | 效果 |
+| --- | --- | --- | --- |
+| `full` | 主进程 | — | 与宿主同权限 |
+| `isolated` | 子进程 | ❌ | 崩溃隔离，不限制系统调用 |
+| `sandboxed` | 子进程 | ✅ | 清单里的 fs / exec 声明生效 |
+
+> 旧写法 `"audit"` / `"enforce"` 仍可用：都会按 `"on"` 处理并打印一条废弃警告。
+> 权限强制不再由全局开关决定——它是 `trust` 的事。
 
 ## 6. 宿主代做的部分（不消耗插件权限）
 
@@ -111,5 +128,6 @@
 - 单元/集成：`packages/plugin-host` 与 `plugins/kernel/src/services/pluginWorkerHost.ts`
   在分支上有一次性的端到端脚本（fork + `--permission` + 真实插件产物），
   覆盖：越界写被拒、事件桥、能力代理。
-- 本地：把 `boot.config.json` 的 `sandbox` 改成 `audit` 或 `enforce`，
-  启用 `mics.minekuai`，或用「从文件夹安装」装上 `examples/hello-tool`。
+- 本地：把 `boot.config.json` 的 `sandbox` 改成 `"on"`，启用 `mics.minekuai`，
+  或用「从文件夹安装」装上 `examples/hello-tool`；
+  要对照隔离级别，用 `pnpm dev:with-examples` 打开两个探针页。

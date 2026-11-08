@@ -65,15 +65,18 @@ export interface ProfileConfig {
 }
 
 /**
- * 沙箱模式。
+ * 沙箱总开关。
  *
- * - `off`：全部插件跑在主进程内（默认，与今天一致）；
- * - `audit`：`trust` 不是 `full` 的插件跑进子进程，但**不加**引擎限制；
- * - `enforce`：同上，并加 `--permission`，文件与子进程由引擎强制。
+ * 它只回答一个问题：**要不要真的把插件放进子进程**。
+ * 放进去之后限制到什么程度，由插件自己的 `trust` 决定：
  *
- * 从 `off` 切到 `audit`/`enforce` 只会影响声明了 `trust: isolated|sandboxed` 的插件。
+ * - `full`     —— 仍在主进程内（这类插件就是要高权限）；
+ * - `isolated` —— 子进程，不加 `--permission`；
+ * - `sandboxed`—— 子进程 + `--permission`，清单里的 fs / exec 声明生效。
+ *
+ * `off` 是回退开关：所有插件回到主进程，行为与改造前一致，权限只用于展示。
  */
-export type SandboxMode = 'off' | 'audit' | 'enforce'
+export type SandboxMode = 'off' | 'on'
 
 /** bootstrap 传给内核插件的配置 */
 export interface KernelConfig {
