@@ -64,6 +64,7 @@ import {
 } from '../cleanupAudit'
 import { readTreeFile, writeTreeFile } from './treeFile'
 import { HostService } from './host'
+import { recentLogEntries } from '../logHistory'
 import { PluginWorkerHost, ensureWriteRoots } from './pluginWorkerHost'
 
 /** 等插件真正停下来的上限；超过就认为它没救，交给失败态与用户重试 */
@@ -1979,7 +1980,23 @@ export class PluginsService extends Service {
       return bridged ?? current
     })
 
-    entry.workerBridge = [() => disposeChanged(), () => disposeDescribe()]
+    // 日志：内核把 ctx.logger 转成了 log/entry，子进程里的日志插件靠这条转发收数
+    const disposeLog = this.baseCtx.on('log/entry', (entry) => {
+      void host.dispatchEvent('log/entry', entry, 'emit').catch(() => undefined)
+    })
+
+    entry.workerBridge = [
+      () => disposeChanged(),
+      () => disposeDescribe(),
+      () => disposeLog()
+    ]
+
+    // 子进程起来时补发最近的历史：它错过了 apply 之前的那些行。
+    // 用 recent 而不是 drain——宿主侧的日志插件（如果启用）还要用同一份缓冲。
+    const recent = recentLogEntries()
+    if (recent.length > 0) {
+      void host.dispatchEvent('log/history', recent, 'emit').catch(() => undefined)
+    }
   }
 
   /**

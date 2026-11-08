@@ -169,8 +169,9 @@ renderer       ──ipc:log/write─▶ logger
 ```
 
 好处：logger 不再依赖 `electron`（`app.getPath` → `ctx.host.paths`），
-也不依赖 cordis 的内部结构。它现在**技术上可以迁进子进程**，但仍留在宿主：
-日志是排障的最后一条链路，不值得为它增加一个进程故障点。
+也不依赖 cordis 的内部结构。它现在**跑在 sandboxed 子进程里**（`fs` 只授权
+`${userData}/logs`）：内核把 `log/entry` 转发给子进程，子进程启动时再用
+`recentLogEntries()` 补发最近 256 条历史。
 
 ### `launch` 为什么还迁不了
 

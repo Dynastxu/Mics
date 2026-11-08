@@ -34,7 +34,7 @@
 | `mics.download.manager` | main | full | `FILE_TRANSFER` 的提供方；要写实例目录 |
 | `mics.launch` | main + renderer | full | 扫 JDK、起 java、读写游戏目录 |
 | `mics.account` | main + renderer | full（v1 数组） | `safeStorage` 加解密 |
-| `mics.logger` | main + renderer | full | 观察宿主日志并落盘（已事件化，刻意留在宿主） |
+| `mics.logger` | main + renderer | **sandboxed** | 只写 `${userData}/logs`；日志经 `log/entry` 事件跨进程推过来 |
 | `mics.plugin-inspector` | main + renderer | full | 系统对话框、插件文件操作 |
 | `mics.close-behavior` | main + renderer | full | 托盘与窗口生命周期 |
 | `mics.minekuai` | main | **sandboxed** | 只做 HTTP 查询；无文件访问（默认禁用，需手动启用） |
@@ -56,7 +56,7 @@
 | 联网域名 | `net.mode` / `hosts` | 无 | **无** | 子进程可以直接连任何地址 |
 | 剪贴板 / 通知 / 对话框 / 外链 | `os.*` | 宿主代做 + 调用点校验 | 软拦 | 仅 `shell.openExternal` 有校验 |
 | 能力（capability） | — | 宿主代理：`cap-call`；子进程不能 `provide` | 结构性 | 已生效 |
-| 跨进程事件 | — | 只桥接 `plugins/changed` 与 `catalog/describe` | 结构性 | 已生效 |
+| 跨进程事件 | — | 只桥接 `plugins/changed`、`catalog/describe`、`log/entry` | 结构性 | 已生效 |
 | 存储 | — | 宿主代理，100ms 合并写回 | 结构性 | 已生效 |
 | 宿主信息 | — | `ctx.host.paths` / `app` / `shell` | 结构性 | 已生效 |
 

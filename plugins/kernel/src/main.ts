@@ -19,6 +19,7 @@ import { PluginsService } from './services/plugins'
 import { StorageService } from './services/storage'
 import { auditEventModes } from './eventModeAudit'
 import { installIpcAudit } from './cleanupAudit'
+import { drainLogHistory, recordLogEntry } from './logHistory'
 
 export const name = 'mics.kernel'
 
@@ -47,8 +48,6 @@ export function apply(ctx: Context, config: KernelConfig): void {
    * 内核把它转成 `log/entry` 事件，日志插件就退化成「收事件、写文件」的观察者，
    * 既不需要读 cordis 缓冲区，也不需要 `electron`。
    */
-  const history: LogEntry[] = []
-  const HISTORY_LIMIT = 1024
   ctx.effect(() =>
     ctx.logger.exporter({
       colors: false,
@@ -61,8 +60,7 @@ export function apply(ctx: Context, config: KernelConfig): void {
           name: message.name,
           args: message.args
         }
-        if (history.length >= HISTORY_LIMIT) history.shift()
-        history.push(entry)
+        recordLogEntry(entry)
         emitEvent(ctx, 'log/entry', entry)
       }
     })
@@ -177,7 +175,7 @@ export function apply(ctx: Context, config: KernelConfig): void {
     void ctx.plugins
       .activateStartup?.()
       .then(() => {
-        emitEvent(ctx, 'log/history', history.splice(0, history.length))
+        emitEvent(ctx, 'log/history', drainLogHistory())
       })
       .catch((error) => {
         log.error('启动插件激活未完成', error)
