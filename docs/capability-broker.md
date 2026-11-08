@@ -140,6 +140,38 @@ create(spec) {
 内部那次 `create` 的响应，再按 id 路由。字段（如 `pid`）只在异步方法上提供，
 因为同步读取字段没法等待。
 
+### 信任级别的判定原则（`309375c` 起）
+
+**能在受限权限下正常工作的插件才迁；需要系统级能力的直接声明 `full`。**
+不要为了「所有插件都进沙箱」把架构拆散——宿主服务是给「本来就不需要特权」的插件用的，
+不是给 launch 这种天生要高权限的插件用的。
+
+| 插件 | 结论 | 理由 |
+| --- | --- | --- |
+| launch | **`full`** | 要扫本机 JDK（`C:\Program Files\Java\*` 等任意位置）、起子进程、读游戏目录 |
+| close-behavior | **`full`** | 托盘图标是系统 UI，由插件独占创建才自然 |
+| logger | **`full`**，但已事件化 | 见下 |
+| account | 待定 | `safeStorage` 可以代理，但要评估「密钥不出宿主」的价值 |
+| plugin-inspector | `full` | 系统对话框 |
+| download-manager / shell | `full`（作为提供方） | 能力实现在宿主 |
+| hello-tool / minekuai | `sandboxed` | 只需要文件白名单 / 无文件访问 |
+
+### logger 为什么改成事件接收器
+
+原来的 logger 做两件宿主专属的事：读 cordis 的日志缓冲区、装 exporter。
+现在内核直接把 `ctx.logger(...)` 转成 `log/entry` 事件，启动历史用 `log/history`
+补发一次，logger 只负责订阅 + 写文件：
+
+```
+kernel exporter ──log/entry──▶ logger ──▶ 文件
+kernel buffer  ──log/history─▶ logger
+renderer       ──ipc:log/write─▶ logger
+```
+
+好处：logger 不再依赖 `electron`（`app.getPath` → `ctx.host.paths`），
+也不依赖 cordis 的内部结构。它现在**技术上可以迁进子进程**，但仍留在宿主：
+日志是排障的最后一条链路，不值得为它增加一个进程故障点。
+
 ### `launch` 为什么还迁不了
 
 不是能力的问题，是**文件扫描**的问题：
@@ -167,10 +199,10 @@ C:\Program Files\Java\*、C:\Program Files\Eclipse Adoptium\*、
 
 | 插件 | 卡点 | 出路 |
 | --- | --- | --- |
-| launch | JDK 探测（见上） | 宿主代做探测 |
+| launch | JDK 探测 + 高权限 | 已声明 `full`，不迁 |
 | account | `safeStorage` 加解密 | 宿主代理（密钥不出宿主） |
-| close-behavior | `Tray` / `Menu` | 托盘由宿主建，插件只发指令 |
-| plugin-inspector | `dialog` / `BrowserWindow` | 宿主代开对话框 |
-| logger | 要观察主进程 `ctx.logger` | **不应迁移**：观察者天然属于宿主侧 |
+| close-behavior | `Tray` / `Menu` | 已声明 `full`，不迁 |
+| plugin-inspector | `dialog` / `BrowserWindow` | 已声明 `full`，不迁 |
+| logger | 已事件化 | 可迁，但刻意留在宿主 |
 | download-manager / shell | 提供能力 | 已支持：提供方留在宿主 |
 | kernel | 内核本身 | 保持 `full` |
