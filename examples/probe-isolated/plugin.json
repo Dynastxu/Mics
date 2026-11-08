@@ -1,0 +1,24 @@
+{
+  "id": "demo.probe-isolated",
+  "name": "隔离探针（isolated）",
+  "version": "0.1.0",
+  "description": "试验用插件：以 isolated 信任级别运行。进程是独立的，但没有引擎级限制，越权操作会成功——用来对照 sandboxed。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "activation": ["onView:probe.isolated"],
+  "permissions": {
+    "trust": "isolated"
+  },
+  "contributes": {
+    "nav": [
+      {
+        "id": "probe.isolated",
+        "title": "隔离探针",
+        "icon": "plugin",
+        "order": 95
+      }
+    ]
+  }
+}

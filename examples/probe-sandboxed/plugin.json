@@ -1,0 +1,28 @@
+{
+  "id": "demo.probe-sandboxed",
+  "name": "隔离探针（sandboxed）",
+  "version": "0.1.0",
+  "description": "试验用插件：以 sandboxed 信任级别运行。只允许写 ${userData}/probe-sandbox，越权操作会被引擎拒绝。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "activation": ["onView:probe.sandboxed"],
+  "permissions": {
+    "trust": "sandboxed",
+    "fs": {
+      "read": ["${userData}/probe-sandbox"],
+      "write": ["${userData}/probe-sandbox"]
+    }
+  },
+  "contributes": {
+    "nav": [
+      {
+        "id": "probe.sandboxed",
+        "title": "沙箱探针",
+        "icon": "plugin",
+        "order": 96
+      }
+    ]
+  }
+}
