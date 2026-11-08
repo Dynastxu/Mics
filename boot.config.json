@@ -1,5 +1,6 @@
 {
   "kernel": "mics.kernel",
   "pluginRoots": ["plugins"],
-  "disabled": []
+  "disabled": [],
+  "sandbox": "on"
 }
