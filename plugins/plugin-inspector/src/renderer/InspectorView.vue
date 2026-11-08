@@ -227,7 +227,8 @@ function capabilityLabel(plugin: PluginInstallSummary): string {
 /** 信任级别的一句话解释；安装确认与详情页共用 */
 const TRUST_HINTS: Record<TrustLevel, string> = {
   full: '完全权限：与 MICS 本身同权限，可以读写任意文件、执行任意程序、访问网络。',
-  sandboxed: '受限权限：只能访问下面列出的资源，越界会被系统拒绝。'
+  sandboxed:
+    '受限权限：文件与程序执行由系统强制，越界会被拒绝；网络目前只做声明、不做限制。'
 }
 
 /** 信任级别在界面上的颜色：完全权限最醒目 */
@@ -250,9 +251,11 @@ function describePermissions(permissions: ResolvedPermissions): string[] {
 
   const net = permissions.net
   if (net) {
-    if (net.mode === 'none') lines.push('联网：禁止')
-    else if (net.mode === 'all') lines.push('联网：不限')
-    else lines.push(`联网：${(net.hosts ?? []).join('、')}`)
+    // 网络目前只有声明、没有强制，这里必须标出来，否则等于向用户承诺了拦截
+    const suffix = '（声明，未强制）'
+    if (net.mode === 'none') lines.push(`联网：禁止${suffix}`)
+    else if (net.mode === 'all') lines.push(`联网：不限${suffix}`)
+    else lines.push(`联网：${(net.hosts ?? []).join('、')}${suffix}`)
   }
 
   const os = permissions.os
