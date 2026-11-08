@@ -1,6 +1,17 @@
-import { app } from 'electron'
 import { micsUserAgent, type ModProjectKind } from '@mics/sdk'
 import type { MineKuaiSettings } from './settings'
+
+/**
+ * 应用版本，用来拼 User-Agent。
+ *
+ * 由 `apply()` 从 `ctx.host.app.version` 注入：子进程里没有 `electron` 模块，
+ * 两种执行位置拿到同一个值。
+ */
+let appVersion = '0.0.0'
+
+export function setAppVersion(version: string): void {
+  appVersion = version
+}
 
 /**
  * 麦块公共 API 的只读客户端。
@@ -89,7 +100,7 @@ export async function queryMineKuai(
     method: 'GET',
     signal,
     headers: {
-      'User-Agent': micsUserAgent(app.getVersion()),
+      'User-Agent': micsUserAgent(appVersion),
       accept: 'application/json'
     }
   })

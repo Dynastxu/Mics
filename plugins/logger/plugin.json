@@ -8,6 +8,13 @@
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
   "activation": ["*"],
+  "permissions": {
+    "trust": "sandboxed",
+    "fs": {
+      "read": ["${userData}/logs"],
+      "write": ["${userData}/logs"]
+    }
+  },
   "dependencies": ["mics.kernel"],
   "contributes": {
     "configuration": {

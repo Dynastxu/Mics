@@ -10,6 +10,7 @@
     "postinstall": "node scripts/install-electron.mjs",
     "install:electron": "node scripts/install-electron.mjs --force",
     "dev": "pnpm build:plugins && pnpm --filter @mics/desktop dev",
+    "dev:with-examples": "node scripts/dev-with-examples.mjs",
     "build": "pnpm build:plugins && pnpm --filter @mics/desktop build",
     "build:plugins": "node scripts/build-plugins.mjs",
     "watch:plugins": "node scripts/build-plugins.mjs --watch",

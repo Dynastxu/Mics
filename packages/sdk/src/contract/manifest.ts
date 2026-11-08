@@ -11,8 +11,92 @@ export type PluginId = string
 /** 激活事件：* / onStartup 随内核启动；onView:xxx、onCommand:xxx 由内核按需触发 */
 export type ActivationEvent = '*' | 'onStartup' | `onView:${string}` | `onCommand:${string}`
 
-export type Permission =
-  'shell:openExternal' | 'dialog:open' | 'clipboard:write' | 'notifications:show'
+/**
+ * v1 能力字符串。
+ *
+ * v2 用 `os.*` 重新表达；这里保留是为了让已有清单和 `ctx.permissions.has()`
+ * 的调用点继续工作。新插件应当直接写 v2 对象。
+ */
+export type LegacyPermission =
+  | 'shell:openExternal'
+  | 'dialog:open'
+  | 'clipboard:write'
+  | 'notifications:show'
+
+/** @deprecated 使用 `LegacyPermission`；旧名字保留以免破坏既有 import */
+export type Permission = LegacyPermission
+
+/**
+ * 信任级别，决定插件**能做什么**。
+ *
+ * - `full`：主进程内，与 MICS 本身同权限（需要扫系统目录、起子进程、开托盘的那类）；
+ * - `sandboxed`：独立子进程 + Node `--permission`，文件与子进程由引擎强制。
+ *
+ * 「跑在哪个进程」不在这里表达：`sandbox` 总开关决定要不要把非 full 的插件
+ * 放进子进程。一个 `full` 插件即使开了沙箱也仍然留在主进程——它就是要高权限。
+ */
+export type TrustLevel = 'full' | 'sandboxed'
+
+/**
+ * 文件访问白名单。
+ *
+ * 只支持目录（以及可选的末尾 `/**`），**不支持段内通配**——引擎侧的
+ * `--allow-fs-*` 只认路径前缀，写 `*.jar` 只会让人误以为被限制了。
+ */
+export interface FsPermissions {
+  /** 只读目录 */
+  read?: string[]
+  /** 可写目录（同时含读取能力） */
+  write?: string[]
+  /** 只需要 stat / readdir 的目录 */
+  meta?: string[]
+}
+
+/** 允许执行的程序；`args` 是按位置匹配的正则 */
+export interface ExecPermission {
+  bin: string
+  args?: string[]
+}
+
+export type NetMode = 'none' | 'allowlist' | 'all'
+
+export interface NetPermissions {
+  mode: NetMode
+  /** `allowlist` 时必填；`*.example.com` 匹配 apex 与任意层级子域 */
+  hosts?: string[]
+  /** 缺省 [443] */
+  ports?: number[]
+  allowPlainHttp?: boolean
+  allowPrivate?: boolean
+}
+
+export type ClipboardAccess = 'none' | 'write' | 'read'
+export type DialogAccess = 'none' | 'open' | 'save'
+
+/** 走宿主代做的系统能力 */
+export interface OsPermissions {
+  openExternal?: boolean
+  notifications?: boolean
+  clipboard?: ClipboardAccess
+  dialogs?: DialogAccess
+}
+
+/**
+ * 归一化之后的权限声明。
+ *
+ * 清单里可以写 v1 数组或 v2 对象，扫描阶段统一转换成本结构；
+ * 之后的判定、展示、启动参数都只认这一份。
+ */
+export interface PluginPermissions {
+  trust: TrustLevel
+  fs?: FsPermissions
+  exec?: ExecPermission[]
+  net?: NetPermissions
+  os?: OsPermissions
+}
+
+/** 清单里 `permissions` 接受的两种写法 */
+export type PermissionDeclaration = LegacyPermission[] | PluginPermissions
 
 /**
  * 左侧导航里的一个页面。
@@ -124,8 +208,13 @@ export interface PluginManifest {
   activation?: ActivationEvent[]
   /** 依赖的插件 id，内核保证先激活依赖 */
   dependencies?: PluginId[]
-  /** 能力声明，供内核及其宿主服务校验 */
-  permissions?: Permission[]
+  /**
+   * 权限声明。
+   *
+   * 两种写法都接受：v1 的字符串数组（映射成 `trust: 'full'`），
+   * 或 v2 的结构化对象。扫描阶段归一化，运行时只认 `PluginPermissions`。
+   */
+  permissions?: PluginPermissions
   contributes?: PluginContributions
   /** 内核级插件：不可通过界面禁用 */
   core?: boolean

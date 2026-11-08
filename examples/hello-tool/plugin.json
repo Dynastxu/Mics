@@ -9,6 +9,13 @@
   "styles": ["dist/style.css"],
   "uninstall": "dist/uninstall.mjs",
   "activation": ["onView:hello.view"],
+  "permissions": {
+    "trust": "sandboxed",
+    "fs": {
+      "read": ["${userData}/hello-tool"],
+      "write": ["${userData}/hello-tool"]
+    }
+  },
   "contributes": {
     "nav": [
       {

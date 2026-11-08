@@ -64,11 +64,27 @@ export interface ProfileConfig {
   settings: Record<PluginId, Record<string, unknown>>
 }
 
+/**
+ * 沙箱总开关。
+ *
+ * 它只回答一个问题：**要不要真的把插件放进子进程**。
+ * 放进去之后限制到什么程度，由插件自己的 `trust` 决定：
+ *
+ * - `full`     —— 仍在主进程内（这类插件就是要高权限）；
+ * - `isolated` —— 子进程，不加 `--permission`；
+ * - `sandboxed`—— 子进程 + `--permission`，清单里的 fs / exec 声明生效。
+ *
+ * `off` 是回退开关：所有插件回到主进程，行为与改造前一致，权限只用于展示。
+ */
+export type SandboxMode = 'off' | 'on'
+
 /** bootstrap 传给内核插件的配置 */
 export interface KernelConfig {
   app: AppInfo
   /** 内核自身 id，默认 mics.kernel */
   kernel: string
+  /** 沙箱模式；缺省 off */
+  sandbox?: SandboxMode
   /** 首次扫描结果（bootstrap 为了找到内核已经扫过一遍） */
   plugins: PluginRecord[]
   /** 内置插件根目录，只读 */

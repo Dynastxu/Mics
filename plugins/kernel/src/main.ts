@@ -1,9 +1,17 @@
 import { shell } from 'electron'
 import type { Context } from 'cordis'
-import type { KernelConfig, PluginFailureStage, PluginId, RuntimeSnapshot } from '@mics/sdk'
+import type {
+  KernelConfig,
+  LogEntry,
+  PluginFailureStage,
+  PluginId,
+  RuntimeSnapshot
+} from '@mics/sdk'
+import { emitEvent } from '@mics/sdk'
 import { CapabilitiesService } from './services/capabilities'
 import { CommandsService } from './services/commands'
 import { ConfigurationService } from './services/configuration'
+import { HostService } from './services/host'
 import { IpcService } from './services/ipc'
 import { MainWindowService } from './services/mainWindow'
 import { PermissionsService } from './services/permissions'
@@ -11,6 +19,7 @@ import { PluginsService } from './services/plugins'
 import { StorageService } from './services/storage'
 import { auditEventModes } from './eventModeAudit'
 import { installIpcAudit } from './cleanupAudit'
+import { drainLogHistory, recordLogEntry } from './logHistory'
 
 export const name = 'mics.kernel'
 
@@ -32,6 +41,31 @@ export function apply(ctx: Context, config: KernelConfig): void {
     config.app.isDev
   )
 
+  /**
+   * 日志事件桥。
+   *
+   * cordis 的 `ctx.logger(...)` 是宿主的设施，子进程与渲染进程都看不见；
+   * 内核把它转成 `log/entry` 事件，日志插件就退化成「收事件、写文件」的观察者，
+   * 既不需要读 cordis 缓冲区，也不需要 `electron`。
+   */
+  ctx.effect(() =>
+    ctx.logger.exporter({
+      colors: false,
+      levels: { default: 3 },
+      export: (message) => {
+        const entry: LogEntry = {
+          sn: message.sn,
+          ts: message.ts,
+          type: message.type,
+          name: message.name,
+          args: message.args
+        }
+        recordLogEntry(entry)
+        emitEvent(ctx, 'log/entry', entry)
+      }
+    })
+  )
+
   // 开发期审计：事件派发模式 + 插件直接注册的 ipcMain 资源
   if (config.app.isDev) {
     installIpcAudit()
@@ -41,6 +75,7 @@ export function apply(ctx: Context, config: KernelConfig): void {
 
   ctx.plugin(StorageService, config)
   ctx.plugin(PermissionsService, config)
+  ctx.plugin(HostService, config)
   ctx.plugin(CapabilitiesService)
   ctx.plugin(MainWindowService, config.host?.mainWindow)
   ctx.plugin(PluginsService, config)
@@ -135,10 +170,16 @@ export function apply(ctx: Context, config: KernelConfig): void {
       ctx.ipc.emit('ipc:plugins/changed', snapshot())
     })
 
-    // 不阻塞 bootstrap：窗口可以先显示，插件在后台激活
-    void ctx.plugins.activateStartup?.().catch((error) => {
-      log.error('启动插件激活未完成', error)
-    })
+    // 不阻塞 bootstrap：窗口可以先显示，插件在后台激活。
+    // 启动激活结束后补发一次历史，日志插件不必去读 cordis 的内部缓冲区。
+    void ctx.plugins
+      .activateStartup?.()
+      .then(() => {
+        emitEvent(ctx, 'log/history', drainLogHistory())
+      })
+      .catch((error) => {
+        log.error('启动插件激活未完成', error)
+      })
   })
 }
 

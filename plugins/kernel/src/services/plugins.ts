@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Context, Fiber, Plugin } from 'cordis'
@@ -16,6 +17,7 @@ import {
 } from '@mics/plugin-loader'
 import type {
   CapabilitiesServiceApi,
+  CatalogDescriptor,
   CommandsServiceApi,
   Disposable,
   IpcServiceApi,
@@ -36,6 +38,7 @@ import type {
   PluginUnmetRef,
   ProfileLock,
   RuntimeSnapshot,
+  SandboxMode,
   ScanError,
   StorageServiceApi
 } from '@mics/sdk'
@@ -50,7 +53,9 @@ import {
   PLUGIN_SCHEME,
   PluginFailureError,
   PluginUninstallError,
-  pluginIdOf
+  pluginIdOf,
+  resolvePermissions,
+  type ResolvedPermissions
 } from '@mics/sdk'
 import {
   reportIpcRegistrations,
@@ -58,6 +63,9 @@ import {
   type IpcRegistrationSnapshot
 } from '../cleanupAudit'
 import { readTreeFile, writeTreeFile } from './treeFile'
+import { HostService } from './host'
+import { recentLogEntries } from '../logHistory'
+import { PluginWorkerHost, ensureWriteRoots } from './pluginWorkerHost'
 
 /** 等插件真正停下来的上限；超过就认为它没救，交给失败态与用户重试 */
 const STOP_TIMEOUT_MS = 10_000
@@ -69,6 +77,10 @@ interface Entry {
   /** 停止超时过：旧代码可能仍在跑，重启应用前拒绝再次激活 */
   restartRequired?: boolean
   fiber?: Fiber
+  /** 子进程插件：非 full 信任级别的插件跑在独立进程里 */
+  worker?: PluginWorkerHost
+  /** 子进程插件的事件转发监听器；停止时逐个移除 */
+  workerBridge?: Array<() => void>
   /** fiber 是由 Cordis Loader 的 entry 建立的：停用时必须一并移除树节点 */
   loaderEntry?: boolean
   /** 清单依赖的问题（缺失 / 自依赖 / 循环），激活前就能确定 */
@@ -620,6 +632,11 @@ export class PluginsService extends Service {
       // 插件在启动时已由 syncTree 挂载；这里只处理「失败后重试」。
       // 内核自己由 bootstrap 挂载，绝不能进树。
       if (id === this.config.kernel) return
+      // 子进程插件没有 fiber：第一次激活时启动进程，已在跑就直接返回
+      if (this.shouldRunInWorker(entry)) {
+        if (!entry.worker) await this.startInWorker(entry)
+        return
+      }
       if (entry.fiber) return
       if (entry.state === 'failed') await this.remountEntry(entry)
     })
@@ -645,6 +662,22 @@ export class PluginsService extends Service {
       this.rebuildEffectiveDisabled()
       this.persistDisabled()
       this.persistEnabled()
+
+      // 子进程插件：Loader 里没有它的条目，停进程即可
+      if (this.shouldRunInWorker(entry)) {
+        const timedOut = await this.stop(entry)
+        if (timedOut) {
+          this.setState(entry, 'failed')
+          throw new PluginFailureError('timeout', entry.failure?.message ?? `插件 ${id} 停止超时`)
+        }
+        entry.state = 'disabled'
+        entry.failure = undefined
+        this.persistTree()
+        this.notify()
+        emitEvent(this.baseCtx, 'plugin/deactivated', id)
+        this.baseCtx.logger('plugins').info('插件 %s 已禁用', id)
+        return
+      }
 
       const loader = this.loaderService()
       if (loader?.update) {
@@ -689,6 +722,14 @@ export class PluginsService extends Service {
       this.persistDisabled()
       this.persistEnabled()
       entry.failure = undefined
+      // 子进程插件没有 Loader 条目，直接拉进程
+      if (this.shouldRunInWorker(entry)) {
+        await this.startInWorker(entry)
+        this.persistTree()
+        this.notify()
+        this.baseCtx.logger('plugins').info('插件 %s 已启用', id)
+        return
+      }
       const loader = this.loaderService()
       if (loader?.update) {
         await loader.update(id, { disabled: false })
@@ -712,6 +753,15 @@ export class PluginsService extends Service {
       if (this.disabled.has(id)) throw new Error(`插件 ${id} 已禁用，请先启用再重载`)
       const log = this.baseCtx.logger('plugins')
       log.info('正在重载插件 %s', id)
+      // 子进程插件：停进程再起一个新的，产物已经由构建脚本换掉了
+      if (this.shouldRunInWorker(entry) || entry.worker) {
+        await this.stop(entry)
+        await this.startInWorker(entry)
+        this.persistTree()
+        this.notify()
+        log.info('插件 %s 已重载', id)
+        return
+      }
       // 重载 = 移除后用带查询串的 entry 重建，强制重新 import
       await this.remountEntry(entry)
       this.persistTree()
@@ -769,7 +819,11 @@ export class PluginsService extends Service {
     if (existing?.record.source === 'builtin') {
       throw new Error(`插件 id ${result.record.manifest.id} 属于内置插件，不能安装同名插件`)
     }
-    return this.summarize(result.record, existing?.record.manifest.version)
+    return this.summarize(
+      result.record,
+      existing?.record.manifest.version,
+      path.join(this.config.userPluginRoot, result.record.manifest.id)
+    )
   }
 
   /**
@@ -1013,6 +1067,13 @@ export class PluginsService extends Service {
       }
 
       if (entry.record.entryMain) {
+        // 非 full 信任级别的插件跑在独立进程里：先于 Loader 判断，
+        // 否则 Loader 会在主进程里把它挂起来。
+        if (this.shouldRunInWorker(entry)) {
+          await this.startInWorker(entry)
+          return
+        }
+
         // 优先交给 Cordis Loader：插件树、fiber 建立与卸载都由它负责，
         // 内核只保留清单、依赖闭包与状态映射。Loader 不可用时退回直接挂载。
         const loader = this.loaderService()
@@ -1074,6 +1135,33 @@ export class PluginsService extends Service {
 
   /** 停掉 fiber；返回 true 表示超时（代码可能还在跑） */
   private async stop(entry: Entry): Promise<boolean> {
+    // 子进程插件没有 fiber，停的是进程
+    if (entry.worker) {
+      const worker = entry.worker
+      const id = entry.record.manifest.id
+      entry.worker = undefined
+      // 先摘事件转发与 RPC 转发器：否则重载时会与新进程的注册撞车，
+      // 调用也会打到已经退出的旧进程上
+      for (const dispose of entry.workerBridge ?? []) dispose()
+      entry.workerBridge = undefined
+      for (const method of worker.methodNames()) this.detachWorkerHandler(entry, method)
+      try {
+        await withTimeout(
+          worker.dispose(),
+          STOP_TIMEOUT_MS,
+          `插件 ${id} 的子进程停止超时（${STOP_TIMEOUT_MS}ms）`
+        )
+        this.baseCtx.logger('plugins').debug('插件 %s 的子进程已停止', id)
+        return false
+      } catch (error) {
+        const message = toMessage(error)
+        entry.failure = { stage: 'timeout', message, at: Date.now() }
+        entry.restartRequired = true
+        this.baseCtx.logger('plugins').warn(`插件 ${id} 的子进程停止异常：${message}`)
+        return true
+      }
+    }
+
     const fiber = entry.fiber
     entry.fiber = undefined
     entry.waitingFor = undefined
@@ -1200,11 +1288,12 @@ export class PluginsService extends Service {
 
     this.adoptTreeFile()
 
-    // 1) 目录已消失的插件：从树里移除
+    // 1) 目录已消失的插件：从树里移除；改成子进程运行的插件也要从树里摘掉
     const wanted = new Set(this.treeRecords().map((record) => record.manifest.id))
     for (const node of loader.entries?.() ?? []) {
       const id = node.options.id
-      if (wanted.has(id)) continue
+      const record = this.entries.get(id)?.record
+      if (wanted.has(id) && !(record && this.isWorkerRecord(record))) continue
       try {
         loader.remove(id)
       } catch (error) {
@@ -1229,6 +1318,24 @@ export class PluginsService extends Service {
     // 3) dsh 同款：等整棵树静默到稳定，再绑定 fiber
     await loader.await?.()
     this.bindTreeFibers()
+
+    // 4) 子进程插件：不在树里，绑定完 fiber 之后单独启动
+    for (const record of this.treeRecords()) {
+      if (!this.isWorkerRecord(record)) continue
+      const entry = this.entries.get(record.manifest.id)
+      if (!entry || this.disabled.has(record.manifest.id)) continue
+      try {
+        await this.startInWorker(entry)
+      } catch (error) {
+        this.recordFailure(
+          entry,
+          error instanceof PluginFailureError
+            ? error
+            : new PluginFailureError('apply', `启动子进程失败：${toMessage(error)}`)
+        )
+      }
+    }
+
     this.persistTree()
     this.logStateSummary()
   }
@@ -1238,6 +1345,8 @@ export class PluginsService extends Service {
     const id = record.manifest.id
     const main = record.entryMain
     if (!main) return
+    // 子进程插件不进 Loader 树：进去就会被主进程 import，沙箱失效
+    if (this.isWorkerRecord(record)) return
     const disabled = this.disabled.has(id)
     const existing = this.resolveRootEntry(id)
     if (existing) {
@@ -1285,6 +1394,8 @@ export class PluginsService extends Service {
       const id = record.manifest.id
       // 纯渲染插件没有主进程入口，不进树：绝不能按「没有 fiber」判 import 失败
       if (!record.entryMain) continue
+      // 子进程插件没有 fiber，状态由 startInWorker 维护
+      if (this.isWorkerRecord(record)) continue
       const entry = this.entries.get(id)
       if (!entry) continue
       const node = this.resolveRootEntry(id)
@@ -1651,7 +1762,11 @@ export class PluginsService extends Service {
     this.ipcAuditBaselines.delete(id)
   }
 
-  private summarize(record: PluginRecord, installedVersion?: string): PluginInstallSummary {
+  private summarize(
+    record: PluginRecord,
+    installedVersion?: string,
+    installedDir?: string
+  ): PluginInstallSummary {
     const { manifest } = record
     return {
       id: manifest.id,
@@ -1663,7 +1778,223 @@ export class PluginsService extends Service {
       hasRenderer: Boolean(record.entryRenderer),
       hasUninstall: Boolean(record.entryUninstall),
       installedVersion,
+      // 预览时按「安装后的位置」展开 ${pluginDir}，避免显示临时目录
+      permissions: this.resolvePermissionPaths(
+        manifest,
+        installedDir ?? record.dir
+      ),
       warnings: [...record.warnings]
+    }
+  }
+
+  /** 把清单里的权限展开成可展示、可直接用于启动参数的形状 */
+  private resolvePermissionPaths(manifest: PluginRecord['manifest'], pluginDir: string): ResolvedPermissions {
+    return resolvePermissions(manifest.permissions, {
+      userData: this.config.userDataDir,
+      pluginDir,
+      temp: os.tmpdir(),
+      home: os.homedir()
+    })
+  }
+
+  private sandboxMode(): SandboxMode {
+    return this.config.sandbox ?? 'off'
+  }
+
+  /** 只有声明了非 full 信任级别、又带主进程入口的插件才进子进程 */
+  private shouldRunInWorker(entry: Entry): boolean {
+    return this.isWorkerRecord(entry.record)
+  }
+
+  /**
+   * 同一个判断的清单版本。
+   *
+   * 子进程插件**不能**进 Cordis Loader 的树——Loader 会在主进程里把它 import 进来，
+   * 沙箱就白做了。所以挂载流程要在建树之前就把它分流出去。
+   */
+  private isWorkerRecord(record: PluginRecord): boolean {
+    if (this.sandboxMode() === 'off') return false
+    if (!record.entryMain) return false
+    return (record.manifest.permissions?.trust ?? 'full') === 'sandboxed'
+  }
+
+  /** worker 运行时由构建脚本产出到内核自己的 dist 里 */
+  private workerEntryPath(): string | undefined {
+    const kernel = this.config.plugins.find((record) => record.manifest.id === this.config.kernel)
+    if (!kernel) return undefined
+    return path.join(kernel.dir, 'dist', 'worker.mjs')
+  }
+
+  private async startInWorker(entry: Entry): Promise<void> {
+    const id = entry.record.manifest.id
+    const workerEntry = this.workerEntryPath()
+    if (!workerEntry || !existsSync(workerEntry)) {
+      throw new PluginFailureError(
+        'apply',
+        `插件 ${id} 需要子进程运行，但找不到 worker 入口（先 pnpm build:plugins）`
+      )
+    }
+    const permissions = this.resolvePermissionPaths(entry.record.manifest, entry.record.dir)
+    // 进子进程的必然是 sandboxed；`full` 永远不会走到这里
+    const enforce = (permissions.trust ?? 'full') === 'sandboxed'
+    this.baseCtx
+      .logger('plugins')
+      .info(
+        '插件 %s 在子进程里启动（trust=%s，权限强制=%s）',
+        id,
+        permissions.trust,
+        enforce ? '是' : '否'
+      )
+
+    const storage = this.baseCtx.get('storage') as
+      | (StorageServiceApi & {
+          keysFor?: (pluginId: PluginId) => string[]
+          getFor?: (pluginId: PluginId, key: string) => unknown
+          setFor?: (pluginId: PluginId, key: string, value: unknown) => void
+          deleteFor?: (pluginId: PluginId, key: string) => void
+        })
+      | undefined
+
+    // 启动快照：worker 里 storage 是同步 API，读的是这份内存副本
+    const snapshot: Record<string, unknown> = {}
+    for (const key of storage?.keysFor?.(id) ?? []) {
+      snapshot[key] = storage?.getFor?.(id, key)
+    }
+
+    // 声明的可写目录由宿主动手建好：Node 的 --allow-fs-write 只允许
+    // 「在目录里创建条目」，不包括创建该目录本身。
+    ensureWriteRoots(permissions, (dir, error) => {
+      this.baseCtx
+        .logger('plugins')
+        .warn('插件 %s 的可写目录创建失败：%s（%s）', id, dir, toMessage(error))
+    })
+
+    const host = await PluginWorkerHost.start({
+      id,
+      entry: entry.record.entryMain as string,
+      workerEntry,
+      permissions,
+      storage: snapshot,
+      paths: {
+        userData: this.config.userDataDir,
+        pluginDir: entry.record.dir,
+        temp: os.tmpdir(),
+        home: os.homedir()
+      },
+      app: { version: this.config.app.version, isDev: this.config.app.isDev },
+      enforce,
+      onRegister: (method) => this.attachWorkerHandler(entry, method),
+      onUnregister: (method) => this.detachWorkerHandler(entry, method),
+      onStorageSet: (key, value) => {
+        try {
+          storage?.setFor?.(id, key, value)
+        } catch (error) {
+          this.baseCtx.logger('plugins').warn('插件 %s 的配置写入被拒绝：%s', id, toMessage(error))
+        }
+      },
+      onStorageDelete: (key) => storage?.deleteFor?.(id, key),
+      onHostCall: async (method, args) => {
+        const host = this.baseCtx.get('host') as HostService | undefined
+        if (!host) throw new Error('宿主能力不可用')
+        if (method === 'openExternal') {
+          await host.openExternalFor(id, String(args))
+          return undefined
+        }
+        if (method === 'openPath') return await host.openPathFor(String(args))
+        throw new Error(`未知的宿主调用：${method}`)
+      },
+      capabilities: () =>
+        this.baseCtx.get('capabilities') as
+          | { get<T>(name: string): T | undefined }
+          | undefined,
+      onLog: (level, message) => {
+        const logger = this.baseCtx.logger(id)
+        if (level === 'error') logger.error(message)
+        else if (level === 'warn') logger.warn(message)
+        else logger.info(message)
+      }
+    })
+
+    entry.worker = host
+    await host.whenReady()
+    this.bridgeWorkerEvents(entry, host)
+    this.setState(entry, 'active')
+    this.announceActivated(entry)
+    emitEvent(this.baseCtx, 'plugin/activated', id)
+  }
+
+  private attachWorkerHandler(entry: Entry, method: string): void {
+    const id = entry.record.manifest.id
+    const ipc = this.baseCtx.get('ipc') as
+      | (IpcServiceApi & {
+          handleFor?: (
+            target: PluginId,
+            method: string,
+            handler: (params: unknown) => unknown
+          ) => void
+        })
+      | undefined
+    ipc?.handleFor?.(id, method, (params) => {
+      const worker = entry.worker
+      if (!worker) throw new Error(`插件 ${id} 的子进程尚未就绪`)
+      return worker.invoke(method, params)
+    })
+  }
+
+  private detachWorkerHandler(entry: Entry, method: string): void {
+    const ipc = this.baseCtx.get('ipc') as
+      | (IpcServiceApi & { unhandleFor?: (target: PluginId, method: string) => void })
+      | undefined
+    ipc?.unhandleFor?.(entry.record.manifest.id, method)
+  }
+
+  /**
+   * 在宿主侧代理子进程插件关心的事件。
+   *
+   * 监听器挂在**内核**上下文上，所以子进程被停掉时必须逐个移除，
+   * 否则会留下指向已退出进程的转发器。
+   *
+   * 只代理这两类：`plugins/changed`（通知）与 `catalog/describe`（可改写结果的
+   * waterfall）。全量转发会把每次事件都变成一轮 IPC。
+   */
+  private bridgeWorkerEvents(entry: Entry, host: PluginWorkerHost): void {
+    const id = entry.record.manifest.id
+    const warn = (error: unknown): void => {
+      this.baseCtx
+        .logger('plugins')
+        .warn('事件转发到 %s 失败：%s', id, toMessage(error))
+    }
+
+    const disposeChanged = this.baseCtx.on('plugins/changed', () => {
+      void host.dispatchEvent('plugins/changed', undefined, 'emit').catch(warn)
+    })
+
+    const disposeDescribe = this.baseCtx.on('catalog/describe', async (descriptor, next) => {
+      const current = await next()
+      const bridged = (await host.dispatchEvent(
+        'catalog/describe',
+        current,
+        'waterfall'
+      )) as CatalogDescriptor | undefined
+      return bridged ?? current
+    })
+
+    // 日志：内核把 ctx.logger 转成了 log/entry，子进程里的日志插件靠这条转发收数
+    const disposeLog = this.baseCtx.on('log/entry', (entry) => {
+      void host.dispatchEvent('log/entry', entry, 'emit').catch(() => undefined)
+    })
+
+    entry.workerBridge = [
+      () => disposeChanged(),
+      () => disposeDescribe(),
+      () => disposeLog()
+    ]
+
+    // 子进程起来时补发最近的历史：它错过了 apply 之前的那些行。
+    // 用 recent 而不是 drain——宿主侧的日志插件（如果启用）还要用同一份缓冲。
+    const recent = recentLogEntries()
+    if (recent.length > 0) {
+      void host.dispatchEvent('log/history', recent, 'emit').catch(() => undefined)
     }
   }
 
@@ -1787,6 +2118,7 @@ export class PluginsService extends Service {
       uninstallable: !builtin,
       hasUninstall: Boolean(entry.record.entryUninstall),
       manifest,
+      permissions: this.resolvePermissionPaths(manifest, entry.record.dir),
       hasMain: Boolean(entry.record.entryMain),
       hasRenderer: Boolean(entry.record.entryRenderer),
       rendererUrl: this.resolveRenderUrl(entry.record, renderer),

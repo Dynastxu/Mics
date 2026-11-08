@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import type { AppInfo, ProfileConfig } from '@mics/sdk'
+import type { AppInfo, ProfileConfig, SandboxMode } from '@mics/sdk'
 
 export interface BootConfig {
   /** 内核插件 id；bootstrap 只认识它 */
@@ -12,6 +12,8 @@ export interface BootConfig {
   disabled: string[]
   /** 部署 profile 名；对应 userData/profiles/<name>.json */
   profile?: string
+  /** 沙箱模式；缺省 off（插件全部跑在主进程） */
+  sandbox?: SandboxMode
 }
 
 /**
@@ -45,6 +47,25 @@ function configCandidates(): string[] {
   ]
 }
 
+/**
+ * 解析沙箱开关。
+ *
+ * 只认 `on` / `off`（也接受 `true` / `false`）。
+ * `audit` / `enforce` 是旧写法：两者都按 `on` 处理——权限强制现在只由插件的
+ * `trust` 决定，与这个开关无关。
+ */
+function parseSandbox(value: unknown, onWarning: ConfigWarning): SandboxMode | undefined {
+  if (value === undefined) return undefined
+  if (value === 'on' || value === true) return 'on'
+  if (value === 'off' || value === false) return 'off'
+  if (value === 'audit' || value === 'enforce') {
+    onWarning(`sandbox: "${value}" 已废弃，按 "on" 处理；强制程度由插件的 trust 决定`)
+    return 'on'
+  }
+  onWarning(`sandbox 只接受 "on" / "off"，收到 ${JSON.stringify(value)}，按 off 处理`)
+  return 'off'
+}
+
 export function loadBootConfig(onWarning: ConfigWarning = consoleWarning): BootConfig {
   for (const file of configCandidates()) {
     if (!existsSync(file)) continue
@@ -59,7 +80,8 @@ export function loadBootConfig(onWarning: ConfigWarning = consoleWarning): BootC
         disabled: Array.isArray(raw.disabled)
           ? raw.disabled.filter((item): item is string => typeof item === 'string')
           : [],
-        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined
+        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined,
+        sandbox: parseSandbox(raw.sandbox, onWarning)
       }
     } catch (error) {
       onWarning(`读取 ${file} 失败：${(error as Error).message}`)

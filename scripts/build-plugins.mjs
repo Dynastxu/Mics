@@ -294,11 +294,50 @@ async function buildTree(baseDir, label) {
   return built
 }
 
+/**
+ * 插件子进程的运行时：把 @mics/plugin-host 打成内核自己的一份产物。
+ *
+ * 它跑在纯 Node 里（`ELECTRON_RUN_AS_NODE`），所以 cordis 必须打进去——
+ * 打包后的应用不保证 `node_modules` 可读，而 `--permission` 只允许读白名单。
+ */
+async function buildWorkerRuntime() {
+  const entry = path.join(root, 'packages', 'plugin-host', 'src', 'worker.ts')
+  const kernelDir = path.join(pluginsDir, 'kernel')
+  if (!existsSync(entry) || !existsSync(kernelDir)) return false
+
+  await viteBuild({
+    configFile: false,
+    logLevel: 'warn',
+    resolve: {
+      alias: [{ find: /^@mics\/sdk$/, replacement: path.join(sdkDir, 'index.ts') }]
+    },
+    build: {
+      ssr: true,
+      target: 'node22',
+      minify: false,
+      sourcemap: false,
+      outDir: path.join(kernelDir, 'dist'),
+      emptyOutDir: false,
+      rollupOptions: {
+        input: entry,
+        // 只留 Node 内建模块；cordis 必须打进来（子进程里不保证能读 node_modules）
+        external: [/^node:/],
+        output: { entryFileNames: 'worker.mjs', format: 'es' }
+      }
+    },
+    // SSR 默认把依赖外部化；这里必须反过来，否则产物仍然 `import 'cordis'`
+    ssr: { noExternal: true }
+  })
+  console.log('[plugins] worker 运行时 ✓ dist/worker.mjs')
+  return true
+}
+
 async function main() {
   await writeShims()
 
   const plugins = await buildTree(pluginsDir, '内置插件')
   const examples = await buildTree(examplesDir, '示例插件')
+  await buildWorkerRuntime()
 
   console.log(
     watch

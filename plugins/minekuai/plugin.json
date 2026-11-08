@@ -8,6 +8,9 @@
   "activation": ["onStartup"],
   "experimental": true,
   "defaultDisabled": true,
+  "permissions": {
+    "trust": "sandboxed"
+  },
   "dependencies": ["mics.kernel"],
   "contributes": {
     "configuration": {

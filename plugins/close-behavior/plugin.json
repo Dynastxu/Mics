@@ -8,6 +8,9 @@
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
   "activation": ["onStartup"],
+  "permissions": {
+    "trust": "full"
+  },
   "dependencies": ["mics.kernel"],
   "contributes": {
     "configuration": {

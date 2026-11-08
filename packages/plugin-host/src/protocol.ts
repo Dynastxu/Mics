@@ -1,0 +1,128 @@
+import type { PluginId } from '@mics/sdk'
+
+/**
+ * 宿主 ⇄ 插件子进程的协议。
+ *
+ * 只走结构化克隆（`fork` 的 `serialization: 'advanced'`），不做 JSON 编解码——
+ * 大块数据与 Date / Map 都能原样过界。
+ */
+
+export interface PluginPaths {
+  userData: string
+  pluginDir: string
+  temp: string
+  home: string
+}
+
+export interface PluginAppInfo {
+  version: string
+  isDev: boolean
+}
+
+/** 子进程启动后收到的第一帧 */
+export interface BootstrapMessage {
+  t: 'bootstrap'
+  pluginId: PluginId
+  /** 插件主进程入口的绝对路径 */
+  entry: string
+  /** 该插件当前的存储快照；worker 侧保持同步 API，写入异步回传 */
+  storage: Record<string, unknown>
+  paths: PluginPaths
+  app: PluginAppInfo
+}
+
+export interface InvokeMessage {
+  t: 'invoke'
+  id: number
+  method: string
+  params?: unknown
+}
+
+/**
+ * 宿主派发事件给子进程。
+ *
+ * - `emit`：只通知，不关心返回值；
+ * - `waterfall`：监听器可以改写结果，必须等它返回。
+ */
+export interface EventMessage {
+  t: 'event'
+  id: number
+  topic: string
+  mode: 'emit' | 'waterfall'
+  payload?: unknown
+}
+
+/** 子进程请求宿主代做一件事（系统交互） */
+export interface HostCallMessage {
+  t: 'host-call'
+  id: number
+  method: 'openExternal' | 'openPath'
+  args: unknown
+}
+
+/** 宿主对 `host-call` 的回复 */
+export interface HostResultMessage {
+  t: 'host-result'
+  id: number
+  ok: boolean
+  value?: unknown
+  error?: string
+}
+
+/** 子进程调用宿主上的能力实现 */
+export interface CapCallMessage {
+  t: 'cap-call'
+  id: number
+  /** 能力名 */
+  cap: string
+  method: string
+  /** 目标句柄 id；省略表示调 provider 本身的方法 */
+  target?: number
+  /** 订阅事件用的编号（`once` 用） */
+  sub?: number
+  args: unknown
+}
+
+/** 宿主对 `cap-call` 的回复 */
+export interface CapResultMessage {
+  t: 'cap-result'
+  id: number
+  ok: boolean
+  value?: unknown
+  error?: string
+}
+
+/** 宿主推送的事件 / 回调 */
+export interface CapEventMessage {
+  t: 'cap-event'
+  sub: number
+  payload: unknown[]
+}
+
+export type HostToWorker =
+  | BootstrapMessage
+  | InvokeMessage
+  | EventMessage
+  | HostResultMessage
+  | CapResultMessage
+  | CapEventMessage
+  | { t: 'dispose' }
+
+export type WorkerToHost =
+  | { t: 'ready'; methods: string[] }
+  | { t: 'failed'; stage: 'import' | 'apply'; message: string }
+  | { t: 'register'; method: string }
+  | { t: 'unregister'; method: string }
+  | { t: 'storage:set'; key: string; value: unknown }
+  | { t: 'storage:delete'; key: string }
+  | { t: 'result'; id: number; ok: true; value: unknown }
+  | { t: 'result'; id: number; ok: false; error: string }
+  | { t: 'event-result'; id: number; ok: true; value: unknown }
+  | { t: 'event-result'; id: number; ok: false; error: string }
+  | HostCallMessage
+  | CapCallMessage
+  | { t: 'log'; level: 'info' | 'warn' | 'error'; message: string }
+  | { t: 'disposed' }
+
+/** 写入合并窗口：宿主不会为每个 `set` 写一次盘 */
+export const STORAGE_FLUSH_MS = 100

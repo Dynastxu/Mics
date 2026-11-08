@@ -1,4 +1,5 @@
 import type { PluginId } from './manifest'
+import type { ResolvedPermissions } from '../permissions'
 
 /**
  * 插件来源。
@@ -52,6 +53,8 @@ export interface PluginInstallSummary {
   hasUninstall: boolean
   /** 同 id 已安装时的旧版本号（升级场景） */
   installedVersion?: string
+  /** 归一化后的权限声明，安装确认框据此逐条展示 */
+  permissions: ResolvedPermissions
   warnings: string[]
 }
 

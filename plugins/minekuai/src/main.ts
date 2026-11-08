@@ -2,11 +2,12 @@ import type { Context } from 'cordis'
 import { MOD_PROJECT_KINDS } from '@mics/sdk'
 import type { CatalogDescriptor, ModProjectKind, ModSourceKind } from '@mics/sdk'
 import { defineMainPlugin } from '@mics/sdk/main'
+import { setAppVersion } from './api'
 import { MineKuaiLookup } from './lookup'
 import { readMineKuaiSettings } from './settings'
 
 export const name = 'mics.minekuai'
-export const inject = ['ipc', 'storage']
+export const inject = ['ipc', 'storage', 'host']
 
 interface ResolveRequest {
   kind?: unknown
@@ -74,6 +75,7 @@ function descriptorOf(request: ResolveRequest): CatalogDescriptor | null {
  */
 export function apply(ctx: Context): void {
   const log = ctx.logger('mics.minekuai')
+  setAppVersion(ctx.host.app.version)
   const lookup = new MineKuaiLookup(() => readMineKuaiSettings(ctx.storage), log)
 
   ctx.on('catalog/describe', async (descriptor, next) => {

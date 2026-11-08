@@ -9,6 +9,9 @@
   "styles": ["dist/style.css"],
   "dependencies": ["mics.kernel", "mics.shell", "mics.account"],
   "activation": ["onStartup"],
+  "permissions": {
+    "trust": "full"
+  },
   "contributes": {
     "nav": [
       {

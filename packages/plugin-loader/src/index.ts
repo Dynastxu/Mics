@@ -1,5 +1,6 @@
 export { validateManifest, isSafeRelativePath } from './manifest'
 export type { ValidationResult } from './manifest'
+export { validatePermissions } from './permissions'
 export {
   scanPlugins,
   readPluginDirectory,

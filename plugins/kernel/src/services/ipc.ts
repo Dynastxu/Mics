@@ -64,6 +64,30 @@ export class IpcService extends Service {
     if (!target) {
       throw new Error('[mics] ipc.handle() 必须从插件上下文中调用')
     }
+    this.register(target, method, handler as Handler)
+    return this.ctx.effect(() => () => {
+      this.removeHandler(target, method)
+    })
+  }
+
+  /**
+   * 内核代插件注册：子进程插件的 handler 在宿主侧只是一个转发器。
+   *
+   * 不走 `ctx.effect`——调用方是内核，生命周期由内核自己管（插件停止时 unhandleFor）。
+   */
+  handleFor(
+    target: PluginId,
+    method: string,
+    handler: (params: unknown, meta: IpcMeta) => MaybePromise<unknown>
+  ): void {
+    this.register(target, method, handler)
+  }
+
+  unhandleFor(target: PluginId, method: string): void {
+    this.removeHandler(target, method)
+  }
+
+  private register(target: PluginId, method: string, handler: Handler): void {
     let map = this.handlers.get(target)
     if (!map) {
       map = new Map()
@@ -72,13 +96,14 @@ export class IpcService extends Service {
     if (map.has(method)) {
       throw new Error(`插件 ${target} 重复注册 RPC 方法 ${method}`)
     }
-    map.set(method, handler as Handler)
+    map.set(method, handler)
     this.baseCtx.logger('ipc').debug('插件 %s 注册 RPC %s', target, method)
-    return this.ctx.effect(() => () => {
-      const current = this.handlers.get(target)
-      current?.delete(method)
-      if (current && current.size === 0) this.handlers.delete(target)
-    })
+  }
+
+  private removeHandler(target: PluginId, method: string): void {
+    const current = this.handlers.get(target)
+    current?.delete(method)
+    if (current && current.size === 0) this.handlers.delete(target)
   }
 
   on(topic: string, listener: Listener): Disposable {

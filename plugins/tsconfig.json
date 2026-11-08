@@ -11,6 +11,8 @@
       "@mics/ui": ["../packages/ui/src/index.ts"],
       "@mics/java": ["../packages/java/src/index.ts"],
       "@mics/plugin-loader": ["../packages/plugin-loader/src/index.ts"],
+      "@mics/plugin-host": ["../packages/plugin-host/src/protocol.ts"],
+      "@mics/plugin-host/worker": ["../packages/plugin-host/src/worker.ts"],
       "electron": ["../apps/desktop/node_modules/electron/electron.d.ts"]
     }
   },
