@@ -1,5 +1,6 @@
 import type { Context } from 'cordis'
 import type { CapabilityProviderInfo } from './capability'
+import type { LogEntry } from './logs'
 import type { PluginId } from './manifest'
 import type { ModProjectKind, ModSourceKind } from './mod'
 import type { NotificationOptions } from './notifications'
@@ -114,6 +115,17 @@ export interface MicsEvents {
     descriptor: CatalogDescriptor,
     next: () => Promise<CatalogDescriptor>
   ): Promise<CatalogDescriptor>
+
+  /**
+   * 内核产生的一条日志（`emit`）。
+   *
+   * 日志插件只订阅这个事件，不碰 cordis 的内部缓冲区、也不需要 `electron`：
+   * 它就是一个「收事件、写文件」的观察者。
+   */
+  'log/entry'(entry: LogEntry): void
+
+  /** 启动阶段的历史日志（`emit`），在启动插件激活完成后派发一次 */
+  'log/history'(entries: LogEntry[]): void
 }
 
 /**
@@ -132,7 +144,9 @@ export const EVENT_MODES = {
   'capability/changed': 'emit',
   'notification/show': 'emit',
   'ui/viewActivated': 'emit',
-  'catalog/describe': 'waterfall'
+  'catalog/describe': 'waterfall',
+  'log/entry': 'emit',
+  'log/history': 'emit'
 } as const satisfies Record<keyof MicsEvents, EventDispatchMode>
 
 export type MicsEventName = keyof MicsEvents

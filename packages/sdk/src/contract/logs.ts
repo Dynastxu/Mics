@@ -39,6 +39,23 @@ export interface LogSettings {
   maxFiles: number
 }
 
+/**
+ * 一条日志事件。
+ *
+ * 内核把 cordis 的 `ctx.logger(...)` 输出转成这类事件派发出去，日志插件只是
+ * 订阅者——它不需要访问 cordis 的内部缓冲区，也不需要 `electron`。
+ */
+export interface LogEntry {
+  /** 单调递增序号；补录与去重都靠它 */
+  sn: number
+  ts: number
+  type: LogLevel
+  /** 作用域（通常是插件 id） */
+  name: string
+  /** 沿用 cordis 的 `%s` / `%d` / `%o` 参数形态 */
+  args: unknown[]
+}
+
 /** 设置页读取的日志状态 */
 export interface LogStatus extends LogSettings {
   directory: string
@@ -69,6 +86,17 @@ declare module 'cordis' {
      * 调用方不会因此失败或等待。
      */
     'ipc:log/write'(request: LogWriteRequest): void
+
+    /** 内核产生的一条日志（`ctx.logger` 的输出） */
+    'log/entry'(entry: LogEntry): void
+
+    /**
+     * 启动阶段的历史日志。
+     *
+     * 内核在启动插件激活完成后派发一次，让日志插件不必去读 cordis 的内部缓冲区；
+     * 订阅得晚的插件也能补齐启动过程。
+     */
+    'log/history'(entries: LogEntry[]): void
   }
 }
 
