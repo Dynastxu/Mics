@@ -119,3 +119,58 @@ create(spec) {
 - 不把 `FILE_TRANSFER` 改成「纯 RPC」——它的语义就是长任务 + 进度，
   事件模型比轮询合适。
 - 不允许子进程提供能力：能力是宿主对插件的授权，反过来会让沙箱失去意义。
+
+---
+
+## 8. 实现状态（分支 `feat/plugin-permissions`，提交 `db52bfe`）
+
+| 步骤 | 状态 |
+| --- | --- |
+| 1. 协议加 `cap-call` / `cap-result` / `cap-event` | ✅ |
+| 2. 子进程 `capabilities` 服务：`require` 返回代理、`provide` 报错 | ✅ |
+| 3. 宿主按 provider 方法表路由、句柄记账、回调还原 | ✅ |
+| 4. `SHELL_EXECUTE` 跑通（句柄 `pid` + `once('exit')`） | ✅ |
+| 5. `FILE_TRANSFER` 跑通（同步 `create` + `onProgress` 回调） | ✅ |
+| 6. `launch` 迁到 `sandboxed` | ❌ 见下 |
+
+### 一个实现上的坑：同步方法返回句柄
+
+`FILE_TRANSFER.create()` 是**同步**的（返回句柄，不是 Promise），而跨进程拿不到
+同一次往返的结果。代理的做法是返回一个**延迟句柄**：方法调用时先 `await`
+内部那次 `create` 的响应，再按 id 路由。字段（如 `pid`）只在异步方法上提供，
+因为同步读取字段没法等待。
+
+### `launch` 为什么还迁不了
+
+不是能力的问题，是**文件扫描**的问题：
+
+`packages/java` 为了找本机 JVM，会 `readdir` 这些目录：
+
+```
+C:\Program Files\Java\*、C:\Program Files\Eclipse Adoptium\*、
+%LOCALAPPDATA%\Programs\Eclipse Adoptium、JAVA_HOME、PATH
+```
+
+静态白名单表达不了「本机所有可能的 JDK 位置」。而且 `existsSync` 会把
+`ERR_ACCESS_DENIED` 吞成 `false`，结果是**静默地找不到 Java**，比报错更糟。
+
+三条出路，选一条：
+
+1. **宿主代做探测**：`ctx.host.java.detect()` 在宿主进程里扫，插件拿结果。
+   最干净，也符合「宿主能力」的方向；
+2. **放宽读权限**到 `C:\Program Files`、`%LOCALAPPDATA%`，代价是沙箱边界变模糊；
+3. **强制用户配置 Java 路径**，去掉自动探测。UX 有损。
+
+推荐第 1 条：探测是只读的、结果可缓存，放在宿主侧正好。
+
+### 剩下的插件
+
+| 插件 | 卡点 | 出路 |
+| --- | --- | --- |
+| launch | JDK 探测（见上） | 宿主代做探测 |
+| account | `safeStorage` 加解密 | 宿主代理（密钥不出宿主） |
+| close-behavior | `Tray` / `Menu` | 托盘由宿主建，插件只发指令 |
+| plugin-inspector | `dialog` / `BrowserWindow` | 宿主代开对话框 |
+| logger | 要观察主进程 `ctx.logger` | **不应迁移**：观察者天然属于宿主侧 |
+| download-manager / shell | 提供能力 | 已支持：提供方留在宿主 |
+| kernel | 内核本身 | 保持 `full` |
