@@ -1833,13 +1833,17 @@ export class PluginsService extends Service {
         `插件 ${id} 需要子进程运行，但找不到 worker 入口（先 pnpm build:plugins）`
       )
     }
+    const permissions = this.resolvePermissionPaths(entry.record.manifest, entry.record.dir)
+    // `isolated` 只是进程隔离，不加引擎限制；只有 `sandboxed` 才吃 --permission
+    const enforce =
+      this.sandboxMode() === 'enforce' && (permissions.trust ?? 'full') === 'sandboxed'
     this.baseCtx
       .logger('plugins')
       .info(
         '插件 %s 将在子进程里运行（trust=%s，enforce=%s）',
         id,
-        entry.record.manifest.permissions?.trust ?? 'full',
-        this.sandboxMode()
+        permissions.trust,
+        enforce
       )
 
     const storage = this.baseCtx.get('storage') as
@@ -1857,10 +1861,6 @@ export class PluginsService extends Service {
       snapshot[key] = storage?.getFor?.(id, key)
     }
 
-    const permissions = this.resolvePermissionPaths(entry.record.manifest, entry.record.dir)
-    // `isolated` 只是进程隔离，不加引擎限制；只有 `sandboxed` 才吃 --permission
-    const enforce =
-      this.sandboxMode() === 'enforce' && (permissions.trust ?? 'full') === 'sandboxed'
     // 声明的可写目录由宿主动手建好：Node 的 --allow-fs-write 只允许
     // 「在目录里创建条目」，不包括创建该目录本身。
     ensureWriteRoots(permissions, (dir, error) => {
@@ -1882,7 +1882,7 @@ export class PluginsService extends Service {
         home: os.homedir()
       },
       app: { version: this.config.app.version, isDev: this.config.app.isDev },
-      enforce: this.sandboxMode() === 'enforce',
+      enforce,
       onRegister: (method) => this.attachWorkerHandler(entry, method),
       onUnregister: (method) => this.detachWorkerHandler(entry, method),
       onStorageSet: (key, value) => {
