@@ -1,7 +1,14 @@
 import { Context, Service } from 'cordis'
 import * as CordisRuntime from 'cordis'
 import type { Fiber, Plugin } from 'cordis'
-import { FIBER_ACTIVE, type PluginId } from '@mics/sdk'
+import {
+  CAPABILITY_BRIDGES,
+  FIBER_ACTIVE,
+  isBridgeableCapability,
+  type CapabilityBridgeSpec,
+  type CapabilityName,
+  type PluginId
+} from '@mics/sdk'
 import {
   STORAGE_FLUSH_MS,
   type BootstrapMessage,
@@ -131,8 +138,169 @@ class RemoteStorageService extends Service {
   }
 }
 
-class RemoteHostService extends Service {
+// ---------------------------------------------------------------------------
+// 能力代理
+// ---------------------------------------------------------------------------
+
+const capPending = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (error: Error) => void }
+>()
+let capSeq = 0
+const capSubs = new Map<number, (...args: unknown[]) => void>()
+let capSubSeq = 0
+
+function capCall<T>(
+  cap: string,
+  method: string,
+  args: unknown,
+  target?: number,
+  sub?: number
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = ++capSeq
+    capPending.set(id, { resolve: resolve as (value: unknown) => void, reject })
+    send({ t: 'cap-call', id, cap, method, args, target, sub })
+  })
+}
+
+/** 函数参数替换成订阅 id；宿主侧再还原成真回调 */
+function encodeArg(value: unknown): unknown {
+  if (typeof value === 'function') {
+    const sub = ++capSubSeq
+    capSubs.set(sub, value as (...args: unknown[]) => void)
+    return { __micsSub: sub }
+  }
+  if (Array.isArray(value)) return value.map(encodeArg)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value)) out[key] = encodeArg(item)
+    return out
+  }
+  return value
+}
+
+/**
+ * 句柄代理。
+ *
+ * `ready` 是宿主返回的句柄引用：方法调用前先等它落地。
+ * 之所以允许“延迟”，是因为能力契约里有同步方法（`FILE_TRANSFER.create` 返回句柄
+ * 而不是 Promise），代理必须保持同步签名，把等待挪到每次方法调用里。
+ */
+function wrapHandle(
+  spec: NonNullable<CapabilityBridgeSpec['handle']>,
+  cap: string,
+  ready: Promise<Record<string, unknown>>,
+  fields: Record<string, unknown> = {}
+): Record<string, unknown> {
+  const local: Record<string, unknown> = { ...fields }
+  const handleId = async (): Promise<number> => {
+    const ref = await ready
+    const id = Number(ref?.__micsHandle)
+    if (!Number.isFinite(id)) throw new Error(`能力 ${cap} 没有返回可用的句柄`)
+    return id
+  }
+
+  return new Proxy(local, {
+    get(current, prop) {
+      if (typeof prop !== 'string') return Reflect.get(current, prop)
+      if (prop in current) return current[prop]
+      if (prop === 'once') {
+        return (event: string, listener: (...args: unknown[]) => void) => {
+          const sub = ++capSubSeq
+          capSubs.set(sub, listener)
+          void handleId().then((id) => capCall(cap, 'once', event, id, sub))
+          return () => {
+            capSubs.delete(sub)
+          }
+        }
+      }
+      if (spec.methods.includes(prop)) {
+        return async (...args: unknown[]) =>
+          await capCall(cap, prop, args.map(encodeArg), await handleId())
+      }
+      return undefined
+    }
+  })
+}
+
+/** 生成能力代理：方法转发到宿主，句柄按 id 路由，回调按订阅推送 */
+function wrapCapability(name: string, spec: CapabilityBridgeSpec): Record<string, unknown> {
+  const base: Record<string, unknown> = { label: 'host' }
+  return new Proxy(base, {
+    get(current, prop) {
+      if (typeof prop !== 'string') return Reflect.get(current, prop)
+      if (prop in current) return current[prop]
+      if (!spec.methods.includes(prop)) return undefined
+
+      return (...args: unknown[]) => {
+        const pending = capCall(name, prop, args.map(encodeArg)) as Promise<Record<string, unknown>>
+        if (!spec.handle) return pending
+        // 句柄有字段（例如 `pid`）时只能异步返回：调用方本来就 await 了这个方法
+        if (spec.handle.fields.length > 0) {
+          return pending.then((ref) =>
+            wrapHandle(spec.handle!, name, Promise.resolve(ref), (ref?.__micsFields ?? {}) as Record<string, unknown>)
+          )
+        }
+        // 没有字段时保持同步签名：`create()` 直接返回句柄，等待被推迟到方法调用里
+        return wrapHandle(spec.handle, name, pending)
+      }
+    }
+  })
+}
+
+/**
+ * 子进程侧的能力注册表。
+ *
+ * 能力实现留在宿主：这里只给代理。`provide()` 直接报错——能力是宿主对插件的
+ * 授权，允许子进程反向注册会让沙箱失去意义。
+ */
+class RemoteCapabilitiesService extends Service {
   static inject: string[] = []
+
+  constructor(ctx: Context) {
+    super(ctx, 'capabilities')
+  }
+
+  get<T>(name: CapabilityName): T | undefined {
+    const spec = CAPABILITY_BRIDGES[name]
+    if (!spec) return undefined
+    return wrapCapability(name, spec) as T
+  }
+
+  require<T>(name: CapabilityName): T {
+    if (!isBridgeableCapability(name)) {
+      throw new Error(`能力 ${name} 不能在子进程里使用（未登记跨进程桥接）`)
+    }
+    return this.get<T>(name) as T
+  }
+
+  provide(): never {
+    throw new Error('子进程插件不能提供能力：能力由宿主提供')
+  }
+
+  providers(): never[] {
+    return []
+  }
+
+  names(): never[] {
+    return []
+  }
+
+  consumers(): never[] {
+    return []
+  }
+
+  consumersOf(): never[] {
+    return []
+  }
+
+  onChange(): () => void {
+    return () => undefined
+  }
+}
+
+class RemoteHostService extends Service {
 
   readonly paths: PluginPaths
   readonly app: PluginAppInfo
@@ -168,6 +336,7 @@ async function start(message: BootstrapMessage): Promise<void> {
   storage = new RemoteStorageService(ctx)
   storage.load(message.storage)
   new RemoteHostService(ctx, message.pluginId, message.paths, message.app)
+  new RemoteCapabilitiesService(ctx)
 
   let module: Record<string, unknown>
   try {
@@ -261,6 +430,14 @@ process.on('message', (message: HostToWorker) => {
     hostPending.delete(message.id)
     if (message.ok) entry.resolve(message.value)
     else entry.reject(new Error(String(message.error)))
+  } else if (message.t === 'cap-result') {
+    const entry = capPending.get(message.id)
+    if (!entry) return
+    capPending.delete(message.id)
+    if (message.ok) entry.resolve(message.value)
+    else entry.reject(new Error(String(message.error)))
+  } else if (message.t === 'cap-event') {
+    capSubs.get(message.sub)?.(...(message.payload ?? []))
   } else if (message.t === 'dispose') void stop()
 })
 

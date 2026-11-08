@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import type { PluginId, ResolvedPermissions } from '@mics/sdk'
+import { CAPABILITY_BRIDGES, type CapabilityBridgeSpec } from '@mics/sdk'
 import type { HostToWorker, WorkerToHost } from '@mics/plugin-host'
 
 /**
@@ -44,6 +45,11 @@ export interface WorkerHostOptions {
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
   /** 子进程请求宿主代做系统交互 */
   onHostCall?: (method: 'openExternal' | 'openPath', args: unknown) => Promise<unknown>
+  /**
+   * 宿主上的能力注册表。子进程调用能力时由这里路由到真正的实现；
+   * 省略表示该插件不能用能力。
+   */
+  capabilities?: () => { get<T>(name: string): T | undefined } | undefined
   onExit?: (code: number | null) => void
 }
 
@@ -112,6 +118,8 @@ export class PluginWorkerHost {
     { resolve: (value: unknown) => void; reject: (error: Error) => void }
   >()
   private readonly methods = new Set<string>()
+  private readonly handles = new Map<number, Record<string, unknown>>()
+  private handleSeq = 0
   private seq = 0
   private disposed = false
   private readonly ready: Promise<string[]>
@@ -218,6 +226,7 @@ export class PluginWorkerHost {
     this.post({ t: 'dispose' })
     await done
     this.disposed = true
+    this.handles.clear()
     this.child.kill()
     this.failAll(new Error(`插件 ${this.id} 已停止`))
   }
@@ -278,6 +287,9 @@ export class PluginWorkerHost {
       case 'host-call':
         void this.handleHostCall(message)
         return
+      case 'cap-call':
+        void this.handleCapCall(message)
+        return
       case 'disposed':
         return
     }
@@ -297,6 +309,89 @@ export class PluginWorkerHost {
         error: error instanceof Error ? error.message : String(error)
       })
     }
+  }
+
+  /** 子进程的能力调用：路由到宿主侧的真实现，句柄按 id 记账 */
+  private async handleCapCall(message: Extract<WorkerToHost, { t: 'cap-call' }>): Promise<void> {
+    try {
+      const value = await this.dispatchCap(message)
+      this.post({ t: 'cap-result', id: message.id, ok: true, value })
+    } catch (error) {
+      this.post({
+        t: 'cap-result',
+        id: message.id,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+  }
+
+  private async dispatchCap(message: Extract<WorkerToHost, { t: 'cap-call' }>): Promise<unknown> {
+    const spec = CAPABILITY_BRIDGES[message.cap]
+    if (!spec) throw new Error(`能力 ${message.cap} 不支持跨进程`)
+
+    if (message.target !== undefined) {
+      const handle = this.handles.get(message.target)
+      if (!handle) throw new Error(`句柄 ${message.target} 已失效`)
+      if (message.method === 'once') {
+        const event = String(message.args)
+        const once = handle.once as
+          | ((name: string, listener: (...args: unknown[]) => void) => unknown)
+          | undefined
+        if (typeof once !== 'function') throw new Error('句柄不支持事件订阅')
+        const sub = message.sub
+        once.call(handle, event, (...args: unknown[]) => {
+          if (sub !== undefined) this.post({ t: 'cap-event', sub, payload: args })
+        })
+        return undefined
+      }
+      const fn = handle[message.method]
+      if (typeof fn !== 'function') throw new Error(`句柄没有方法 ${message.method}`)
+      const args = this.revive(message.args) as unknown[]
+      return await (fn as (...rest: unknown[]) => unknown).apply(handle, args)
+    }
+
+    const impl = this.options.capabilities?.()?.get<Record<string, unknown>>(message.cap)
+    if (!impl) throw new Error(`宿主没有能力 ${message.cap}`)
+    const fn = impl[message.method]
+    if (typeof fn !== 'function') throw new Error(`能力 ${message.cap} 没有方法 ${message.method}`)
+    const args = this.revive(message.args) as unknown[]
+    const result = await (fn as (...rest: unknown[]) => unknown).apply(impl, args)
+    return this.retainHandle(spec, result)
+  }
+
+  /** 把 {@link __micsSub} 占位换回真回调：宿主侧的回调要推回子进程 */
+  private revive(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((item) => this.revive(item))
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>
+      if (typeof record.__micsSub === 'number') {
+        const sub = record.__micsSub
+        return (...args: unknown[]) => {
+          this.post({ t: 'cap-event', sub, payload: args })
+        }
+      }
+      const out: Record<string, unknown> = {}
+      for (const [key, item] of Object.entries(record)) out[key] = this.revive(item)
+      return out
+    }
+    return value
+  }
+
+  /**
+   * 返回值如果带方法，就当成句柄：记账 + 把只读字段拍平带过去。
+   *
+   * 只对登记过 `handle` 的能力这么做——否则普通对象会被误判。
+   */
+  private retainHandle(spec: CapabilityBridgeSpec, result: unknown): unknown {
+    if (!spec.handle || !result || typeof result !== 'object') return result
+    const id = ++this.handleSeq
+    this.handles.set(id, result as Record<string, unknown>)
+    const fields: Record<string, unknown> = {}
+    for (const field of spec.handle.fields) {
+      fields[field] = (result as Record<string, unknown>)[field]
+    }
+    return { __micsHandle: id, __micsFields: fields }
   }
 
   private failAll(error: Error): void {

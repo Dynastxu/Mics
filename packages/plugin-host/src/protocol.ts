@@ -69,11 +69,43 @@ export interface HostResultMessage {
   error?: string
 }
 
+/** 子进程调用宿主上的能力实现 */
+export interface CapCallMessage {
+  t: 'cap-call'
+  id: number
+  /** 能力名 */
+  cap: string
+  method: string
+  /** 目标句柄 id；省略表示调 provider 本身的方法 */
+  target?: number
+  /** 订阅事件用的编号（`once` 用） */
+  sub?: number
+  args: unknown
+}
+
+/** 宿主对 `cap-call` 的回复 */
+export interface CapResultMessage {
+  t: 'cap-result'
+  id: number
+  ok: boolean
+  value?: unknown
+  error?: string
+}
+
+/** 宿主推送的事件 / 回调 */
+export interface CapEventMessage {
+  t: 'cap-event'
+  sub: number
+  payload: unknown[]
+}
+
 export type HostToWorker =
   | BootstrapMessage
   | InvokeMessage
   | EventMessage
   | HostResultMessage
+  | CapResultMessage
+  | CapEventMessage
   | { t: 'dispose' }
 
 export type WorkerToHost =
@@ -88,6 +120,7 @@ export type WorkerToHost =
   | { t: 'event-result'; id: number; ok: true; value: unknown }
   | { t: 'event-result'; id: number; ok: false; error: string }
   | HostCallMessage
+  | CapCallMessage
   | { t: 'log'; level: 'info' | 'warn' | 'error'; message: string }
   | { t: 'disposed' }
 

@@ -1819,6 +1819,10 @@ export class PluginsService extends Service {
         if (method === 'openPath') return await host.openPathFor(String(args))
         throw new Error(`未知的宿主调用：${method}`)
       },
+      capabilities: () =>
+        this.baseCtx.get('capabilities') as
+          | { get<T>(name: string): T | undefined }
+          | undefined,
       onLog: (level, message) => {
         const logger = this.baseCtx.logger(id)
         if (level === 'error') logger.error(message)

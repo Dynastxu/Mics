@@ -21,6 +21,48 @@ export const FILE_TRANSFER = 'mics.net.file-transfer'
 
 export type CapabilityName = string
 
+/**
+ * 能力实现是**活对象**：方法、回调、事件。它只能活在创建它的进程里，
+ * 所以子进程使用时拿到的是代理。这张表描述代理要转发哪些东西。
+ *
+ * 不在这里登记的能力不能被跨进程使用——宁可报错，也不要做「看起来能调、
+ * 实际丢了回调」的静默降级。
+ */
+export interface CapabilityHandleSpec {
+  /** 句柄上的方法 */
+  methods: string[]
+  /** 句柄上的事件（与 `once(event, …)` 的名字对应） */
+  events: string[]
+  /** 句柄上的只读字段 */
+  fields: string[]
+}
+
+export interface CapabilityBridgeSpec {
+  /** provider 上的方法名 */
+  methods: string[]
+  /** 请求参数里可能是回调的字段名（换成订阅 id 传给宿主） */
+  callbacks?: string[]
+  /** 返回句柄的形状；省略表示返回值是纯数据 */
+  handle?: CapabilityHandleSpec
+}
+
+export const CAPABILITY_BRIDGES: Record<CapabilityName, CapabilityBridgeSpec> = {
+  [SHELL_EXECUTE]: {
+    methods: ['spawn'],
+    handle: { methods: ['kill', 'detach'], events: ['exit', 'error'], fields: ['pid'] }
+  },
+  [FILE_TRANSFER]: {
+    methods: ['create'],
+    callbacks: ['onProgress', 'onRestart'],
+    handle: { methods: ['start', 'stop'], events: [], fields: [] }
+  }
+}
+
+/** 跨进程时能不能使用这个能力 */
+export function isBridgeableCapability(name: CapabilityName): boolean {
+  return name in CAPABILITY_BRIDGES
+}
+
 export interface CapabilityProviderInfo {
   name: CapabilityName
   /** 实现的可读标签：local / sandbox / mirror … */
