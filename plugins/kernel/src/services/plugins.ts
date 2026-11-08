@@ -631,6 +631,11 @@ export class PluginsService extends Service {
       // 插件在启动时已由 syncTree 挂载；这里只处理「失败后重试」。
       // 内核自己由 bootstrap 挂载，绝不能进树。
       if (id === this.config.kernel) return
+      // 子进程插件没有 fiber：第一次激活时启动进程，已在跑就直接返回
+      if (this.shouldRunInWorker(entry)) {
+        if (!entry.worker) await this.startInWorker(entry)
+        return
+      }
       if (entry.fiber) return
       if (entry.state === 'failed') await this.remountEntry(entry)
     })
@@ -656,6 +661,22 @@ export class PluginsService extends Service {
       this.rebuildEffectiveDisabled()
       this.persistDisabled()
       this.persistEnabled()
+
+      // 子进程插件：Loader 里没有它的条目，停进程即可
+      if (this.shouldRunInWorker(entry)) {
+        const timedOut = await this.stop(entry)
+        if (timedOut) {
+          this.setState(entry, 'failed')
+          throw new PluginFailureError('timeout', entry.failure?.message ?? `插件 ${id} 停止超时`)
+        }
+        entry.state = 'disabled'
+        entry.failure = undefined
+        this.persistTree()
+        this.notify()
+        emitEvent(this.baseCtx, 'plugin/deactivated', id)
+        this.baseCtx.logger('plugins').info('插件 %s 已禁用', id)
+        return
+      }
 
       const loader = this.loaderService()
       if (loader?.update) {
@@ -700,6 +721,14 @@ export class PluginsService extends Service {
       this.persistDisabled()
       this.persistEnabled()
       entry.failure = undefined
+      // 子进程插件没有 Loader 条目，直接拉进程
+      if (this.shouldRunInWorker(entry)) {
+        await this.startInWorker(entry)
+        this.persistTree()
+        this.notify()
+        this.baseCtx.logger('plugins').info('插件 %s 已启用', id)
+        return
+      }
       const loader = this.loaderService()
       if (loader?.update) {
         await loader.update(id, { disabled: false })
@@ -723,6 +752,15 @@ export class PluginsService extends Service {
       if (this.disabled.has(id)) throw new Error(`插件 ${id} 已禁用，请先启用再重载`)
       const log = this.baseCtx.logger('plugins')
       log.info('正在重载插件 %s', id)
+      // 子进程插件：停进程再起一个新的，产物已经由构建脚本换掉了
+      if (this.shouldRunInWorker(entry) || entry.worker) {
+        await this.stop(entry)
+        await this.startInWorker(entry)
+        this.persistTree()
+        this.notify()
+        log.info('插件 %s 已重载', id)
+        return
+      }
       // 重载 = 移除后用带查询串的 entry 重建，强制重新 import
       await this.remountEntry(entry)
       this.persistTree()
@@ -1247,11 +1285,12 @@ export class PluginsService extends Service {
 
     this.adoptTreeFile()
 
-    // 1) 目录已消失的插件：从树里移除
+    // 1) 目录已消失的插件：从树里移除；改成子进程运行的插件也要从树里摘掉
     const wanted = new Set(this.treeRecords().map((record) => record.manifest.id))
     for (const node of loader.entries?.() ?? []) {
       const id = node.options.id
-      if (wanted.has(id)) continue
+      const record = this.entries.get(id)?.record
+      if (wanted.has(id) && !(record && this.isWorkerRecord(record))) continue
       try {
         loader.remove(id)
       } catch (error) {
@@ -1276,6 +1315,24 @@ export class PluginsService extends Service {
     // 3) dsh 同款：等整棵树静默到稳定，再绑定 fiber
     await loader.await?.()
     this.bindTreeFibers()
+
+    // 4) 子进程插件：不在树里，绑定完 fiber 之后单独启动
+    for (const record of this.treeRecords()) {
+      if (!this.isWorkerRecord(record)) continue
+      const entry = this.entries.get(record.manifest.id)
+      if (!entry || this.disabled.has(record.manifest.id)) continue
+      try {
+        await this.startInWorker(entry)
+      } catch (error) {
+        this.recordFailure(
+          entry,
+          error instanceof PluginFailureError
+            ? error
+            : new PluginFailureError('apply', `启动子进程失败：${toMessage(error)}`)
+        )
+      }
+    }
+
     this.persistTree()
     this.logStateSummary()
   }
@@ -1285,6 +1342,8 @@ export class PluginsService extends Service {
     const id = record.manifest.id
     const main = record.entryMain
     if (!main) return
+    // 子进程插件不进 Loader 树：进去就会被主进程 import，沙箱失效
+    if (this.isWorkerRecord(record)) return
     const disabled = this.disabled.has(id)
     const existing = this.resolveRootEntry(id)
     if (existing) {
@@ -1332,6 +1391,8 @@ export class PluginsService extends Service {
       const id = record.manifest.id
       // 纯渲染插件没有主进程入口，不进树：绝不能按「没有 fiber」判 import 失败
       if (!record.entryMain) continue
+      // 子进程插件没有 fiber，状态由 startInWorker 维护
+      if (this.isWorkerRecord(record)) continue
       const entry = this.entries.get(id)
       if (!entry) continue
       const node = this.resolveRootEntry(id)
@@ -1739,9 +1800,19 @@ export class PluginsService extends Service {
 
   /** 只有声明了非 full 信任级别、又带主进程入口的插件才进子进程 */
   private shouldRunInWorker(entry: Entry): boolean {
+    return this.isWorkerRecord(entry.record)
+  }
+
+  /**
+   * 同一个判断的清单版本。
+   *
+   * 子进程插件**不能**进 Cordis Loader 的树——Loader 会在主进程里把它 import 进来，
+   * 沙箱就白做了。所以挂载流程要在建树之前就把它分流出去。
+   */
+  private isWorkerRecord(record: PluginRecord): boolean {
     if (this.sandboxMode() === 'off') return false
-    if (!entry.record.entryMain) return false
-    return (entry.record.manifest.permissions?.trust ?? 'full') !== 'full'
+    if (!record.entryMain) return false
+    return (record.manifest.permissions?.trust ?? 'full') !== 'full'
   }
 
   /** worker 运行时由构建脚本产出到内核自己的 dist 里 */
@@ -1760,6 +1831,14 @@ export class PluginsService extends Service {
         `插件 ${id} 需要子进程运行，但找不到 worker 入口（先 pnpm build:plugins）`
       )
     }
+    this.baseCtx
+      .logger('plugins')
+      .info(
+        '插件 %s 将在子进程里运行（trust=%s，enforce=%s）',
+        id,
+        entry.record.manifest.permissions?.trust ?? 'full',
+        this.sandboxMode()
+      )
 
     const storage = this.baseCtx.get('storage') as
       | (StorageServiceApi & {
@@ -1777,6 +1856,9 @@ export class PluginsService extends Service {
     }
 
     const permissions = this.resolvePermissionPaths(entry.record.manifest, entry.record.dir)
+    // `isolated` 只是进程隔离，不加引擎限制；只有 `sandboxed` 才吃 --permission
+    const enforce =
+      this.sandboxMode() === 'enforce' && (permissions.trust ?? 'full') === 'sandboxed'
     // 声明的可写目录由宿主动手建好：Node 的 --allow-fs-write 只允许
     // 「在目录里创建条目」，不包括创建该目录本身。
     ensureWriteRoots(permissions, (dir, error) => {
