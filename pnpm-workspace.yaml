@@ -7,3 +7,9 @@ packages:
 allowBuilds:
   electron-winstaller: true
   esbuild: true
+
+overrides:
+  # GHSA-g3hv-75wg-m249 / CVE-2026-118764：minimatch < 11.0.1 在 optimizationLevel >= 2 时
+  # 会因 **/.. 扩增 globParts 并二次方处理，造成 CPU / 内存耗尽。
+  # 7.x+ 全部收敛到 11.x；3.x / 5.x 属于 glob@7、filelist 仍在使用的旧版本线，不受该公告影响。
+  'minimatch@>=7.0.0 <11.0.1': '^11.0.1'
