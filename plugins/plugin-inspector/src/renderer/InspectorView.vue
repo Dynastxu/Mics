@@ -60,12 +60,13 @@ const selectedInfo = computed(() => pluginOf(selectedId.value))
 const selectedConfig = computed(() =>
   configs.value.find((config) => config.pluginId === selectedId.value)
 )
-/** 详情页的权限区块；页面插件没有文件/进程能力，不显示 */
+/** 详情页的权限区块：所有插件都显示，页面插件说明它没有文件/进程能力 */
 const selectedPermissions = computed(() => {
   const info = selectedInfo.value
-  if (!info || !info.hasMain) return undefined
+  if (!info) return undefined
   return {
     trust: info.permissions.trust,
+    hasMain: info.hasMain,
     lines: describePermissions(info.permissions),
     unresolved: info.permissions.unresolved
   }
@@ -228,6 +229,12 @@ const TRUST_HINTS: Record<TrustLevel, string> = {
   full: '完全权限：与 MICS 本身同权限，可以读写任意文件、执行任意程序、访问网络。',
   isolated: '独立进程：崩溃不会影响主程序，但仍拥有完整的文件与进程权限。',
   sandboxed: '受限权限：只能访问下面列出的资源，越界会被系统拒绝。'
+}
+
+/** 信任级别在界面上的颜色：完全权限最醒目 */
+function trustBadgeClass(trust: TrustLevel): string {
+  if (trust === 'full') return 'mics-badge--accent'
+  return ''
 }
 
 /** 把权限声明摊平成给人看的几行；声明为空时返回空数组 */
@@ -622,6 +629,13 @@ onBeforeUnmount(() => {
         <div>
           <div class="inspector__detail-heading">
             <h2 class="inspector__detail-title">{{ selectedInfo?.name }}</h2>
+            <span
+              v-if="selectedInfo?.hasMain"
+              class="mics-badge"
+              :class="trustBadgeClass(selectedInfo.permissions.trust)"
+            >
+              {{ trustLabel(selectedInfo.permissions.trust) }}
+            </span>
             <span v-if="selectedInfo?.manifest.experimental" class="mics-badge mics-badge--accent">
               实验性
             </span>
@@ -714,6 +728,34 @@ onBeforeUnmount(() => {
         {{ selectedNode?.warnings.join('；') }}
       </div>
 
+      <section v-if="selectedPermissions" class="inspector__permissions">
+        <h3>申请的权限</h3>
+        <p class="inspector__permission-trust">
+          <span
+            v-if="selectedPermissions.hasMain"
+            class="mics-badge"
+            :class="trustBadgeClass(selectedPermissions.trust)"
+          >
+            {{ trustLabel(selectedPermissions.trust) }}
+          </span>
+          <span class="inspector__muted">
+            {{ selectedPermissions.hasMain ? TRUST_HINTS[selectedPermissions.trust] : '' }}
+          </span>
+        </p>
+        <ul v-if="selectedPermissions.lines.length">
+          <li v-for="line in selectedPermissions.lines" :key="line">{{ line }}</li>
+        </ul>
+        <p v-else-if="!selectedPermissions.hasMain" class="inspector__muted">
+          页面插件：与界面共享渲染进程，没有文件与进程能力。
+        </p>
+        <p v-else-if="selectedPermissions.trust !== 'full'" class="inspector__muted">
+          没有声明额外权限，越界访问会被拒绝。
+        </p>
+        <p v-if="selectedPermissions.unresolved.length" class="inspector__notice">
+          未能展开的路径：{{ selectedPermissions.unresolved.join('、') }}
+        </p>
+      </section>
+
       <section v-if="selectedConfig" class="inspector__settings">
         <h3>设置</h3>
         <p v-if="selectedConfig.description" class="inspector__muted">
@@ -728,18 +770,6 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <PluginSettingsPanel v-else :config="selectedConfig" @updated="replaceConfig" />
-      </section>
-
-      <section v-if="selectedPermissions" class="inspector__permissions">
-        <h3>权限 · {{ trustLabel(selectedPermissions.trust) }}</h3>
-        <p class="inspector__muted">{{ TRUST_HINTS[selectedPermissions.trust] }}</p>
-        <ul v-if="selectedPermissions.lines.length">
-          <li v-for="line in selectedPermissions.lines" :key="line">{{ line }}</li>
-        </ul>
-        <p v-else class="inspector__muted">没有声明额外权限。</p>
-        <p v-if="selectedPermissions.unresolved.length" class="inspector__notice">
-          未能展开的路径：{{ selectedPermissions.unresolved.join('、') }}
-        </p>
       </section>
 
       <div v-if="selectedNode" class="inspector__columns">
@@ -1010,6 +1040,17 @@ onBeforeUnmount(() => {
 .inspector__permissions .inspector__muted {
   margin: 0 0 8px;
   font-size: 12px;
+}
+
+.inspector__permission-trust {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0 0 8px;
+}
+
+.inspector__permission-trust .inspector__muted {
+  margin: 0;
 }
 
 .inspector__settings-entry {
