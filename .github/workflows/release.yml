@@ -1,0 +1,236 @@
+name: Release
+
+# 可复用工作流：三平台打安装包并发布到 GitHub Release。
+# - 正式 / 预发布 tag：cd.yml 在推送 v* tag 时调用；tag 带 -alpha、-beta、-rc 这类
+#   预发布后缀时，Release 会被自动标成 prerelease。
+# - 快照：ci.yml 在 main 的 CI 通过后调用，固定使用 snapshot 这个 tag（rolling）。
+#
+# tag 不一定和提交同时推送，所以快照在发布前会重新检查该提交有没有 tag；
+# tag 版本发布时，如果快照恰好指向同一个提交，会顺手把快照删掉。
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release 使用的 git tag；快照固定用 snapshot（每次指向最新提交）
+        type: string
+        required: true
+      title:
+        description: Release 标题
+        type: string
+        required: false
+        default: MICS
+      version:
+        description: 安装包版本号；留空时从 tag（v1.2.3 → 1.2.3）或 package.json 推导
+        type: string
+        required: false
+        default: ''
+      rolling:
+        description: 快照模式：先删掉同名 release 和 tag，把它移到本次提交；同时总是标成 prerelease
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    # 快照允许后来者取消前一次（tag 只有一个）；正式发布不取消，避免半途中断。
+    # 分组带上 matrix.os，否则矩阵里多个平台会互相排队、互相取消。
+    concurrency:
+      group: release-${{ inputs.tag }}-${{ matrix.os }}
+      cancel-in-progress: ${{ inputs.rolling }}
+    strategy:
+      fail-fast: false
+      # 每个平台必须跑在自己的 runner 上：dmg 需要 macOS 的 hdiutil，
+      # AppImage/deb 需要 Linux 工具链，nsis/msi 需要 Windows。
+      matrix:
+        include:
+          - os: windows-latest
+            script: dist:win
+          - os: macos-latest
+            script: dist:mac
+          - os: ubuntu-latest
+            script: dist:linux
+    env:
+      # 没有签名证书时必须关掉自动发现，否则 mac 打包会在查找签名身份时失败。
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # 版本只写根 package.json：随后 pnpm build 里的 version:sync 会把它下发到
+      # apps/desktop 与各子包，electron-builder 和 app.getVersion() 读的正是 apps/desktop。
+      # 内置插件的清单不写版本，运行时同样取 app.getVersion()。
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION}" ]; then
+            version="${INPUT_VERSION}"
+          elif [[ "${TAG}" == v[0-9]* ]]; then
+            version="${TAG#v}"
+          else
+            base="$(node -p "require('./package.json').version")"
+            version="${base}-snapshot.$(git rev-parse --short HEAD)"
+          fi
+          VERSION="${version}" node -e '
+            const fs = require("node:fs")
+            const file = "package.json"
+            const json = JSON.parse(fs.readFileSync(file, "utf8"))
+            json.version = process.env.VERSION
+            fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n")
+          '
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "安装包版本：${version}"
+
+      # 根脚本 dist:* 内部已经包含 pnpm build，这里不再单独构建一次。
+      - name: Build and package
+        run: pnpm ${{ matrix.script }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.msi
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish (${{ inputs.tag }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # 只有发布 job 需要写权限；build job 只读代码。
+      contents: write
+    # 同一个 tag 只允许一个发布在跑，避免两次运行同时删/建 release。
+    concurrency:
+      group: release-publish-${{ inputs.tag }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          fetch-tags: true
+
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Publish to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+          ROLLING: ${{ inputs.rolling }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # 附注 tag（annotated tag）推送时 github.sha 可能是 tag 对象而不是提交，统一从 HEAD 取。
+          git fetch --tags --force --quiet
+          SHA="$(git rev-parse HEAD)"
+          short="${SHA::7}"
+
+          if [ ! -d artifacts ] || [ -z "$(ls -A artifacts)" ]; then
+            echo "::error::没有可发布的安装包"
+            exit 1
+          fi
+
+          # rolling 一定是预发布；普通 tag 则看有没有 -alpha / -beta / -rc 这类后缀。
+          if [ "${ROLLING}" = "true" ] || [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+            is_prerelease=true
+          else
+            is_prerelease=false
+          fi
+          echo "prerelease=${is_prerelease}"
+
+          # 快照要覆盖“提交先到、tag 后到”的常见情况：发布前再确认一次该提交有没有 tag。
+          if [ "${ROLLING}" = "true" ]; then
+            others="$(git tag --points-at HEAD | grep -vx snapshot || true)"
+            if [ -n "${others}" ]; then
+              echo "提交 ${SHA} 已有 tag（$(echo "${others}" | tr '\n' ' ')），跳过快照发布"
+              exit 0
+            fi
+
+            # main 已经前进时，旧提交不要再发快照，否则后跑的旧流水线会把 snapshot 指回去。
+            head_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+            if [ -n "${head_sha}" ] && [ "${head_sha}" != "${SHA}" ]; then
+              echo "main 已前进到 ${head_sha:0:7}，跳过过期快照 ${short}"
+              exit 0
+            fi
+          fi
+
+          # tag 版本发布时，如果快照正好指向同一提交，删掉它，只留 tag 版本。
+          if [ "${ROLLING}" != "true" ] && git rev-parse -q --verify 'refs/tags/snapshot^{commit}' >/dev/null; then
+            if [ "$(git rev-parse 'refs/tags/snapshot^{commit}')" = "${SHA}" ]; then
+              gh release delete snapshot --yes --cleanup-tag >/dev/null 2>&1 || true
+              echo "已删除指向同一提交的快照 release"
+            fi
+          fi
+
+          mapfile -t assets < <(find artifacts -type f | sort)
+          printf '待发布 %d 个文件：\n' "${#assets[@]}"
+          printf '  %s\n' "${assets[@]}"
+
+          # 快照固定使用 snapshot 这一个 tag，先删掉旧 release 和 tag，让它指到本次提交。
+          if [ "${ROLLING}" = "true" ]; then
+            gh release delete "${TAG}" --yes --cleanup-tag >/dev/null 2>&1 || true
+            TITLE="${TITLE} ${short}"
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${assets[@]}" --clobber
+            # 重跑时同步预发布标记，避免 tag 语义变了还留着旧状态。
+            if [ "${is_prerelease}" = "true" ]; then
+              gh release edit "${TAG}" --prerelease >/dev/null
+            else
+              gh release edit "${TAG}" --prerelease=false >/dev/null
+            fi
+            echo "已更新既有 release：${TAG}"
+            exit 0
+          fi
+
+          args=(--title "${TITLE}")
+          if [ "${is_prerelease}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+
+          if [ "${ROLLING}" = "true" ]; then
+            notes="$(mktemp)"
+            {
+              echo "自动快照构建，非正式版本。"
+              echo
+              echo "- 提交：https://github.com/${GH_REPO}/commit/${SHA}"
+              echo "- 流水线：https://github.com/${GH_REPO}/actions/runs/${RUN_ID}"
+            } > "${notes}"
+            args+=(--target "${SHA}" --notes-file "${notes}")
+          else
+            args+=(--generate-notes)
+          fi
+
+          gh release create "${TAG}" "${assets[@]}" "${args[@]}"
+          echo "已创建 release：${TAG}（prerelease=${is_prerelease}）"

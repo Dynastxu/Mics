@@ -32,6 +32,36 @@ pnpm start          # 预览构建结果
 pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
 ```
 
+## 发布
+
+推送到 `main` 且 CI 通过后自动发一个快照；推 `v*` tag 发正式版本：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+| 触发                    | 产物                                                                                                        | Release                             |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| push 到 `main`，CI 通过 | 三平台安装包，版本 `<version>-snapshot.<sha>`：Windows `exe` + `msi`、macOS `dmg`、Linux `AppImage` + `deb` | 预发布 `snapshot`，每次指向最新提交 |
+| 推送 `v*` tag           | 上述三平台安装包，版本为 tag 去掉 `v` 后的值                                                                | 正式发布，提交说明自动生成          |
+
+tag 带预发布后缀（`v0.2.0-alpha`、`-beta`、`-rc.1` 这类）时，Release 会自动标成 Pre-release；`v0.2.0` 则是正式发布。
+
+tag 可以和提交分开推送：快照在发布前会重新检查该提交有没有 tag，有就跳过；tag 版本发布时如果快照正好指向同一提交，会顺手删掉它，只留 tag 版本。
+
+快照会在远端创建（并每次移动）一个叫 `snapshot` 的 tag。本地 `git fetch --tags` 会把它带下来，所以别用 `git push --tags`（远端 `snapshot` 已前移时会以非快进被拒），按上面那样推单个版本 tag。
+
+工作流分工：`ci.yml` 只做检查并触发快照，`cd.yml` 只接 tag，打包与发布集中在可复用的 `release.yml`；`setup` 中的 pnpm/Node 安装也供两者共用。
+
+安装包目前没有代码签名，Windows 首次运行会被 SmartScreen 拦一下；macOS 首次打开需要手动放行。
+
+### 版本
+
+版本只有一个源头：根 `package.json`。`pnpm version:sync` 把它下发到 `apps/desktop`、`packages/*`、`plugins/*` 的 `package.json`（`dev` / `build` 会自动执行，CI 用 `pnpm version:check` 校验有没有漏同步）；内置插件的 `plugin.json` 不写版本，运行时由宿主注入 `app.getVersion()`。发版只需要改根 `package.json`，或者直接推 tag——发布工作流会把 tag 版本写回根清单再构建。
+
+打包目标跟操作系统绑定，`apps/desktop` 本身是跨平台的 Electron 工程（"desktop" 指桌面应用，不是 Windows）：`pnpm dist:win` 在 Windows 上跑（nsis `exe` + `msi`），`pnpm dist:mac` 要在 macOS 上跑（dmg 需要 `hdiutil`，产物是 runner 本机架构），`pnpm dist:linux` 在 Linux 上跑（AppImage + deb）。三个平台共用同一份主进程/渲染进程代码，差异只在 `electron-builder` 的 target，所以 CI 里是三个 runner 并行，而不是一个 runner 交叉编译。
+
 ## 界面结构
 
 ```
@@ -127,13 +157,14 @@ plugins/my-plugin/
 {
   "id": "mics.my-plugin",
   "name": "My Plugin",
-  "version": "0.1.0",
   "renderer": "dist/renderer.mjs",
   "contributes": {
     "nav": [{ "id": "my.view", "group": "download", "title": "我的分类", "order": 70 }]
   }
 }
 ```
+
+内置插件不写 `version`：它们和应用一起发布，版本恒等于应用版本（`apps/desktop/package.json`，发版时由 tag 覆盖），扫描时由宿主填进清单——改一次应用版本，所有内置插件自动跟着变。第三方插件必须自己声明 semver `version`，缺了安装校验会直接拒绝。
 
 `nav[].id` 同时是页面组件在渲染进程里的注册键：
 

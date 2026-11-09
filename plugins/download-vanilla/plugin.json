@@ -1,7 +1,6 @@
 {
   "id": "mics.download.vanilla",
   "name": "原版下载",
-  "version": "0.1.0",
   "description": "原版游戏版本列表、版本性质筛选与排序、安装入口；安装时可选择模组加载器并查询其可用版本。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",

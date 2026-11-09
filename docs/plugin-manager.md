@@ -73,6 +73,19 @@ pending（代码没有执行）。它不是安装状态，界面只在插件管�
 日志与通知只通过事件被消费，不提供服务，因此不在此列；它们也不应出现在其它插件的
 `dependencies` 或 `inject` 里。
 
+### 版本
+
+内置插件**不写** `version`：它们和宿主一起发布，版本就是应用版本（`apps/desktop/package.json`，
+发版时由 tag 覆盖），扫描时由宿主注入。因此改一次应用版本，所有内置插件自动跟着变，
+不存在一堆清单各写一份、发版时漏改的情况。
+
+第三方插件**必须**声明 semver `version`：它们是独立分发的产物，版本由作者决定，宿主无法代替；
+缺 `version` 时安装校验直接失败，不会拿应用版本兜底。
+
+各工作区包的 `package.json` 版本同样不手写：根 `package.json` 是唯一源头，`pnpm version:sync`
+（`dev` / `build` 自动执行，CI 用 `pnpm version:check` 校验）把它下发到 `apps/desktop`、
+`packages/*`、`plugins/*`。
+
 ### 实验性与默认关闭
 
 清单可以声明两个展示/初始状态字段：
@@ -105,7 +118,7 @@ pending（代码没有执行）。它不是安装状态，界面只在插件管�
 
 校验内容：
 
-- `plugin.json` 合法（id 命名空间、semver 版本）；
+- `plugin.json` 合法（id 命名空间；第三方插件必须自带 semver `version`，内置插件由宿主注入）；
 - 声明的 `main` / `renderer` / `styles` / `uninstall` 入口存在，且在插件目录内（不允许 `..` 越界）；
 - id 不占用内置插件 id；
 - 复制时展开符号链接（`dereference`），装进去的是文件而不是指向外部的链接。

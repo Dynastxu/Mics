@@ -193,7 +193,7 @@ async function start(): Promise<void> {
   )
   log.info('插件根目录：%s', roots.map((item) => item.dir).join('、'))
 
-  const scan = await scanPlugins(roots)
+  const scan = await scanPlugins(roots, { builtinVersion: app.getVersion() })
   for (const failure of scan.errors) {
     log.warn('跳过插件 %s：%s', failure.dir, failure.errors.join('; '))
   }

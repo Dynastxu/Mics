@@ -1,7 +1,6 @@
 {
   "id": "mics.settings",
   "name": "设置",
-  "version": "0.1.0",
   "description": "设置分组与通用设置页；插件自己的设置放在插件管理页的插件详情里，复杂设置由插件另行提供页面。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",

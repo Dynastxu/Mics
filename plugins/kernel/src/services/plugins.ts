@@ -813,7 +813,7 @@ export class PluginsService extends Service {
 
   /** 安装前预览：只读清单，不落盘 */
   async inspect(dir: string): Promise<PluginInstallSummary> {
-    const result = await readPluginDirectory(dir, 'user', true)
+    const result = await readPluginDirectory(dir, 'user', { strict: true })
     if (!result.record) throw new Error(result.errors.join('；') || '插件清单无效')
     const existing = this.entries.get(result.record.manifest.id)
     if (existing?.record.source === 'builtin') {
@@ -1653,10 +1653,13 @@ export class PluginsService extends Service {
    * 内置根排在前，所以第三方同 id 的目录会被当成冲突而不是覆盖。
    */
   private async rescan(): Promise<void> {
-    const scan = await scanPlugins([
-      ...this.config.pluginRoots.map((dir) => ({ dir, source: 'builtin' as const })),
-      { dir: this.config.userPluginRoot, source: 'user' as const }
-    ])
+    const scan = await scanPlugins(
+      [
+        ...this.config.pluginRoots.map((dir) => ({ dir, source: 'builtin' as const })),
+        { dir: this.config.userPluginRoot, source: 'user' as const }
+      ],
+      { builtinVersion: this.config.app.version }
+    )
     for (const failure of scan.errors) {
       this.baseCtx.logger('plugins').warn(`跳过插件 ${failure.dir}：${failure.errors.join('; ')}`)
     }

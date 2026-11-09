@@ -1,7 +1,7 @@
 {
   "name": "mics",
   "description": "Minecraft Integrated Control Software (MICS)",
-  "version": "0.0.0",
+  "version": "0.1.0-alpha",
   "packageManager": "pnpm@12.16.1",
   "engines": {
     "node": ">=22.12.0"
@@ -9,9 +9,11 @@
   "scripts": {
     "postinstall": "node scripts/install-electron.mjs",
     "install:electron": "node scripts/install-electron.mjs --force",
-    "dev": "pnpm build:plugins && pnpm --filter @mics/desktop dev",
+    "version:sync": "node scripts/sync-version.mjs",
+    "version:check": "node scripts/sync-version.mjs --check",
+    "dev": "node scripts/sync-version.mjs && pnpm build:plugins && pnpm --filter @mics/desktop dev",
     "dev:with-examples": "node scripts/dev-with-examples.mjs",
-    "build": "pnpm build:plugins && pnpm --filter @mics/desktop build",
+    "build": "node scripts/sync-version.mjs && pnpm build:plugins && pnpm --filter @mics/desktop build",
     "build:plugins": "node scripts/build-plugins.mjs",
     "watch:plugins": "node scripts/build-plugins.mjs --watch",
     "demo:ui": "pnpm --filter @mics/ui demo",
@@ -26,7 +28,7 @@
     "dist:win": "pnpm build && pnpm --filter @mics/desktop dist:win",
     "dist:mac": "pnpm build && pnpm --filter @mics/desktop dist:mac",
     "dist:linux": "pnpm build && pnpm --filter @mics/desktop dist:linux",
-    "workflow:ci": "pnpm typecheck && pnpm lint && pnpm build"
+    "workflow:ci": "pnpm version:check && pnpm typecheck && pnpm lint && pnpm build"
   },
   "devDependencies": {
     "@cordisjs/plugin-timer": "^1.1.4",

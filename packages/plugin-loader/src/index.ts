@@ -8,7 +8,7 @@ export {
   importPluginEntry,
   STAGING_DIR
 } from './discovery'
-export type { PluginRoot, PluginDirectoryResult } from './discovery'
+export type { PluginRoot, PluginDirectoryResult, ReadPluginOptions, ScanOptions } from './discovery'
 export { installPluginFromDirectory, PluginInstallError } from './install'
 export type { InstallPluginOptions, InstallPluginResult } from './install'
 export {

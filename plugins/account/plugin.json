@@ -1,7 +1,6 @@
 {
   "id": "mics.account",
   "name": "账户",
-  "version": "0.1.0",
   "description": "账户管理：Microsoft 正版登录（设备码）与离线账户；通过 auth.credentials 能力向启动页提供启动凭据。",
   "author": "mics",
   "main": "dist/main.mjs",

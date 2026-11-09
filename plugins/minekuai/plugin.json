@@ -1,7 +1,6 @@
 {
   "id": "mics.minekuai",
   "name": "麦块开放API",
-  "version": "0.1.0",
   "description": "通过麦块公共 API 查询 Mod / 整合包 / 资源包 / 光影包 / 数据包的英文名称与描述；只有英文与来源原文完全一致时才采用中文翻译，否则保留原文。",
   "author": "mics",
   "main": "dist/main.mjs",

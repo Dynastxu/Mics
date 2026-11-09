@@ -1,0 +1,20 @@
+name: Setup
+description: 安装 pnpm 与 Node.js（带 pnpm store 缓存），并按 lockfile 安装依赖。调用前必须已 checkout。
+
+runs:
+  using: composite
+  steps:
+    # 版本来自 package.json 的 "packageManager" 字段。
+    # 不要加 "version" 输入：同时指定会报 "Multiple versions of pnpm specified"。
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

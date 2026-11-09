@@ -13,7 +13,8 @@ export default tseslint.config(
       '**/.pnpm-store/**',
       '**/out/**',
       'coverage/**',
-      '*.local'
+      '*.local',
+      '.agents/**'
     ]
   },
 

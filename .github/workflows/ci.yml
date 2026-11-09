@@ -1,5 +1,12 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    # 只跑分支：tag 推送交给 cd.yml，同一个提交不用在打 tag 时再跑一遍 CI。
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   ci:
@@ -11,20 +18,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Version comes from the "packageManager" field in package.json.
-      # Do not add a "version" input here: specifying both fails with
-      # "Multiple versions of pnpm specified".
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Setup
+        uses: ./.github/actions/setup
 
       - name: CI
         run: pnpm workflow:ci
@@ -39,3 +34,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # 推送到 main 且 CI 通过后发快照。打 tag 不一定和提交同时推送，
+  # 所以 release.yml 会在发布前再查一次该提交有没有 tag，有就跳过。
+  snapshot:
+    name: Snapshot
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: snapshot
+      title: Snapshot
+      rolling: true

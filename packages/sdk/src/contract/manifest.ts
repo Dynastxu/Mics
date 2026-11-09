@@ -185,6 +185,13 @@ export interface PluginContributions {
 export interface PluginManifest {
   id: PluginId
   name: string
+  /**
+   * 插件版本。
+   *
+   * 内置插件不写这个字段：它们随应用发布，宿主扫描时填入应用版本
+   * （`app.getVersion()`），保证所有内置插件与应用版本一致。
+   * 第三方插件必须自己声明。
+   */
   version: string
   description?: string
   author?: string

@@ -1,7 +1,6 @@
 {
   "id": "mics.download.mod",
   "name": "Mod 下载",
-  "version": "0.1.0",
   "description": "Mod 目录：Modrinth / CurseForge 搜索、按名称/来源/游戏版本/加载器/类型筛选，并可把文件安装到多个实例。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",

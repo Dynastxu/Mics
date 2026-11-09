@@ -224,8 +224,21 @@ function validateContributions(
   return contributions
 }
 
+export interface ValidateManifestOptions {
+  /**
+   * 内置插件的兜底版本。
+   *
+   * 内置插件和宿主一起发布，版本就是应用版本，所以清单不再各写一份 `version`；
+   * 第三方插件不传这个值，缺 `version` 直接判非法。
+   */
+  defaultVersion?: string
+}
+
 /** 校验并规范化 plugin.json 内容 */
-export function validateManifest(raw: unknown): ValidationResult {
+export function validateManifest(
+  raw: unknown,
+  options: ValidateManifestOptions = {}
+): ValidationResult {
   const errors: string[] = []
   const warnings: string[] = []
 
@@ -239,15 +252,22 @@ export function validateManifest(raw: unknown): ValidationResult {
   if (typeof raw.name !== 'string' || !raw.name.trim()) {
     errors.push('name 必须是非空字符串')
   }
-  if (typeof raw.version !== 'string' || !VERSION_PATTERN.test(raw.version)) {
+  if (raw.version === undefined) {
+    if (!options.defaultVersion) {
+      errors.push('version 必须声明 semver 版本，例如 0.1.0（只有内置插件可以省略）')
+    }
+  } else if (typeof raw.version !== 'string' || !VERSION_PATTERN.test(raw.version)) {
     errors.push('version 必须是 semver 形式，例如 0.1.0')
   }
   if (errors.length) return { errors, warnings }
 
+  const version = typeof raw.version === 'string' ? raw.version : options.defaultVersion
+  if (!version) return { errors: ['version 必须声明 semver 版本，例如 0.1.0'], warnings }
+
   const manifest: PluginManifest = {
     id: raw.id as string,
     name: raw.name as string,
-    version: raw.version as string
+    version
   }
 
   if (typeof raw.description === 'string') manifest.description = raw.description

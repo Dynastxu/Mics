@@ -1,7 +1,6 @@
 {
   "id": "mics.download.shader",
   "name": "光影包下载",
-  "version": "0.1.0",
   "description": "光影包目录：从 Modrinth / CurseForge 搜索光影包，安装到实例的 shaderpacks 目录。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",

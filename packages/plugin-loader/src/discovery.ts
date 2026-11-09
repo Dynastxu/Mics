@@ -34,6 +34,16 @@ export function resolveEntry(dir: string, relative: string): string | undefined 
   return existsSync(absolute) ? absolute : undefined
 }
 
+export interface ReadPluginOptions {
+  /** 安装校验：清单声明的入口不存在时直接报错，而不是像启动扫描那样只给警告 */
+  strict?: boolean
+  /**
+   * 内置插件根：清单可以省略 version，统一使用宿主应用版本。
+   * 声明了不同版本时以宿主版本为准，并留一条警告。
+   */
+  builtinVersion?: string
+}
+
 /**
  * 读取单个插件目录。
  *
@@ -43,8 +53,9 @@ export function resolveEntry(dir: string, relative: string): string | undefined 
 export async function readPluginDirectory(
   dir: string,
   source: PluginSource,
-  strict = false
+  options: ReadPluginOptions = {}
 ): Promise<PluginDirectoryResult> {
+  const strict = options.strict ?? false
   const manifestFile = path.join(dir, 'plugin.json')
   if (!existsSync(manifestFile)) return { errors: ['缺少 plugin.json'] }
 
@@ -55,12 +66,20 @@ export async function readPluginDirectory(
     return { errors: [`plugin.json 解析失败: ${(error as Error).message}`] }
   }
 
-  const result = validateManifest(raw)
+  const result = validateManifest(raw, { defaultVersion: options.builtinVersion })
   if (!result.manifest || result.errors.length > 0) {
     return { errors: result.errors.length ? result.errors : ['清单无效'] }
   }
 
   const manifest = result.manifest
+  // 内置插件随应用发布，版本只有应用版本一个真相源：清单里写了别的值也不采用
+  if (options.builtinVersion && manifest.version !== options.builtinVersion) {
+    result.warnings.push(
+      `内置插件版本跟随应用：清单里的 ${manifest.version} 已忽略，使用 ${options.builtinVersion}`
+    )
+    manifest.version = options.builtinVersion
+  }
+
   const record: PluginRecord = {
     dir,
     manifest,
@@ -113,13 +132,21 @@ function normalizeRoots(roots: Array<string | PluginRoot>): PluginRoot[] {
   return roots.map((root) => (typeof root === 'string' ? { dir: root, source: 'builtin' } : root))
 }
 
+export interface ScanOptions {
+  /** 内置插件根里省略 version 的清单统一使用这个版本（通常是 app.getVersion()） */
+  builtinVersion?: string
+}
+
 /**
  * 扫描若干插件根目录，读取 `<root>/<plugin>/plugin.json`。
  *
  * 根目录按顺序扫描：先扫到的那份胜出。bootstrap 与内核都把内置根放在用户根之前，
  * 因此第三方插件无法用同 id 覆盖内置插件——它会被当作冲突报错。
  */
-export async function scanPlugins(roots: Array<string | PluginRoot>): Promise<ScanResult> {
+export async function scanPlugins(
+  roots: Array<string | PluginRoot>,
+  options: ScanOptions = {}
+): Promise<ScanResult> {
   const plugins: PluginRecord[] = []
   const errors: ScanError[] = []
   const seen = new Map<string, { dir: string; source: PluginSource }>()
@@ -140,7 +167,10 @@ export async function scanPlugins(roots: Array<string | PluginRoot>): Promise<Sc
       if (dirent.name.startsWith('.')) continue
       const dir = path.join(root.dir, dirent.name)
 
-      const { record, errors: directoryErrors } = await readPluginDirectory(dir, root.source)
+      const builtinVersion = root.source === 'builtin' ? options.builtinVersion : undefined
+      const { record, errors: directoryErrors } = await readPluginDirectory(dir, root.source, {
+        builtinVersion
+      })
       if (!record) {
         errors.push({ dir, errors: directoryErrors.length ? directoryErrors : ['清单无效'] })
         continue

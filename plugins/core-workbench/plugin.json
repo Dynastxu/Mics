@@ -1,7 +1,6 @@
 {
   "id": "mics.core-workbench",
   "name": "Workbench",
-  "version": "0.1.0",
   "description": "默认布局与主题：工作台的外观本身也由插件声明，不需要任何代码。",
   "author": "mics",
   "contributes": {

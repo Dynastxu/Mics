@@ -61,7 +61,7 @@ export async function installPluginFromDirectory(
     throw new PluginInstallError('不能从插件目录内部安装：请选择插件作者提供的文件夹')
   }
 
-  const inspection = await readPluginDirectory(sourceDir, 'user', true)
+  const inspection = await readPluginDirectory(sourceDir, 'user', { strict: true })
   if (!inspection.record) {
     throw new PluginInstallError(inspection.errors.join('；') || '插件清单无效')
   }
@@ -84,7 +84,7 @@ export async function installPluginFromDirectory(
     await cp(sourceDir, staging, { recursive: true, dereference: true })
 
     // 复制之后再校验一次：确认复制结果自洽，且入口都在插件目录内
-    const staged = await readPluginDirectory(staging, 'user', true)
+    const staged = await readPluginDirectory(staging, 'user', { strict: true })
     if (!staged.record) {
       throw new PluginInstallError(staged.errors.join('；') || '插件清单在复制后校验失败')
     }
@@ -100,7 +100,7 @@ export async function installPluginFromDirectory(
     }
     await rm(backup, { recursive: true, force: true })
 
-    const installed = await readPluginDirectory(target, 'user', true)
+    const installed = await readPluginDirectory(target, 'user', { strict: true })
     if (!installed.record) {
       throw new PluginInstallError(installed.errors.join('；') || '安装后的插件校验失败')
     }

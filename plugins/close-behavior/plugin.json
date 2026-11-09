@@ -1,7 +1,6 @@
 {
   "id": "mics.close-behavior",
   "name": "关闭行为",
-  "version": "0.1.0",
   "description": "在通用设置里提供关闭行为与低内存托盘：关闭主窗口时询问退出应用还是最小化至托盘区，托盘图标可恢复窗口或退出。",
   "author": "mics",
   "main": "dist/main.mjs",

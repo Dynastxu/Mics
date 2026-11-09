@@ -1,5 +1,6 @@
 out
 dist
+.agents
 .nide-dev
 pnpm-lock.yaml
 LICENSE.md

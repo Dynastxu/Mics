@@ -1,7 +1,6 @@
 {
   "id": "mics.notifications",
   "name": "通知",
-  "version": "0.1.0",
   "description": "右下角通知宿主：订阅 notification/show 事件，用于「操作已受理、请去下载页查看」这类反馈。可随时禁用，禁用后通知事件自然丢弃。",
   "author": "mics",
   "renderer": "dist/renderer.mjs",
