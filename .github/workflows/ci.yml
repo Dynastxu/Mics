@@ -45,11 +45,12 @@ jobs:
       tagged: ${{ steps.check.outputs.tagged }}
 
     steps:
+      # 同 release.yml：tag 事件下别用 fetch-tags（actions/checkout#1467），
+      # 下面用 git fetch --tags 手动取。
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          fetch-tags: true
 
       - name: Check for a version tag
         id: check

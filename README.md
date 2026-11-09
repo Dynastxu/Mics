@@ -37,9 +37,11 @@ pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
 推送到 `main` 且 CI 通过后自动发一个快照；推 `v*` tag 发正式版本：
 
 ```bash
-git tag v0.1.0
+git tag -a v0.1.0 -m "v0.1.0"   # 必须是附注 tag，见下
 git push origin v0.1.0
 ```
+
+tag 必须是**附注 tag**（`-a`）。轻量 tag 在 Actions 的 tag 事件里会让 checkout 报 `Cannot fetch both <sha> and refs/tags/<tag> to refs/tags/<tag>`（[actions/checkout#1467](https://github.com/actions/checkout/issues/1467)：`github.sha` 是提交号，git 会顺带 follow 同名 tag，两条 refspec 撞到同一个目标）。
 
 | 触发                    | 产物                                                                                                        | Release                             |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------- |
