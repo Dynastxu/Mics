@@ -59,7 +59,14 @@ export interface LoaderOption {
 
 /** 下载任务状态 */
 export type DownloadTaskState =
-  'pending' | 'downloading' | 'paused' | 'verifying' | 'done' | 'failed'
+  | 'pending'
+  | 'downloading'
+  | 'paused'
+  /** 所有源都失败，推迟到本轮其它文件结束后再试 */
+  | 'deferred'
+  | 'verifying'
+  | 'done'
+  | 'failed'
 
 /** 下载任务进度 */
 export interface DownloadProgress {

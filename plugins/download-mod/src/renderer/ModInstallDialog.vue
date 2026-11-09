@@ -122,21 +122,17 @@ async function install(): Promise<void> {
     // Vue 的数组是响应式 Proxy，Electron IPC 的结构化克隆无法复制；
     // 传参前必须转成普通数组，否则会报 "An object could not be cloned."
     const instanceNames = [...selected.value]
-    const outcome = await ctx.ipc.invoke<InstallStartResult>(
-      'mics.download.manager',
-      'mods/install',
-      {
-        file: {
-          url: version.fileUrl,
-          fileName: version.fileName,
-          sha1: version.sha1,
-          size: version.size
-        },
-        instanceNames,
-        title: version.name,
-        detail: `${instanceNames.length} 个实例`
-      }
-    )
+    const outcome = await ctx.ipc.invoke<InstallStartResult>('mics.download.mod', 'mods/install', {
+      file: {
+        url: version.fileUrl,
+        fileName: version.fileName,
+        sha1: version.sha1,
+        size: version.size
+      },
+      instanceNames,
+      title: version.name,
+      detail: `${instanceNames.length} 个实例`
+    })
     if (outcome.error) {
       error.value = outcome.error
       return

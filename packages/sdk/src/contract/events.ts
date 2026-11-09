@@ -1,5 +1,39 @@
 import type { Context } from 'cordis'
 import type { CapabilityProviderInfo } from './capability'
+import type { CatalogFileRef, CatalogResolvedFile } from './catalog'
+import type {
+  GameVersion,
+  InstallRepairRequest,
+  InstallRequest,
+  InstallStartResult,
+  LoaderVersion
+} from './download'
+import type {
+  DownloadAddFilesRequest,
+  DownloadAddFilesResult,
+  DownloadAwaitRequest,
+  DownloadDataRequest,
+  DownloadFileRequest,
+  DownloadFileResult,
+  DownloadFinishRequest,
+  DownloadJobHandle,
+  DownloadJobRequest,
+  DownloadJobResult,
+  DownloadJobSnapshot,
+  DownloadReportPatch,
+  DownloadRetryResult,
+  LegacyDownloadConfig
+} from './download-pipeline'
+import type {
+  GameBeginInstall,
+  GameCollectInput,
+  GameCompleteInstall,
+  GameDiscardInstall,
+  GamePrepareInput,
+  GamePrepareResult
+} from './game'
+import type { InstanceNameCheck } from './instance'
+import type { LoaderPrepareInput, LoaderPrepareResult, LoaderVersionQuery } from './loader'
 import type { LogEntry } from './logs'
 import type { PluginId } from './manifest'
 import type { ModProjectKind, ModSourceKind } from './mod'
@@ -126,6 +160,138 @@ export interface MicsEvents {
 
   /** 启动阶段的历史日志（`emit`），在启动插件激活完成后派发一次 */
   'log/history'(entries: LogEntry[]): void
+
+  // -------------------------------------------------------------------------
+  // 下载管线（`mics.download.manager`）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 创建一次下载任务（`serial`）。
+   *
+   * 管线只登记任务；文件清单随后用 `download/addFiles` 分批提交，因此
+   * 「先下安装器、运行后再生成游戏文件清单」这类分阶段安装不需要特殊接口。
+   */
+  'download/create'(request: DownloadJobRequest): Promise<DownloadJobHandle> | void
+
+  /** 向任务追加一批文件（`serial`）；可多次调用，返回本批 task id。 */
+  'download/addFiles'(request: DownloadAddFilesRequest): Promise<DownloadAddFilesResult> | void
+
+  /**
+   * 等待指定文件进入终态（`serial`）。
+   *
+   * 用于阶段依赖：加载器插件必须等安装器下载完才能运行 Java。
+   */
+  'download/awaitFiles'(request: DownloadAwaitRequest): Promise<DownloadFileResult[]> | void
+
+  /**
+   * 编排方收尾（`serial`）：全部文件完成（或失败）后由创建者调用。
+   *
+   * 管线在文件全部完成时先置 `finalizing` 并发 `download/filesDone`，
+   * 编排方写完 ready 标记 / 合并覆盖文件后再调用这里。
+   */
+  'download/finish'(request: DownloadFinishRequest): Promise<void> | void
+
+  /** 更新编排方私有状态（`serial`）；管线原样持久化。 */
+  'download/data'(request: DownloadDataRequest): Promise<void> | void
+
+  /**
+   * 封口（`serial`）：编排方已经提交完全部文件。
+   *
+   * 分阶段安装会先提交「安装器」、等它完成后再提交游戏文件；封口之前即使
+   * 当前这一批文件全部完成，管线也不能宣布整个任务完成。
+   */
+  'download/seal'(jobId: string): Promise<void> | void
+
+  /**
+   * 重试（`serial`）。
+   *
+   * 管线先尝试重排失败任务并返回 `true`；没有可重排的任务时返回 `false`，
+   * 由创建该任务的编排方重新分析（例如准备阶段失败）。
+   */
+  'download/retry'(jobId: string): Promise<DownloadRetryResult> | void
+
+  /** 准备阶段的上报（`emit`）：步骤、当前步骤百分比、单文件字节。 */
+  'download/report'(jobId: string, patch: DownloadReportPatch): void
+
+  /** 任务已受理（`emit`）。 */
+  'download/started'(jobId: string): void
+
+  /** 单个文件结束（`emit`）；编排方可以据此清理安装器等临时文件。 */
+  'download/fileFinished'(jobId: string, file: DownloadFileResult): void
+
+  /**
+   * 一批文件全部进入终态且没有失败（`emit`）。
+   *
+   * 编排方在这里做收尾；收尾完成后必须调用 `download/finish`。
+   */
+  'download/filesDone'(jobId: string): void
+
+  /** 任务进入终态（`emit`）：done / failed / cancelled。 */
+  'download/jobFinished'(jobId: string, result: DownloadJobResult): void
+
+  /** 应用启动后恢复了一个未完成任务（`emit`）；编排方重新挂上监听。 */
+  'download/jobResumed'(jobId: string, job: DownloadJobSnapshot): void
+
+  /** 任务记录被删除（`emit`）；编排方清理自己的暂存目录。 */
+  'download/discarded'(jobId: string): void
+
+  /** 旧版下载插件保存的源配置（`serial`，只读）；各插件启动时导入一次。 */
+  'download/legacy-config'(): Promise<LegacyDownloadConfig> | void
+
+  // -------------------------------------------------------------------------
+  // 原版游戏（`mics.download.game`）
+  // -------------------------------------------------------------------------
+
+  /** 原版版本列表（`serial`）。 */
+  'game/versions'(): Promise<GameVersion[]> | void
+
+  /** 校验实例名（纯规则 + 目录占用）（`serial`）。 */
+  'game/validateName'(request: { name: string }): Promise<InstanceNameCheck> | void
+
+  /** 取父版本、安装加载器并写出自包含版本档案（`serial`）。 */
+  'game/prepareVersion'(request: GamePrepareInput): Promise<GamePrepareResult> | void
+
+  /** 把版本档案展开成下载清单（`serial`）。 */
+  'game/collectFiles'(request: GameCollectInput): Promise<DownloadFileRequest[]> | void
+
+  /** 写入 installing 状态并占住实例名（`serial`）。 */
+  'game/beginInstall'(request: GameBeginInstall): Promise<void> | void
+
+  /** 写入 ready 状态（`serial`）；只有全部文件与收尾都完成才调用。 */
+  'game/completeInstall'(request: GameCompleteInstall): Promise<void> | void
+
+  /** 取消安装时删除半成品实例（`serial`）。 */
+  'game/discardInstall'(request: GameDiscardInstall): Promise<void> | void
+
+  /** 受理一次新实例安装（`serial`）。 */
+  'game/install'(request: InstallRequest): Promise<InstallStartResult> | void
+
+  /** 受理一次补全（`serial`）。 */
+  'game/repair'(request: InstallRepairRequest): Promise<InstallStartResult> | void
+
+  // -------------------------------------------------------------------------
+  // 加载器（`mics.download.loader.*`，由 `mics.download.loaders` 路由）
+  // -------------------------------------------------------------------------
+
+  /** 某个加载器在指定游戏版本下的可用版本（`serial`）。 */
+  'loader/versions'(request: LoaderVersionQuery): Promise<LoaderVersion[]> | void
+
+  /** 准备一个加载器安装（`serial`）；由对应 kind 的插件处理。 */
+  'loader/prepare'(request: LoaderPrepareInput): Promise<LoaderPrepareResult> | void
+
+  // -------------------------------------------------------------------------
+  // 社区目录（`mics.download.catalog`）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 把 CurseForge 整合包清单的数字 id 解析成可下载文件（`serial`）。
+   *
+   * 只有 CurseForge 来源插件知道自己的 API；整合包插件不直接调来源接口。
+   */
+  'catalog/resolveModpackFiles'(request: {
+    refs: CatalogFileRef[]
+    sourceApi?: string
+  }): Promise<CatalogResolvedFile[]> | void
 }
 
 /**
@@ -146,7 +312,34 @@ export const EVENT_MODES = {
   'ui/viewActivated': 'emit',
   'catalog/describe': 'waterfall',
   'log/entry': 'emit',
-  'log/history': 'emit'
+  'log/history': 'emit',
+  'download/create': 'serial',
+  'download/addFiles': 'serial',
+  'download/awaitFiles': 'serial',
+  'download/finish': 'serial',
+  'download/data': 'serial',
+  'download/seal': 'serial',
+  'download/retry': 'serial',
+  'download/report': 'emit',
+  'download/started': 'emit',
+  'download/fileFinished': 'emit',
+  'download/filesDone': 'emit',
+  'download/jobFinished': 'emit',
+  'download/jobResumed': 'emit',
+  'download/discarded': 'emit',
+  'download/legacy-config': 'serial',
+  'game/versions': 'serial',
+  'game/validateName': 'serial',
+  'game/prepareVersion': 'serial',
+  'game/collectFiles': 'serial',
+  'game/beginInstall': 'serial',
+  'game/completeInstall': 'serial',
+  'game/discardInstall': 'serial',
+  'game/install': 'serial',
+  'game/repair': 'serial',
+  'loader/versions': 'serial',
+  'loader/prepare': 'serial',
+  'catalog/resolveModpackFiles': 'serial'
 } as const satisfies Record<keyof MicsEvents, EventDispatchMode>
 
 export type MicsEventName = keyof MicsEvents

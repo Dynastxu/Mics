@@ -1,0 +1,9 @@
+{
+  "id": "mics.download.source.modrinth",
+  "name": "Modrinth 来源",
+  "description": "Modrinth API：搜索、项目详情、版本列表、指纹识别与来源配置。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.download.catalog"]
+}

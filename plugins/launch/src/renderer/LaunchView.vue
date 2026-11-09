@@ -204,7 +204,7 @@ async function repair(instance: InstanceSummary): Promise<void> {
       await ctx.ipc.invoke('mics.download.manager', 'install/retry', { jobId: status.jobId })
     } else {
       const result = await ctx.ipc.invoke<InstallStartResult>(
-        'mics.download.manager',
+        'mics.download.game',
         'install/repair',
         { instanceName: instance.id, versionId: instance.versionId }
       )
@@ -378,7 +378,7 @@ async function confirmRepair(): Promise<void> {
   notice.value = ''
   try {
     const result = await ctx.ipc.invoke<InstallStartResult>(
-      'mics.download.manager',
+      'mics.download.game',
       'install/repair',
       { instanceName: instance.id, versionId: instance.versionId }
     )
@@ -581,7 +581,7 @@ onUnmounted(() => {
           <span class="launch__played">{{ formatPlayed(instance.lastPlayed) }}</span>
           <div class="launch__actions" @click.stop>
             <button
-              v-if="phases[instance.id] === 'incomplete' && instance.versionId"
+              v-if="instance.versionId"
               class="mics-button mics-button--ghost mics-button--small"
               :disabled="isRepairing(instance.id)"
               @click="repair(instance)"

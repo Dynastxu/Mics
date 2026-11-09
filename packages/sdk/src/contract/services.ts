@@ -3,6 +3,8 @@ import type { Context } from 'cordis'
 // 只取类型：插件用 `ctx.timeout/interval`，实现由根上下文挂载的 TimerService 提供
 import type {} from '@cordisjs/plugin-timer'
 import type { CapabilitiesServiceApi } from './capability'
+import type { CatalogRegistry } from './catalog'
+import type { LoadersServiceApi } from './loader'
 import type { PluginConfigurationInfo } from './configuration'
 import type { PluginGraphReport } from './diagnostics'
 import type { Permission, PluginId } from './manifest'
@@ -370,6 +372,10 @@ declare module 'cordis' {
     ui: UiServiceApi
     theme: ThemeServiceApi
     bridge: BridgeApi
+    /** 加载器注册表：每个加载器插件注册自己的实现 */
+    loaders: LoadersServiceApi
+    /** 社区目录注册表：每个来源插件注册自己的实现 */
+    catalog: CatalogRegistry
   }
 }
 

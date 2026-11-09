@@ -1,0 +1,9 @@
+{
+  "id": "mics.download.catalog",
+  "name": "社区目录",
+  "description": "社区来源注册表：合并 Modrinth / CurseForge 的搜索与版本结果、缓存、目录文案改写；不实现任何来源接口。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.download.manager"]
+}

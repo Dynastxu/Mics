@@ -1,0 +1,9 @@
+{
+  "id": "mics.download.source.curseforge",
+  "name": "CurseForge 来源",
+  "description": "CurseForge API：搜索、项目详情、版本列表、指纹识别、整合包文件解析与来源配置。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.download.catalog"]
+}

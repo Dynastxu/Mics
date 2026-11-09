@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
 import { LOADER_LABELS, PACK_KIND_LABELS } from '@mics/sdk'
-import type { InstallJobStats, InstallJobSummary } from '@mics/sdk'
+import type { DownloadTaskView, InstallJobStats, InstallJobSummary } from '@mics/sdk'
 
 interface JobRow {
   job: InstallJobSummary
@@ -35,6 +35,10 @@ const jobSpeeds = ref<Record<string, number>>({})
 const notice = ref('')
 /** 第一次汇总返回前显示加载态，不要先闪「暂无下载任务」 */
 const loaded = ref(false)
+/** 展开详情的任务 id */
+const expanded = ref<string[]>([])
+const details = ref<Record<string, DownloadTaskView[]>>({})
+const detailsLoading = ref<Record<string, boolean>>({})
 
 const blocking = new Set<string>()
 const speedSamples = new Map<string, SpeedSample>()
@@ -126,8 +130,82 @@ function isSuperseded(job: InstallJobSummary): boolean {
   return latestJobByInstance.value.get(job.instanceName)?.id !== job.id
 }
 
+function isExpanded(jobId: string): boolean {
+  return expanded.value.includes(jobId)
+}
+
+function toggleDetails(jobId: string): void {
+  if (isExpanded(jobId)) {
+    expanded.value = expanded.value.filter((id) => id !== jobId)
+    return
+  }
+  expanded.value = [...expanded.value, jobId]
+  void loadDetails(jobId)
+}
+
+async function loadDetails(jobId: string): Promise<void> {
+  detailsLoading.value = { ...detailsLoading.value, [jobId]: true }
+  try {
+    const rows = await ctx.ipc.invoke<DownloadTaskView[]>(
+      'mics.download.manager',
+      'install/tasks',
+      { jobId }
+    )
+    details.value = { ...details.value, [jobId]: rows }
+  } catch {
+    details.value = { ...details.value, [jobId]: [] }
+  } finally {
+    detailsLoading.value = { ...detailsLoading.value, [jobId]: false }
+  }
+}
+
+function taskStateLabel(state: DownloadTaskView['state']): string {
+  switch (state) {
+    case 'downloading':
+      return '下载中'
+    case 'verifying':
+      return '校验中'
+    case 'pending':
+      return '等待中'
+    case 'deferred':
+      return '待重试'
+    case 'paused':
+      return '已暂停'
+    case 'failed':
+      return '失败'
+    default:
+      return '完成'
+  }
+}
+
+function taskPercent(task: DownloadTaskView): number | null {
+  const total = task.total > 0 ? task.total : task.size
+  if (total <= 0) return null
+  return Math.min(100, Math.max(0, Math.round((task.loaded / total) * 100)))
+}
+
+function taskProgressText(task: DownloadTaskView): string {
+  const percent = taskPercent(task)
+  const total = task.total > 0 ? task.total : task.size
+  const bytes = total > 0 ? `${fmtBytes(task.loaded)} / ${fmtBytes(total)}` : fmtBytes(task.loaded)
+  return percent === null ? bytes : `${percent}% · ${bytes}`
+}
+
 function jobTitle(job: InstallJobSummary): string {
   return job.title || job.instanceName
+}
+
+/**
+ * 进度条下方的一行阶段说明。
+ *
+ * 管线在下载阶段保留编排方最后一次上报的步骤（例如「下载 Forge 支持库」），
+ * 全部文件完成进入收尾时再改成「正在完成安装…」。
+ */
+function stageText(row: JobRow): string {
+  if (row.paused) return row.job.note ? `${row.job.note}（已暂停）` : '已暂停'
+  if (row.job.note) return row.job.note
+  if (row.stats.total > 0 && row.stats.done === row.stats.total) return '正在完成安装…'
+  return '正在下载文件'
 }
 
 /** 还有非取消原因失败的文件时可以重试，已完成的文件不会重新下载 */
@@ -205,6 +283,11 @@ async function poll(): Promise<void> {
     if (seq !== pollSeq) return
     jobs.value = list
     sampleSpeeds()
+    const activeIds = new Set(list.filter((job) => !job.finished).map((job) => job.id))
+    expanded.value = expanded.value.filter((id) => activeIds.has(id))
+    for (const id of expanded.value) {
+      if (!detailsLoading.value[id]) void loadDetails(id)
+    }
   } catch {
     /* 管线未就绪 */
   } finally {
@@ -269,6 +352,12 @@ onUnmounted(() => {
 
             <div class="progress-job__controls">
               <button
+                class="mics-button mics-button--ghost mics-button--small"
+                @click="toggleDetails(row.job.id)"
+              >
+                {{ isExpanded(row.job.id) ? '收起' : '详情' }}
+              </button>
+              <button
                 v-if="!row.preparing && !isSuperseded(row.job)"
                 class="mics-button mics-button--ghost mics-button--small"
                 @click="invoke(row.paused ? 'install/resume' : 'install/pause', row.job.id)"
@@ -308,7 +397,7 @@ onUnmounted(() => {
               </span>
             </div>
 
-            <div class="progress-job__preparing">
+            <div class="progress-job__stage" :title="row.job.note || '正在准备下载清单…'">
               {{ row.job.note || '正在准备下载清单…' }}
             </div>
 
@@ -339,6 +428,8 @@ onUnmounted(() => {
               <span class="progress-job__percent">{{ row.stats.percent }}%</span>
             </div>
 
+            <div class="progress-job__stage" :title="stageText(row)">{{ stageText(row) }}</div>
+
             <div class="progress-job__stats">
               <span class="progress-stat"
                 >待下载 <b>{{ row.stats.waiting }}</b></span
@@ -360,6 +451,27 @@ onUnmounted(() => {
               </span>
             </div>
           </template>
+
+          <div v-if="isExpanded(row.job.id)" class="progress-job__details">
+            <div v-if="detailsLoading[row.job.id]" class="progress-job__details-empty">
+              正在加载文件详情…
+            </div>
+            <div v-else-if="!details[row.job.id]?.length" class="progress-job__details-empty">
+              暂无进行中的文件
+            </div>
+            <div
+              v-for="task in details[row.job.id]"
+              :key="task.id"
+              class="progress-task"
+              :class="{ 'progress-task--failed': task.state === 'failed' }"
+            >
+              <span class="progress-task__label" :title="task.error || task.label">
+                {{ task.label }}
+              </span>
+              <span class="progress-task__state">{{ taskStateLabel(task.state) }}</span>
+              <span class="progress-task__size">{{ taskProgressText(task) }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -490,9 +602,62 @@ onUnmounted(() => {
   pointer-events: auto;
 }
 
-.progress-job__preparing {
+.progress-job__stage {
+  overflow: hidden;
   color: var(--mics-fg-muted);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-job__details {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--mics-border);
+  border-radius: 8px;
+  background: var(--mics-bg);
+}
+
+.progress-job__details-empty {
+  padding: 10px;
+  color: var(--mics-fg-muted);
+  font-size: 11.5px;
+}
+
+.progress-task {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--mics-border);
+  font-size: 11.5px;
+}
+
+.progress-task:last-child {
+  border-bottom: 0;
+}
+
+.progress-task__label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-task__state {
+  flex: none;
+  width: 48px;
+  color: var(--mics-fg-muted);
+}
+
+.progress-task__size {
+  flex: none;
+  color: var(--mics-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-task--failed .progress-task__state {
+  color: var(--mics-danger);
 }
 
 .progress-job__error {

@@ -370,7 +370,7 @@ async function identifyMods(entries: InstanceModEntry[]): Promise<void> {
 
   try {
     const identities = await ctx.ipc.invoke<ModIdentity[]>(
-      'mics.download.manager',
+      'mics.download.catalog',
       'mods/identify',
       { files }
     )
@@ -592,7 +592,7 @@ onMounted(() => {
 
       <div class="mics-page__actions">
         <button
-          v-if="installPhase === 'incomplete'"
+          v-if="instance.versionId"
           class="mics-button mics-button--ghost mics-button--small"
           type="button"
           :disabled="repairing"

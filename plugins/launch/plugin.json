@@ -6,7 +6,13 @@
   "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
-  "dependencies": ["mics.kernel", "mics.shell", "mics.account"],
+  "dependencies": [
+    "mics.kernel",
+    "mics.shell",
+    "mics.account",
+    "mics.download.manager",
+    "mics.download.game"
+  ],
   "activation": ["onStartup"],
   "permissions": {
     "trust": "full"

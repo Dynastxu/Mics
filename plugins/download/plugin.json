@@ -5,7 +5,12 @@
   "author": "mics",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
-  "dependencies": ["mics.download.manager"],
+  "dependencies": [
+    "mics.download.manager",
+    "mics.download.game",
+    "mics.download.loaders",
+    "mics.download.catalog"
+  ],
   "contributes": {
     "navGroups": [{ "id": "download", "title": "下载", "icon": "download", "order": 20 }],
     "nav": [

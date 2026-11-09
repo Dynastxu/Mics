@@ -124,24 +124,32 @@ function normalizeConcurrency(value: string): string {
 async function loadSettings(): Promise<void> {
   loading.value = true
   try {
-    const settings = await ctx.ipc.invoke<{
-      concurrency: string
-      segments: string
-      segmentThreshold: string
-      cacheLimit: string
-      sources: DownloadSource[]
-      loaderSources: LoaderSource[]
-      modSources: ModSource[]
-    }>('mics.download.manager', 'settings/get')
-    concurrency.value = settings.concurrency
-    segments.value = normalizeDownloadSegments(settings.segments)
-    segmentThreshold.value = normalizeDownloadSegmentThreshold(settings.segmentThreshold)
-    const limit = parseDownloadCacheLimit(settings.cacheLimit)
-    cacheLimitMode.value = limit.mode
-    if (limit.mode === 'limit') cacheLimitMb.value = String(limit.megabytes)
-    sources.value = normalizeDownloadSources(settings.sources)
-    loaderSources.value = normalizeLoaderSources(settings.loaderSources)
-    modSources.value = normalizeModSources(settings.modSources)
+    const [pipeline, vanilla, loaders, mods] = await Promise.allSettled([
+      ctx.ipc.invoke<{
+        concurrency: string
+        segments: string
+        segmentThreshold: string
+        cacheLimit: string
+      }>('mics.download.manager', 'settings/get'),
+      ctx.ipc.invoke<DownloadSource[]>('mics.download.game', 'sources/get'),
+      ctx.ipc.invoke<LoaderSource[]>('mics.download.loaders', 'loaders/sources/get'),
+      ctx.ipc.invoke<ModSource[]>('mics.download.catalog', 'sources/get')
+    ])
+
+    if (pipeline.status === 'fulfilled') {
+      concurrency.value = pipeline.value.concurrency
+      segments.value = normalizeDownloadSegments(pipeline.value.segments)
+      segmentThreshold.value = normalizeDownloadSegmentThreshold(pipeline.value.segmentThreshold)
+      const limit = parseDownloadCacheLimit(pipeline.value.cacheLimit)
+      cacheLimitMode.value = limit.mode
+      if (limit.mode === 'limit') cacheLimitMb.value = String(limit.megabytes)
+    }
+    if (vanilla.status === 'fulfilled') sources.value = normalizeDownloadSources(vanilla.value)
+    if (loaders.status === 'fulfilled') {
+      loaderSources.value = normalizeLoaderSources(loaders.value)
+    }
+    if (mods.status === 'fulfilled') modSources.value = normalizeModSources(mods.value)
+
     saved.value = true
     loaderSaved.value = true
     modSaved.value = true
@@ -158,10 +166,7 @@ async function saveSources(): Promise<void> {
     resources: source.resources.trim(),
     enabled: source.enabled !== false
   }))
-  await ctx.ipc.invoke('mics.download.manager', 'settings/set', {
-    key: 'sources',
-    value: JSON.stringify(normalized)
-  })
+  await ctx.ipc.invoke('mics.download.game', 'sources/set', { sources: normalized })
   sources.value = normalized
   saved.value = true
 }
@@ -386,10 +391,7 @@ async function saveLoaderSources(): Promise<void> {
       enabled: source.enabled !== false
     }
   })
-  await ctx.ipc.invoke('mics.download.manager', 'settings/set', {
-    key: 'loaderSources',
-    value: JSON.stringify(normalized)
-  })
+  await ctx.ipc.invoke('mics.download.loaders', 'loaders/sources/set', { sources: normalized })
   loaderSources.value = normalized
   loaderSaved.value = true
 }
@@ -445,10 +447,7 @@ async function saveModSources(): Promise<void> {
       enabled: source.enabled !== false
     }
   })
-  await ctx.ipc.invoke('mics.download.manager', 'settings/set', {
-    key: 'modSources',
-    value: JSON.stringify(normalized)
-  })
+  await ctx.ipc.invoke('mics.download.catalog', 'sources/set', { sources: normalized })
   modSources.value = normalized
   modSaved.value = true
 }

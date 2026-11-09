@@ -6,7 +6,7 @@ Minecraft Integrated Control Software 的桌面 UI 骨架：**左侧导航、每
 - 外壳：Electron `^45.0.0` + electron-vite 6 + Vite 8 + Vue 3.5 + TypeScript 6
 - 包管理：pnpm workspace
 
-当前阶段账户与启动已经可用；下载管线支持原版 / 加载器安装、Mod 多实例安装、整合包安装，以及资源包 / 光影包 / 数据包安装到实例目录。
+当前阶段账户与启动已经可用；下载子系统按「传输 / 内容分析」拆分：下载管线只负责把文件从候选源取回并校验，原版、Fabric/Forge/NeoForge、Modrinth/CurseForge、整合包与各类资源包由各自插件分析，并通过事件提交任务。
 账户与启动之间的契约是 `auth.credentials` 能力：启动页只消费凭据，不关心登录方式。
 
 ## 快速开始
@@ -119,10 +119,19 @@ mics/
 │  ├─ account/              # 账户：Microsoft 设备码登录 / 离线账户，提供 auth.credentials 能力
 │  ├─ core-workbench/       # 默认导航宽度与主题（纯清单插件，没有代码）
 │  ├─ launch/               # 启动页 + 启动设置（依赖账户插件，按凭据启动）
-│  ├─ download/             # 下载分组 + 下载设置
+│  ├─ download/             # 下载分组 + 下载进度 + 下载设置壳
+│  ├─ download-manager/     # 下载管线：队列、并发、分段、缓存、校验
+│  ├─ download-game/        # 原版分析 + 实例安装/补全编排 + 原版源
+│  ├─ download-loaders/     # 加载器注册表 + 加载器源设置聚合
+│  ├─ download-loader-fabric/   # Fabric 安装
+│  ├─ download-loader-forge/    # Forge 安装
+│  ├─ download-loader-neoforge/ # NeoForge 安装
+│  ├─ download-catalog/     # 社区目录聚合 + 来源注册表
+│  ├─ download-source-modrinth/  # Modrinth 来源
+│  ├─ download-source-curseforge/# CurseForge 来源
 │  ├─ download-vanilla/     # 原版版本列表
 │  ├─ download-mod/         # Mod 目录（Modrinth / CurseForge，可多实例安装）
-│  ├─ download-modpack/     # 整合包目录
+│  ├─ download-modpack/     # 整合包目录 + 归档解析/安装编排
 │  ├─ download-datapack/    # 数据包目录
 │  ├─ download-resourcepack/# 资源包目录
 │  ├─ download-shader/      # 光影包目录
@@ -138,6 +147,7 @@ mics/
 ├─ boot.config.json         # {"kernel": "mics.kernel", "pluginRoots": ["plugins"]}
 └─ docs/
    ├─ architecture.md
+   ├─ download-pipeline.md  # 下载子系统分层、事件契约与迁移
    └─ plugin-manager.md     # 安装 / 卸载 / 三态 / 内置保护 / 卸载脚本
 ```
 
@@ -232,6 +242,10 @@ interface LaunchCredentials {
 ```
 
 ## 下载、Mod 与整合包
+
+下载子系统按职责拆分：`mics.download.manager` 只负责传输（候选源、并发、分段、续传、缓存、校验、暂停/取消/重试），
+原版、加载器、社区来源与各分类插件各自分析要下载什么，并通过 `download/*` 事件提交文件清单、在完成事件里收尾。
+契约与新增来源/加载器的步骤见 [docs/download-pipeline.md](docs/download-pipeline.md)。
 
 - 原版页负责游戏版本与加载器的安装；Mod 页从 Modrinth / CurseForge 搜索 Mod，搜索条件包括名称、来源、MC 版本、加载器与类型（使用通用漏斗筛选面板），结果在底部按页翻页，点击卡片进入 Mod 详情。
 - 进入 Mod 详情时会把搜索页选中的 MC 版本 / 加载器自动设为详情筛选的初始值；筛选选项仍来自该 Mod 的全部版本，用户随时可以改，不存在被搜索条件锁死的情况。

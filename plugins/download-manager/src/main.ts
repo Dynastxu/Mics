@@ -1,40 +1,19 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import https from 'node:https'
 import http from 'node:http'
-import os from 'node:os'
-import { copyFile, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { copyFile, readdir, rename, rm, stat, utimes } from 'node:fs/promises'
 import type { Context } from 'cordis'
-import {
-  defineMainPlugin,
-  instanceClientJar,
-  instanceVersionJson,
-  instancesRoot,
-  resolveInstanceLayout,
-  sharedLibrariesDir
-} from '@mics/sdk/main'
-import type { InstanceLayout } from '@mics/sdk/main'
-import { findJava } from '@mics/java'
 import {
   DEFAULT_DOWNLOAD_CACHE_LIMIT,
   DEFAULT_DOWNLOAD_CONCURRENCY,
   DEFAULT_DOWNLOAD_SEGMENTS,
   DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD,
-  DEFAULT_DOWNLOAD_SOURCES,
-  DEFAULT_LOADER_SOURCES,
-  DEFAULT_MOD_SOURCES,
   DOWNLOAD_CACHE_LIMIT_OFF,
   DOWNLOAD_CACHE_LIMIT_UNLIMITED,
   FILE_TRANSFER,
-  INSTANCE_STATE_FILE,
-  LOADER_LABELS,
-  MOD_SOURCE_LABELS,
-  PACK_KIND_LABELS,
-  SHELL_EXECUTE,
   downloadCacheLimitBytes,
-  isModLoader,
-  isPackKind,
   micsUserAgent,
   normalizeDownloadCacheLimit,
   normalizeDownloadSegmentThreshold,
@@ -45,89 +24,114 @@ import {
   parseDownloadCacheLimit,
   parseDownloadSegmentThresholdMb,
   parseDownloadSegments,
-  validateInstanceName,
-  INVALID_INSTANCE_NAME_TEST
+  serialEvent
 } from '@mics/sdk'
 import type {
-  DownloadSource,
-  DownloadTask,
+  DownloadAddFilesRequest,
+  DownloadAddFilesResult,
+  DownloadAwaitRequest,
+  DownloadEndpoint,
+  DownloadFileRequest,
+  DownloadFileResult,
+  DownloadFinishRequest,
+  DownloadJobHandle,
+  DownloadJobRequest,
+  DownloadJobResult,
+  DownloadJobState,
+  DownloadReportPatch,
+  DownloadTaskState,
+  DownloadTaskView,
   FileTransferCapability,
   FileTransferHandle,
-  GameVersion,
-  InstallJob,
+  InstallJobKind,
   InstallJobStats,
   InstallJobSummary,
   InstallLiveState,
-  InstallRepairRequest,
-  InstanceInstallRecord,
   InstanceInstallStatus,
-  InstanceNameCheck,
-  InstallRequest,
-  InstallStartResult,
-  LoaderSource,
-  LoaderSourceKind,
-  LoaderKind,
-  LoaderVersion,
-  ModCategory,
-  ModIdentifyFile,
-  ModIdentifyRequest,
-  ModIdentity,
-  ModInstallRequest,
-  ModpackInstallRequest,
-  ModProjectKind,
-  ModProjectRequest,
-  ModSearchRequest,
-  ModSearchResult,
-  ModSource,
-  ModSourceInfo,
-  ModSummary,
-  ModVersion,
-  ModVersionRequest,
-  PackInstallRequest,
-  PackKind,
-  ShellExecuteCapability,
-  ShellProcess,
+  LegacyDownloadConfig,
   TransferOutcome,
   TransferProgress
 } from '@mics/sdk'
-import {
-  identifyMods,
-  listCategories,
-  listModVersions,
-  loadModProject,
-  modSourceReady,
-  resolveModSource,
-  searchMods
-} from './mods'
-import { listModpackCategories } from './modpacks/categories'
-import {
-  extractModpackOverrides,
-  modpackArchiveName,
-  parseModpackArchive
-} from './modpacks/archive'
-import { resolveCurseforgeModpackFiles } from './modpacks/curseforgeFiles'
 import {
   createFileTransfer,
   transferStatePath,
   transferStateProgress,
   type FileTransferOptions
 } from './transfer'
-import { listLoaderVersions, prepareLoaderInstall, safeLoaderKind } from './loaders'
-import { tailLastLine } from './loaders/fs'
-import {
-  absoluteUrl,
-  enabledSourcesOf,
-  matchLoaderUrl,
-  metadataCandidates,
-  sourceLabel
-} from './loaders/sources'
-import type { LoaderEnvironment } from './loaders/types'
-import { mergeVersion, stripClientChecksum, joinBase, mavenPath } from './version'
-import type { VersionArtifact, VersionDetail, VersionLibrary } from './version'
-import { describeResponse } from './describe'
+import { defineMainPlugin, isReadableJar } from '@mics/sdk/main'
+
+/**
+ * 下载管线。
+ *
+ * 只做传输：任务登记、并发调度、分段 / 续传、缓存、SHA1 校验、暂停取消重试、
+ * 进度与任务记录。内容分析（原版 / 加载器 / 社区 / 整合包 / 各类资源包）都在
+ * 各自插件里完成，通过 `download/*` 事件把「文件清单 + 候选源」交进来。
+ */
 
 let taskSeq = 0
 let jobSeq = 0
+
+interface PipelineTask {
+  id: string
+  jobId: string
+  url: string
+  savePath: string
+  sha1: string
+  size: number
+  label: string
+  sources: DownloadEndpoint[]
+  guardDir?: string
+  /** 多源竞速：同时向所有源发起请求，谁先完成用谁 */
+  race?: boolean
+  state: DownloadTaskState
+  progress: { loaded: number; total: number; speed: number; label: string }
+  transferred?: number
+  error?: string
+  createdAt: number
+}
+
+interface PipelineJob {
+  id: string
+  kind: string
+  title: string
+  detail?: string
+  scope?: { instanceName?: string }
+  data?: unknown
+  display?: DownloadJobRequest['display']
+  /** 全部文件完成即结算，不需要编排方收尾 */
+  autoFinish?: boolean
+  state: DownloadJobState
+  paused?: boolean
+  /** 编排方已经提交完全部文件；封口前不结算整个任务 */
+  sealed?: boolean
+  /** 自动重试轮次：所有源都失败的文件推迟到本轮末尾再试 */
+  retryRound?: number
+  /** 上一轮失败文件数；新一轮没有减少就停止重试 */
+  failedBeforeRound?: number
+  note?: string
+  preparePercent?: number
+  prepareLoaded?: number
+  prepareTotal?: number
+  prepareTransferAt?: number
+  taskIds: string[]
+  createdAt: number
+  error?: string
+  stats?: InstallJobStats
+}
+
+interface StoredRecords {
+  jobs: PipelineJob[]
+  tasks: PipelineTask[]
+}
+
+/** 同一文件在同一个源上的尝试次数；用尽后换下一个源 */
+const SOURCE_ATTEMPTS = 3
+/** 所有源都失败后，整个任务最多自动重试几轮 */
+const RETRY_ROUNDS = 3
+/** 同一个源连续失败时的退避基数 */
+const RETRY_DELAY_MS = 350
+const CACHE_PRUNE_DELAY_MS = 5000
+const CACHE_TRANSIENT_RE = /\.part(?:\d+)?(?:\.segments\.json)?(?:\.tmp)?$/
 
 function maxSequence(ids: Iterable<string>, prefix: string): number {
   let max = 0
@@ -139,216 +143,16 @@ function maxSequence(ids: Iterable<string>, prefix: string): number {
   return max
 }
 
-interface StoredRecords {
-  jobs: InstallJob[]
-  tasks: DownloadTask[]
-}
-
-type MojangArtifact = VersionArtifact
-type MojangLibrary = VersionLibrary
-type MojangVersionDetail = VersionDetail
-
-/** Mojang 的版本类型 -> 共享契约里的类型 */
-const VERSION_TYPE_MAP: Record<string, GameVersion['type']> = {
-  release: 'release',
-  snapshot: 'snapshot',
-  old_alpha: 'old_alpha',
-  old_beta: 'old_beta'
-}
-
-function mapVersionType(value: string): GameVersion['type'] {
-  return VERSION_TYPE_MAP[value] ?? 'snapshot'
-}
-
-/**
- * 没有摘要的 jar（例如 Fabric profile 里的 fabric-loader 自身）只能做结构校验。
- *
- * 只看文件头不够：断点续传时服务端忽略 Range 会把完整文件追加到残缺的
- * `.part` 后面，文件仍以 `PK` 开头但中央目录偏移全部错位，启动时报
- * ClassNotFoundException。这里对齐 EOCD、中央目录与首个本地头。
- */
-function isReadableJar(file: string): boolean {
-  let buffer: Buffer
-  try {
-    buffer = readFileSync(file)
-  } catch {
-    return false
-  }
-  if (buffer.length < 22) return false
-
-  const start = Math.max(0, buffer.length - 0xffff - 22)
-  let eocd = -1
-  for (let offset = buffer.length - 22; offset >= start; offset -= 1) {
-    if (buffer.readUInt32LE(offset) === 0x06054b50) {
-      eocd = offset
-      break
-    }
-  }
-  if (eocd < 0) return false
-
-  const count = buffer.readUInt16LE(eocd + 10)
-  const cdOffset = buffer.readUInt32LE(eocd + 16)
-  if (count === 0 || cdOffset + 46 > buffer.length) return false
-  if (buffer.readUInt32LE(cdOffset) !== 0x02014b50) return false
-
-  const localOffset = buffer.readUInt32LE(cdOffset + 42)
-  return localOffset + 4 <= buffer.length && buffer.readUInt32LE(localOffset) === 0x04034b50
-}
-
-interface AssetIndex {
-  objects: Record<string, { hash: string; size: number }>
-}
-
-interface TaskSpec {
-  label: string
-  url: string
-  savePath: string
-  sha1: string
-  size: number
-  /** Mod 等外链文件：不经过原版下载源改写 */
-  direct?: boolean
-  /** 目标所在的实例 / 存档目录；下载开始前必须仍然存在 */
-  guardDir?: string
-}
-
-interface MojangManifestSummary {
-  latest: { release: string; snapshot: string }
-  versions: Array<{ id: string; type: string; releaseTime: string; url: string }>
-}
-
-/** 元数据请求的总时长上限；并行请求下它只兜底「所有源都挂住」的情况 */
-const METADATA_TIMEOUT = 20_000
-
-const OS_NAME =
-  process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
-/** 文件名里使用的平台名与 rules 里的 os.name 不完全一致（macos / osx） */
-const FILE_OS_NAME =
-  process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
-const ARCH_NAME = process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'arm64' : 'x86'
-
-/** 版本文件里的系统规则 */
-interface VersionRule {
-  action?: string
-  os?: { name?: string; arch?: string; version?: string }
-  features?: Record<string, boolean>
-}
-
-/** 启动参数里可能用到的特性开关；下载阶段只关心默认值（全部关闭） */
-const RULE_FEATURES: Record<string, boolean> = {
-  is_demo_user: false,
-  has_custom_resolution: true,
-  has_quick_plays_support: false,
-  is_quick_play_singleplayer: false,
-  is_quick_play_multiplayer: false,
-  is_quick_play_realms: false
-}
-
-/**
- * 版本文件里的 rules 是否允许当前平台。
- *
- * 安装与补全只应下载本机真正会用到的库：Linux / macOS / arm64 的 native
- * 在 Windows x64 上永远不会进 classpath，下载它们只会放大失败面。
- */
-function rulesAllow(rules: unknown[] | undefined): boolean {
-  if (!rules || rules.length === 0) return true
-  let allowed = false
-  for (const entry of rules) {
-    const rule = entry as VersionRule | null
-    if (!rule || typeof rule !== 'object') continue
-    if (rule.os) {
-      if (rule.os.name && rule.os.name !== OS_NAME) continue
-      if (rule.os.arch && rule.os.arch !== ARCH_NAME) continue
-      if (rule.os.version) {
-        try {
-          if (!new RegExp(rule.os.version).test(os.release())) continue
-        } catch {
-          continue
-        }
-      }
-    }
-    if (rule.features) {
-      const matched = Object.entries(rule.features).every(
-        ([key, value]) => RULE_FEATURES[key] === value
-      )
-      if (!matched) continue
-    }
-    allowed = rule.action === 'allow'
-  }
-  return allowed
-}
-
-/**
- * native 文件的平台标记是否与当前平台一致。
- *
- * rules 只声明 os.name（windows-arm64 的条目甚至没写 arch），所以还要看
- * 文件名里的 classifier：`-natives-windows-arm64` 在 x64 上装不了，
- * 也不该下载。
- */
-function artifactPlatformMatches(relative: string): boolean {
-  const file = path.basename(relative).toLowerCase()
-  if (!file.includes('-natives-')) return true
-  if (!file.includes(`-natives-${FILE_OS_NAME}`)) return false
-  if (file.includes('arm64') && ARCH_NAME !== 'arm64') return false
-  if (file.includes('aarch_64') && ARCH_NAME !== 'arm64') return false
-  if (file.includes('x86_64') && ARCH_NAME !== 'x86_64') return false
-  if (file.includes('-x86') && !file.includes('x86_64') && ARCH_NAME !== 'x86') return false
-  return true
-}
-
-/**
- * 下载管线统一的请求头。
- *
- * BMCLAPI 会把 maven / assets 请求 302 到 CERNET、NJU 等镜像节点，这些节点
- * 会直接拒绝没有 User-Agent 的请求（403）。加载器文件、安装器与元数据请求
- * 都从这里取同一份头，避免某条路径漏掉。
- */
-/**
- * 当前应用版本，用来拼 User-Agent。
- *
- * 由 `apply()` 从 `ctx.host.app.version` 注入：子进程里没有 `electron`，
- * 用宿主给的版本，两种执行位置拿到的是同一个值。
- */
-let appVersion = '0.0.0'
-
-function downloadHeaders(): Record<string, string> {
-  return {
-    'User-Agent': micsUserAgent(appVersion),
-    Accept: '*/*'
-  }
-}
-
 function toError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause))
 }
 
-/** 是否是 Mojang 官方的版本清单地址（官方源不需要改写 piston 域名） */
-function isOfficialLauncherMeta(value: string): boolean {
-  const host = value
-    .trim()
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
-    .replace(/\/+$/, '')
-  return host === 'launchermeta.mojang.com'
+function ensureDir(dir: string): void {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
-/** 原版下载源的地址替换：只改 host，路径与协议保持原样 */
-function remapVanillaUrl(url: string, src: DownloadSource): string {
-  let result = url
-  const launchermeta = src.launchermeta.trim()
-  const libraries = src.libraries.trim()
-  const resources = src.resources.trim()
-  if (launchermeta) result = result.replaceAll('launchermeta.mojang.com', launchermeta)
-  if (libraries) result = result.replaceAll('libraries.minecraft.net', libraries)
-  if (resources) result = result.replaceAll('resources.download.minecraft.net', resources)
-
-  // 镜像一般同时代理 piston-meta / piston-data，但这两个地址没有独立的设置项：
-  // 只有源改写了版本清单地址（说明它不是官方源）时，才顺延使用同一个镜像地址；
-  // 官方源的 launchermeta 不提供 piston 路径，不能替换。
-  if (launchermeta && !isOfficialLauncherMeta(launchermeta)) {
-    result = result
-      .replaceAll('piston-meta.mojang.com', launchermeta)
-      .replaceAll('piston-data.mojang.com', launchermeta)
-  }
-  return result
+function isValidTerminal(state: DownloadTaskState): boolean {
+  return state === 'done' || state === 'failed'
 }
 
 export const name = 'mics.download.manager'
@@ -356,379 +160,218 @@ export const inject = ['ipc', 'storage', 'capabilities', 'host']
 
 export function apply(ctx: Context): void {
   const log = ctx.logger('mics.download.manager')
-  appVersion = ctx.host.app.version
-  const tasks = new Map<string, DownloadTask>()
-  const jobs = new Map<string, InstallJob>()
-  /** 正在传输的任务句柄：暂停/取消时用它中断请求（.part 保留） */
+  const appVersion = ctx.host.app.version
+
+  const jobs = new Map<string, PipelineJob>()
+  const tasks = new Map<string, PipelineTask>()
+  /** 正在传输的句柄：暂停/取消时用它中断请求（.part 保留） */
   const transfers = new Map<string, FileTransferHandle>()
   /** 每个任务当前下载轮次；暂停后立刻恢复时靠它丢弃上一轮的迟到回调 */
   const downloadRuns = new Map<string, number>()
   const cancelledTasks = new Set<string>()
-  const cancelledJobs = new Set<string>()
-  /** 正在写完成标记的安装：多个任务同时收尾时只允许一个去写 */
-  const completingJobs = new Set<string>()
-  /** 整体暂停的安装任务：调度器与下载循环据此判断是否还能继续 */
   const pausedJobs = new Set<string>()
-  /** 准备阶段的请求控制器，取消安装时可以立即中断元数据请求 */
-  const prepAborts = new Map<string, AbortController>()
-  /** 加载器版本列表缓存：官方源响应慢时避免每次切加载器都重新请求 */
-  const loaderVersionCache = new Map<string, { at: number; versions: LoaderVersion[] }>()
-  const LOADER_VERSION_TTL = 5 * 60 * 1000
-  /** Mod 搜索/版本列表的短时缓存：筛选切换与返回详情时避免重复打接口 */
-  const modSearchCache = new Map<string, { at: number; value: ModSearchResult }>()
-  const modVersionCache = new Map<string, { at: number; value: ModVersion[] }>()
-  const modProjectCache = new Map<string, { at: number; value: ModSummary }>()
-  const modIdentityCache = new Map<string, { at: number; value: ModIdentity[] }>()
-  const MOD_SEARCH_TTL = 90 * 1000
-  const MOD_VERSION_TTL = 5 * 60 * 1000
-  const MOD_IDENTITY_TTL = 6 * 60 * 60 * 1000
-  const MOD_CACHE_LIMIT = 64
-  const MOD_METADATA_TIMEOUT = 40 * 1000
+  /** 等待某个任务进入终态的调用方 */
+  const taskWaiters = new Map<string, Array<(result: DownloadFileResult) => void>>()
 
   const dataDir = ctx.host.paths.userData
   const cacheRoot = path.join(dataDir, 'cache', 'downloads')
-  /** 自动清理的节流窗口：整批小文件下载完再统一扫描，避免每个任务都全盘统计 */
-  const CACHE_PRUNE_DELAY_MS = 5000
-  /** `.part` / `.part.segments.json` 属于在途传输，不参与缓存统计与淘汰 */
-  const CACHE_TRANSIENT_RE = /\.part(?:\d+)?(?:\.segments\.json)?(?:\.tmp)?$/
-  /** 正在读取或解析的缓存文件；清理时跳过，避免删掉复制源/整合包归档 */
   const cachePins = new Map<string, number>()
   let cachePruneTimer: ReturnType<typeof setTimeout> | null = null
   let cachePruneChain: Promise<void> = Promise.resolve()
   let cachePruneRequested = false
+
   const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 128 })
   const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 128 })
 
-  // 默认的传输实现由本插件提供，但调用方只依赖能力名：沙箱 / 镜像插件可以用
-  // 更高的 priority 注册同名能力整体替换，下载管线不需要改。
+  /**
+   * 下载管线统一的请求头。
+   *
+   * BMCLAPI 会把 maven / assets 请求 302 到 CERNET、NJU 等镜像节点，这些节点
+   * 会直接拒绝没有 User-Agent 的请求（403）。
+   */
+  function downloadHeaders(): Record<string, string> {
+    return { 'User-Agent': micsUserAgent(appVersion), Accept: '*/*' }
+  }
+
+  // 默认传输实现由本插件提供：沙箱 / 镜像插件可以用更高 priority 注册同名能力
+  // 整体替换，下载管线不需要改。
   ctx.capabilities.provide<FileTransferCapability>(FILE_TRANSFER, {
     label: 'local',
     create: (spec) => createFileTransfer(spec as FileTransferOptions)
   })
   log.info('file-transfer 能力已注册（provider=local）')
 
-  /** 已受理但尚未落盘的实例名：并发提交同名安装时先占位 */
-  const reservedInstanceNames = new Set<string>()
-
-  /** 整合包覆盖文件在实例内的暂存目录；完成安装后合并并删除 */
-  const MODPACK_OVERRIDES_DIR = '.mics-modpack-overrides'
-  /** 资源包 / 光影包在实例里的落盘目录；数据包按存档写 */
-  const PACK_DIRS = {
-    resourcepack: 'resourcepacks',
-    shader: 'shaderpacks'
-  } as const
-  /** 覆盖文件不得改写的实例根文件（实例元数据与版本档案） */
-  const RESERVED_INSTANCE_ROOT_FILES = new Set(['instance.json', INSTANCE_STATE_FILE])
-
-  /** Windows 文件名不区分大小写，重名判断也要一致 */
-  function instanceKey(name: string): string {
-    return process.platform === 'win32' ? name.toLowerCase() : name
-  }
-
-  function instanceDirOf(name: string): string {
-    return path.join(instancesRoot(dataDir), name)
-  }
-
-  function versionJsonOf(name: string, gameVersion: string): string {
-    return instanceVersionJson(instanceDirOf(name), gameVersion)
-  }
-
-  /** 安装实际落盘的版本 id：加载器安装与游戏版本不同，旧记录回退到 gameVersion */
-  function installedVersionId(job: InstallJob): string {
-    return job.versionId ?? job.gameVersion
-  }
-
-  /**
-   * 原子写入安装状态。
-   *
-   * 启动页只把 `ready` 当作可用实例，所以写入顺序不能反：先写临时文件再改名，
-   * 任何时刻读者看到的要么是旧的完整 JSON，要么是新的完整 JSON。
-   */
-  async function writeInstallState(
-    instanceDir: string,
-    record: InstanceInstallRecord
-  ): Promise<void> {
-    ensureDir(instanceDir)
-    const target = path.join(instanceDir, INSTANCE_STATE_FILE)
-    const temporary = `${target}.tmp`
-    try {
-      await writeFile(temporary, JSON.stringify(record, null, 2), 'utf8')
-      await rename(temporary, target)
-    } catch (cause) {
-      await rm(temporary, { force: true }).catch(() => undefined)
-      throw cause
-    }
-  }
-
-  function installRecordOf(
-    job: InstallJob,
-    state: InstanceInstallRecord['state']
-  ): InstanceInstallRecord {
-    return {
-      state,
-      jobId: job.id,
-      gameVersion: job.gameVersion,
-      ...(state === 'ready' ? { completedAt: Date.now() } : {})
-    }
-  }
-
-  /**
-   * 实例名是否可用：先按共享规则校验名称本身，再检查目录是否已被占用。
-   * 渲染进程的即时提示与安装入口共用这一处判断，避免两边结论不一致。
-   */
-  function checkInstanceName(raw: string): InstanceNameCheck {
-    const base = validateInstanceName(raw)
-    if (!base.ok) return base
-
-    if (existsSync(instanceDirOf(base.name))) {
-      return {
-        ok: false,
-        name: base.name,
-        issue: 'duplicate',
-        message: `实例「${base.name}」已存在，请换一个名称`
-      }
-    }
-
-    if (reservedInstanceNames.has(instanceKey(base.name))) {
-      return {
-        ok: false,
-        name: base.name,
-        issue: 'duplicate',
-        message: `实例「${base.name}」正在安装，请换一个名称`
-      }
-    }
-
-    return base
-  }
-
-  /** IPC 参数里的实例名 / 版本 id 只接受单层安全名称 */
-  function safeInstanceName(value: unknown): string | null {
-    if (typeof value !== 'string') return null
-    const check = validateInstanceName(value)
-    return check.ok && check.name === value ? value : null
-  }
-
-  function safeVersionId(value: unknown): string | null {
-    if (typeof value !== 'string' || !value || value === '.' || value === '..') return null
-    if (path.basename(value) !== value) return null
-    return INVALID_INSTANCE_NAME_TEST.test(value) ? null : value
-  }
-
-  /** 数据包目标存档：只接受 saves 下的单层文件夹名 */
-  function safeWorldName(value: unknown): string | null {
-    if (typeof value !== 'string') return null
-    const name = value.trim()
-    if (!name || name === '.' || name === '..') return null
-    if (path.basename(name) !== name) return null
-    return INVALID_INSTANCE_NAME_TEST.test(name) ? null : name
-  }
-
-  function packKindOf(value: unknown): PackKind {
-    if (!isPackKind(value)) throw new Error('不支持的资源类型')
-    return value
-  }
-
-  let cachedManifest: MojangManifestSummary | null = null
-  let cachedAt = 0
-  const CACHE_TTL = 5 * 60 * 1000
+  // -------------------------------------------------------------------------
+  // 持久化
+  // -------------------------------------------------------------------------
 
   let persistTimer: ReturnType<typeof setTimeout> | null = null
   let recordsDirty = false
 
-  type SourceCategory = 'meta' | 'libraries' | 'assets' | 'loader-meta' | 'other'
-  interface SourceHealth {
-    failures: number
-    disabledUntil: number
+  function flushRecords(): void {
+    recordsDirty = false
+    try {
+      ctx.storage.set('records', {
+        jobs: [...jobs.values()],
+        tasks: [...tasks.values()]
+      } satisfies StoredRecords)
+    } catch {
+      /* 退出或存储不可用时忽略，避免阻塞关闭 */
+    }
   }
 
-  const SOURCE_FAILURE_LIMIT = 3
-  const SOURCE_COOLDOWN = 5 * 60 * 1000
-  const sourceHealth = new Map<string, SourceHealth>()
-
-  function sourceCategory(url: string): SourceCategory {
-    if (url.includes('resources.download.minecraft.net')) return 'assets'
-    if (url.includes('libraries.minecraft.net')) return 'libraries'
-    if (url.includes('launchermeta.mojang.com')) return 'meta'
-    return 'other'
-  }
-
-  function healthKey(key: string, category: SourceCategory): string {
-    return `${key}#${category}`
-  }
-
-  function sourceAvailable(key: string, category: SourceCategory): boolean {
-    const health = sourceHealth.get(healthKey(key, category))
-    if (!health?.disabledUntil) return true
-    if (health.disabledUntil > Date.now()) return false
-    sourceHealth.delete(healthKey(key, category))
-    return true
-  }
-
-  function reportSource(
-    key: string,
-    category: SourceCategory,
-    success: boolean,
-    label: string
-  ): void {
-    const healthKeyOf = healthKey(key, category)
-    if (success) {
-      const health = sourceHealth.get(healthKeyOf)
-      if (health && !health.disabledUntil) sourceHealth.delete(healthKeyOf)
+  function persistRecords(immediate = false): void {
+    recordsDirty = true
+    if (immediate) {
+      if (persistTimer) {
+        clearTimeout(persistTimer)
+        persistTimer = null
+      }
+      flushRecords()
       return
     }
-
-    const health = sourceHealth.get(healthKeyOf) ?? { failures: 0, disabledUntil: 0 }
-    health.failures += 1
-    if (health.failures >= SOURCE_FAILURE_LIMIT) {
-      health.failures = 0
-      health.disabledUntil = Date.now() + SOURCE_COOLDOWN
-      log.warn(
-        '下载源「%s」的 %s 连续失败 %d 次，暂停使用 %d 分钟',
-        label,
-        category,
-        SOURCE_FAILURE_LIMIT,
-        Math.round(SOURCE_COOLDOWN / 60_000)
-      )
-    }
-    sourceHealth.set(healthKeyOf, health)
+    if (persistTimer) return
+    persistTimer = setTimeout(() => {
+      persistTimer = null
+      if (recordsDirty) flushRecords()
+    }, 1000)
   }
 
-  function loadSources(): DownloadSource[] {
-    try {
-      const raw = ctx.storage.get<string>('sources', '')
-      if (raw) return normalizeDownloadSources(JSON.parse(raw))
-    } catch {
-      /* fall through */
-    }
-    return normalizeDownloadSources(DEFAULT_DOWNLOAD_SOURCES)
-  }
+  function loadRecords(): void {
+    const raw = ctx.storage.get<StoredRecords>('records')
+    if (!raw || !Array.isArray(raw.jobs) || !Array.isArray(raw.tasks)) return
 
-  function loadLoaderSources(): LoaderSource[] {
-    try {
-      const raw = ctx.storage.get<string>('loaderSources', '')
-      if (raw) return normalizeLoaderSources(JSON.parse(raw))
-    } catch {
-      /* fall through */
-    }
-    return normalizeLoaderSources(DEFAULT_LOADER_SOURCES)
-  }
-
-  function loadModSources(): ModSource[] {
-    try {
-      const raw = ctx.storage.get<string>('modSources', '')
-      if (raw) return normalizeModSources(JSON.parse(raw))
-    } catch {
-      /* fall through */
-    }
-    return normalizeModSources(DEFAULT_MOD_SOURCES)
-  }
-
-  /** 页面只需要来源标识，不把 API Key 送进渲染进程 */
-  function modSourceInfos(): ModSourceInfo[] {
-    return loadModSources().map((source) => {
-      const ready = modSourceReady(source)
-      const info: ModSourceInfo = {
-        kind: source.kind,
-        label: source.label.trim() || MOD_SOURCE_LABELS[source.kind],
-        enabled: source.enabled,
-        ready
+    for (const value of raw.jobs) {
+      const job = value as PipelineJob & {
+        instanceName?: string
+        gameVersion?: string
+        loader?: unknown
+        mode?: unknown
+        packKind?: unknown
       }
-      if (!ready && source.enabled && source.kind === 'curseforge') {
-        info.hint = '缺少 API Key（下载设置 → Mod 下载源）'
+      if (!job || typeof job.id !== 'string' || !Array.isArray(job.taskIds)) continue
+      job.taskIds = job.taskIds.filter((id): id is string => typeof id === 'string')
+      job.kind = typeof job.kind === 'string' ? job.kind : 'game'
+      // 只有真实实例的安装才进 install/status；Mod / 资源包任务不参与实例状态
+      if (!job.scope && job.instanceName && (job.kind === 'game' || job.kind === 'modpack')) {
+        job.scope = { instanceName: job.instanceName }
       }
-      return info
-    })
-  }
-
-  /** 参与下载的原版源下标（保持优先级顺序） */
-  function enabledSourceIndexes(sources: DownloadSource[]): number[] {
-    const indexes: number[] = []
-    for (let index = 0; index < sources.length; index++) {
-      if (sources[index]?.enabled !== false) indexes.push(index)
-    }
-    return indexes
-  }
-
-  interface DownloadCandidate {
-    /** 健康度记录键：同一份文件换源时各源独立冷却 */
-    key: string
-    label: string
-    url: string
-    category: SourceCategory
-  }
-
-  /**
-   * 一个下载地址的全部候选地址。
-   *
-   * 原版地址按原版下载源重写；加载器地址按对应类型的加载器源重写。
-   * 加载器镜像返回的绝对地址也能命中（matchLoaderUrl 同时匹配已配置的基址）。
-   */
-  function downloadCandidates(url: string): DownloadCandidate[] {
-    const loaderSources = loadLoaderSources()
-    const loaderMatch = matchLoaderUrl(url, loaderSources)
-    const candidates: DownloadCandidate[] = []
-    const seen = new Set<string>()
-
-    const add = (
-      key: string,
-      label: string,
-      candidateUrl: string,
-      category: SourceCategory
-    ): void => {
-      if (!candidateUrl || seen.has(candidateUrl)) return
-      seen.add(candidateUrl)
-      candidates.push({ key, label, url: candidateUrl, category })
+      job.title =
+        typeof job.title === 'string' && job.title ? job.title : (job.instanceName ?? job.id)
+      job.display = job.display ?? {
+        ...(typeof job.packKind === 'string' ? { packKind: job.packKind } : {}),
+        ...(typeof job.gameVersion === 'string' ? { gameVersion: job.gameVersion } : {}),
+        ...(typeof job.loader === 'object' && job.loader ? { loader: job.loader as never } : {}),
+        ...(typeof job.mode === 'string' ? { mode: job.mode } : {})
+      }
+      // 旧版本没有这几个状态：准备阶段中断的安装无法续上，明确标为失败
+      const legacyState: string = job.state
+      if (legacyState === 'preparing') {
+        job.state = 'failed'
+        job.error = '应用退出时仍在准备下载清单'
+        job.note = undefined
+        job.preparePercent = undefined
+      } else if (legacyState === 'ready') {
+        // 旧版的 ready 表示「清单已就绪、开始下载」
+        job.state = 'downloading'
+      } else if (!legacyState) {
+        job.state = 'done'
+      }
+      if (job.state === 'done' || job.state === 'failed' || job.state === 'cancelled') {
+        job.sealed = true
+      }
+      // 单批任务（autoFinish）在退出时可能还没收到 seal：文件清单已经完整
+      if (job.autoFinish) job.sealed = true
+      // 旧版记录没有编排方私有状态：新插件无法接手收尾，标为失败让用户重装
+      if (job.data === undefined && (legacyState === 'ready' || job.state === 'finalizing')) {
+        job.state = 'failed'
+        job.error = '升级前的安装记录无法继续，请删除后重新安装'
+      }
+      jobs.set(job.id, job)
     }
 
-    if (loaderMatch) {
-      const category: SourceCategory = loaderMatch.role === 'meta' ? 'loader-meta' : 'other'
-      loaderSources.forEach((source, index) => {
-        if (!source.enabled || source.kind !== loaderMatch.kind) return
-        const base = loaderMatch.role === 'maven' ? source.maven : source.meta
-        add(
-          `loader:${source.kind}:${index}`,
-          sourceLabel(source, index),
-          absoluteUrl(base, loaderMatch.suffix),
-          category
-        )
-      })
-      return candidates
+    for (const value of raw.tasks) {
+      const task = value as PipelineTask & { installId?: string; direct?: boolean }
+      if (!task || typeof task.id !== 'string') continue
+      const jobId = typeof task.jobId === 'string' ? task.jobId : task.installId
+      if (!jobId || !jobs.has(jobId) || !task.progress || typeof task.progress !== 'object')
+        continue
+      task.jobId = jobId
+      task.sources =
+        Array.isArray(task.sources) && task.sources.length > 0
+          ? task.sources
+          : [{ id: `direct:${task.url}`, label: '直链', url: task.url }]
+      if (task.state !== 'done' && task.state !== 'failed') {
+        // 上次退出时还在队列/下载/校验中的任务，重启后以暂停状态等待恢复
+        task.state = 'paused'
+        task.progress.speed = 0
+        // 进度以 .part 的实际大小为准，恢复时就从这个字节位置续传
+        task.progress.loaded = partSizeOf(task.savePath)
+        if (task.progress.total <= 0) {
+          task.progress.total = task.size > 0 ? task.size : -1
+        }
+      } else if (task.state === 'done' && task.progress.loaded === 0 && task.size > 0) {
+        task.progress.loaded = task.size
+      }
+      tasks.set(task.id, task)
     }
 
-    const sources = loadSources()
-    const category = sourceCategory(url)
-    for (const index of enabledSourceIndexes(sources)) {
-      const source = sources[index]
-      if (!source) continue
-      add(
-        `vanilla:${index}`,
-        source.label.trim() || `源 ${index + 1}`,
-        remapVanillaUrl(url, source),
-        category
-      )
+    for (const job of jobs.values()) {
+      job.taskIds = job.taskIds.filter((id) => tasks.has(id))
     }
-    return candidates
+
+    taskSeq = Math.max(taskSeq, maxSequence(tasks.keys(), 'task_'))
+    jobSeq = Math.max(jobSeq, maxSequence(jobs.keys(), 'job_'))
+
+    // 终态安装不再需要逐文件明细：历史行只显示汇总
+    for (const job of jobs.values()) {
+      if (job.state === 'done' || job.state === 'cancelled') archiveJob(job)
+    }
+
+    if (jobs.size > 0 || raw.jobs.length > 0) persistRecords(true)
   }
+
+  function archiveJob(job: PipelineJob): void {
+    if (job.taskIds.length === 0) {
+      if (!job.stats) job.stats = collectStats(job)
+      return
+    }
+    job.stats = collectStats(job)
+    for (const taskId of job.taskIds) tasks.delete(taskId)
+    job.taskIds = []
+  }
+
+  // -------------------------------------------------------------------------
+  // 缓存
+  // -------------------------------------------------------------------------
 
   function cachePath(sha1: string): string {
     return path.join(cacheRoot, sha1.slice(0, 2), sha1.slice(2))
   }
 
-  /**
-   * 无摘要文件的缓存键：按 URL 归档。
-   *
-   * 加载器安装器 jar 没有 sha1（发布方不提供），但同一版本的下载地址不变，
-   * 按 URL 缓存可以让「取消 / 失败后重试」不必再下几十 MB。
-   */
+  /** 无摘要文件的缓存键：按 URL 归档（安装器 jar 等） */
   function urlCachePath(url: string): string {
     const key = createHash('sha1').update(url).digest('hex')
     return path.join(cacheRoot, 'url', key.slice(0, 2), key)
   }
 
-  /**
-   * 旧版本把缓存上限存成 GB（2 / 5 / 10 / 0=不限制）。迁移只做一次：
-   * 写入 MB 值并打上标记，之后 `cacheLimit` 里的数字一律按 MB 解释。
-   */
+  function loadCacheLimit(): string {
+    return normalizeDownloadCacheLimit(
+      ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT)
+    )
+  }
+
+  function cacheEnabled(): boolean {
+    return loadCacheLimit() !== DOWNLOAD_CACHE_LIMIT_OFF
+  }
+
+  function describeCacheLimit(raw: string): string {
+    const { mode, megabytes } = parseDownloadCacheLimit(raw)
+    if (mode === 'off') return '不缓存'
+    if (mode === 'unlimited') return '无限制'
+    return `${megabytes} MB`
+  }
+
   function migrateCacheLimitSetting(): void {
     if (ctx.storage.get<string>('cacheLimitUnit') === 'mb') return
     const raw = ctx.storage.get<unknown>('cacheLimit')
@@ -747,25 +390,6 @@ export function apply(ctx: Context): void {
     log.info('下载缓存上限已迁移为 MB 单位：%s', describeCacheLimit(migrated))
   }
 
-  function loadCacheLimit(): string {
-    return normalizeDownloadCacheLimit(
-      ctx.storage.get<string>('cacheLimit', DEFAULT_DOWNLOAD_CACHE_LIMIT)
-    )
-  }
-
-  /** 缓存是否启用；`off` 既不复用也不再写入缓存 */
-  function cacheEnabled(): boolean {
-    return loadCacheLimit() !== DOWNLOAD_CACHE_LIMIT_OFF
-  }
-
-  function describeCacheLimit(raw: string): string {
-    const { mode, megabytes } = parseDownloadCacheLimit(raw)
-    if (mode === 'off') return '不缓存'
-    if (mode === 'unlimited') return '无限制'
-    return `${megabytes} MB`
-  }
-
-  /** 标记缓存文件正在使用；返回幂等的释放函数 */
   function pinCacheFile(file: string): () => void {
     const key = path.resolve(file)
     cachePins.set(key, (cachePins.get(key) ?? 0) + 1)
@@ -783,7 +407,6 @@ export function apply(ctx: Context): void {
     return cachePins.has(path.resolve(file))
   }
 
-  /** 命中缓存时刷新 mtime，让淘汰顺序贴近「最久未使用」 */
   async function touchCacheFile(file: string): Promise<void> {
     try {
       const now = new Date()
@@ -793,7 +416,6 @@ export function apply(ctx: Context): void {
     }
   }
 
-  /** 统计下载缓存占用；缓存目录不存在时按 0 处理 */
   async function cacheUsage(): Promise<{ bytes: number; files: number }> {
     let bytes = 0
     let files = 0
@@ -824,12 +446,6 @@ export function apply(ctx: Context): void {
     return { bytes, files }
   }
 
-  /**
-   * 按上限淘汰最旧的缓存文件。
-   *
-   * 缓存没有额外索引，只能扫描目录；因此由 {@link scheduleCachePrune} 做批处理，
-   * 避免每个下载任务完成都全盘 stat 一次。正在读取或解析的文件会被 pin 住。
-   */
   async function pruneCacheOnce(): Promise<void> {
     const limit = downloadCacheLimitBytes(loadCacheLimit())
     if (limit === null) return
@@ -888,7 +504,6 @@ export function apply(ctx: Context): void {
     }
   }
 
-  /** 延迟清理：一次安装会完成大量小文件，逐次扫描目录并不划算 */
   function scheduleCachePrune(delay = CACHE_PRUNE_DELAY_MS): void {
     if (cachePruneTimer) return
     cachePruneTimer = setTimeout(() => {
@@ -897,7 +512,6 @@ export function apply(ctx: Context): void {
     }, delay)
   }
 
-  /** 串行执行清理，避免多轮扫描并发删除同一批文件 */
   function enqueueCachePrune(): Promise<void> {
     cachePruneRequested = true
     cachePruneChain = cachePruneChain
@@ -912,7 +526,6 @@ export function apply(ctx: Context): void {
     return cachePruneChain
   }
 
-  /** 设置变更后立即清理，调用方可以等它完成再读取统计 */
   async function pruneCacheNow(): Promise<void> {
     if (cachePruneTimer) {
       clearTimeout(cachePruneTimer)
@@ -921,20 +534,6 @@ export function apply(ctx: Context): void {
     await enqueueCachePrune()
   }
 
-  /** 缓存里的文件能否直接复用：有摘要按摘要，没有摘要时至少要是完整的 jar */
-  async function cachedFileUsable(file: string, sha1: string, target: string): Promise<boolean> {
-    let info
-    try {
-      info = await stat(file)
-    } catch {
-      return false
-    }
-    if (!info.isFile() || info.size === 0) return false
-    if (sha1) return (await hashFile(file)) === sha1
-    return !target.toLowerCase().endsWith('.jar') || isReadableJar(file)
-  }
-
-  /** 计算文件的 SHA1；读失败时返回 null（按不可用处理） */
   function hashFile(file: string): Promise<string | null> {
     return new Promise((resolve) => {
       const hash = createHash('sha1')
@@ -945,24 +544,65 @@ export function apply(ctx: Context): void {
     })
   }
 
+  /** 目标文件是否已完整；补全时据此跳过已下载的文件 */
+  async function fileMatchesSpec(task: PipelineTask): Promise<boolean> {
+    try {
+      const info = await stat(task.savePath)
+      if (!info.isFile()) return false
+      if (task.sha1) {
+        if (task.size > 0 && info.size !== task.size) return false
+        return (await hashFile(task.savePath)) === task.sha1
+      }
+      if (task.size > 0) return info.size === task.size
+      if (task.savePath.toLowerCase().endsWith('.jar')) return isReadableJar(task.savePath)
+      return info.size > 0
+    } catch {
+      return false
+    }
+  }
+
+  async function tryCopyFromCache(task: PipelineTask): Promise<boolean> {
+    if (!cacheEnabled()) return false
+    const cached = task.sha1 ? cachePath(task.sha1) : urlCachePath(task.url)
+    const release = pinCacheFile(cached)
+    try {
+      if (!existsSync(cached)) return false
+      if (task.sha1) {
+        if ((await hashFile(cached)) !== task.sha1) {
+          await rm(cached, { force: true }).catch(() => undefined)
+          log.warn('下载缓存内容与摘要不符，已丢弃：%s', task.sha1)
+          return false
+        }
+      } else {
+        const info = await stat(cached).catch(() => null)
+        if (!info?.isFile() || info.size === 0) return false
+        if (task.size > 0 && info.size !== task.size) return false
+        if (task.savePath.toLowerCase().endsWith('.jar') && !isReadableJar(cached)) return false
+      }
+      ensureDir(path.dirname(task.savePath))
+      await copyFile(cached, task.savePath)
+      await touchCacheFile(cached)
+      return true
+    } finally {
+      release()
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 设置
+  // -------------------------------------------------------------------------
+
   const maxConcurrency = () => {
     const fallback = Number(DEFAULT_DOWNLOAD_CONCURRENCY) || 64
     const raw = ctx.storage.get<string>('concurrency', DEFAULT_DOWNLOAD_CONCURRENCY)
     return Math.max(1, Math.min(128, Number(raw) || fallback))
   }
 
-  /**
-   * 单个文件允许的 Range 连接数。
-   *
-   * 小文件多连接只会增加握手与排队开销，因此只有达到阈值的文件才分段；
-   * 1 表示单连接。服务端不支持 Range 时传输层会自己回退单连接，这里不需要探测。
-   */
-  function segmentsFor(task: DownloadTask): number {
+  function segmentsFor(task: PipelineTask): number {
     if (task.size < segmentThresholdBytes()) return 1
     return parseDownloadSegments(ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS))
   }
 
-  /** 分段阈值（字节）；设置页按 MB 存字符串，读取时兜底并收窄范围 */
   function segmentThresholdBytes(): number {
     const megabytes = parseDownloadSegmentThresholdMb(
       ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD)
@@ -970,146 +610,11 @@ export function apply(ctx: Context): void {
     return megabytes * 1024 * 1024
   }
 
-  function ensureDir(dir: string): void {
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  }
+  // -------------------------------------------------------------------------
+  // 任务状态与进度
+  // -------------------------------------------------------------------------
 
-  /** .part 已落盘的字节数；分段下载时以元数据里的实际进度为准 */
-  function partSizeOf(savePath: string): number {
-    const partPath = `${savePath}.part`
-    const segmented = transferStateProgress(partPath)
-    if (segmented !== null) return segmented
-    try {
-      return statSync(partPath).size
-    } catch {
-      return 0
-    }
-  }
-
-  function readModCache<T>(
-    cache: Map<string, { at: number; value: T }>,
-    key: string,
-    ttl: number
-  ): T | undefined {
-    const cached = cache.get(key)
-    if (!cached) return undefined
-    if (Date.now() - cached.at > ttl) {
-      cache.delete(key)
-      return undefined
-    }
-    return cached.value
-  }
-
-  function writeModCache<T>(
-    cache: Map<string, { at: number; value: T }>,
-    key: string,
-    value: T
-  ): void {
-    if (cache.size >= MOD_CACHE_LIMIT) {
-      const oldest = cache.keys().next().value
-      if (oldest !== undefined) cache.delete(oldest)
-    }
-    cache.set(key, { at: Date.now(), value })
-  }
-
-  function flushRecords(): void {
-    recordsDirty = false
-    try {
-      ctx.storage.set('records', {
-        jobs: [...jobs.values()],
-        tasks: [...tasks.values()]
-      } satisfies StoredRecords)
-    } catch {
-      /* 退出或存储不可用时忽略，避免阻塞关闭 */
-    }
-  }
-
-  function persistRecords(immediate = false): void {
-    recordsDirty = true
-    if (immediate) {
-      if (persistTimer) {
-        clearTimeout(persistTimer)
-        persistTimer = null
-      }
-      flushRecords()
-      return
-    }
-    if (persistTimer) return
-    persistTimer = setTimeout(() => {
-      persistTimer = null
-      if (recordsDirty) flushRecords()
-    }, 1000)
-  }
-
-  function loadRecords(): void {
-    const raw = ctx.storage.get<StoredRecords>('records')
-    if (!raw || !Array.isArray(raw.jobs) || !Array.isArray(raw.tasks)) return
-
-    for (const value of raw.jobs) {
-      const job = value as InstallJob
-      if (!job || typeof job.id !== 'string' || !Array.isArray(job.taskIds)) continue
-      job.taskIds = job.taskIds.filter((id): id is string => typeof id === 'string')
-      // 旧记录没有 state；上次退出时还在准备阶段的安装无法续上，明确标为失败
-      if (job.state === 'preparing') {
-        job.state = 'failed'
-        job.note = undefined
-        job.preparePercent = undefined
-        job.error = '应用退出时仍在准备下载清单'
-      } else if (!job.state) {
-        job.state = 'ready'
-      }
-      jobs.set(job.id, job)
-    }
-
-    for (const value of raw.tasks) {
-      const task = value as DownloadTask
-      if (!task || typeof task.id !== 'string' || typeof task.installId !== 'string') continue
-      if (!jobs.has(task.installId) || !task.progress || typeof task.progress !== 'object') continue
-
-      if (task.state !== 'done' && task.state !== 'failed') {
-        // 上次退出时还在队列/下载/校验中的任务，重启后以暂停状态等待恢复。
-        task.state = 'paused'
-        task.progress.speed = 0
-        // 进度以 .part 的实际大小为准，恢复时就从这个字节位置续传
-        task.progress.loaded = partSizeOf(task.savePath)
-        if (task.progress.total <= 0) {
-          task.progress.total = task.size > 0 ? task.size : -1
-        }
-      } else if (task.state === 'done' && task.progress.loaded === 0 && task.size > 0) {
-        task.progress.loaded = task.size
-      }
-
-      tasks.set(task.id, task)
-    }
-
-    for (const job of jobs.values()) {
-      job.taskIds = job.taskIds.filter((id) => tasks.has(id))
-    }
-
-    taskSeq = Math.max(taskSeq, maxSequence(tasks.keys(), 'task_'))
-    jobSeq = Math.max(jobSeq, maxSequence(jobs.keys(), 'job_'))
-
-    // 迁移旧记录：终态安装的逐文件任务只占空间，历史页读 job.stats 即可。
-    // 被新安装取代的失败记录既不能重试也不能删除，同样没有保留明细的理由。
-    for (const job of jobs.values()) {
-      if (job.state === 'done' || job.state === 'cancelled') {
-        archiveJob(job)
-      } else if (job.state === 'failed' && !isCurrentJob(job)) {
-        archiveJob(job)
-      }
-    }
-
-    if (jobs.size > 0 || raw.jobs.length > 0) persistRecords(true)
-  }
-
-  /** job id 的序号；旧记录没有 createdAt 时也能稳定排序 */
-  function jobSequence(job: InstallJob): number {
-    const sequence = Number(job.id.startsWith('job_') ? job.id.slice('job_'.length) : '')
-    return Number.isFinite(sequence) ? sequence : (job.createdAt ?? 0)
-  }
-
-  /** 遍历任务并汇总一次安装；任务明细缺失时按实际存在的部分计算 */
-  function collectStats(job: InstallJob): InstallJobStats {
+  function collectStats(job: PipelineJob): InstallJobStats {
     let total = 0
     let waiting = 0
     let paused = 0
@@ -1119,7 +624,6 @@ export function apply(ctx: Context): void {
     let cancelled = 0
     let loaded = 0
     let bytes = 0
-    /** 真正走网络的字节；缓存复用只改 loaded，不计入这里 */
     let transferred = 0
 
     for (const taskId of job.taskIds) {
@@ -1162,892 +666,241 @@ export function apply(ctx: Context): void {
       cancelled,
       loaded,
       bytes,
-      transferred: transferred + (job.prepareTransferred ?? 0),
+      transferred,
       percent: Math.min(100, Math.max(0, Math.round(measured)))
     }
   }
 
-  function statsOf(job: InstallJob): InstallJobStats {
-    // 已归档的终态安装没有任务明细，直接复用落盘的汇总
+  function statsOf(job: PipelineJob): InstallJobStats {
     if (job.taskIds.length === 0 && job.stats) return job.stats
     return collectStats(job)
   }
 
-  function isFinishedJob(job: InstallJob, stats: InstallJobStats): boolean {
-    if (job.state === 'done' || job.state === 'failed' || job.state === 'cancelled') return true
-    if (job.state === 'preparing') return false
-    return stats.total === 0 || stats.done + stats.failed === stats.total
-  }
-
-  /**
-   * 归档终态安装：保留汇总计数，删掉逐文件任务。
-   *
-   * 一次安装通常有几千个任务（资源对象占大头），历史记录全部保留会让下载页
-   * 每次轮询都搬运几十 MB。已完成 / 已取消 / 被取代的安装不再需要这些明细：
-   * 历史行只显示汇总，重试也只针对当前失败记录。
-   */
-  function archiveJob(job: InstallJob): void {
-    if (job.taskIds.length === 0) {
-      if (!job.stats) job.stats = collectStats(job)
-      return
-    }
-    job.stats = collectStats(job)
-    for (const taskId of job.taskIds) tasks.delete(taskId)
-    job.taskIds = []
-  }
-
-  /**
-   * 是否是一次游戏安装。
-   *
-   * 只有 Mod 与资源包安装不接管实例目录；`pack` 写进实例里的子目录，同样不能
-   * 参与实例状态机，否则会被当成游戏安装去写 ready 标记。
-   */
-  function isGameJob(job: InstallJob): boolean {
-    return job.kind !== 'mod' && job.kind !== 'pack'
-  }
-
-  /** 日志 / 下载页共用的内容类型名 */
-  function jobContentLabel(job: InstallJob): string {
-    if (job.kind === 'pack') return PACK_KIND_LABELS[job.packKind ?? 'resourcepack']
-    if (job.kind === 'mod') return 'Mod'
-    if (job.kind === 'modpack') return '整合包'
-    return '游戏'
-  }
-
-  /** 新安装接手实例名后，旧终态记录既不能重试也不能删除，明细可以立刻归档 */
-  function archiveSupersededJobs(instanceName: string, currentJobId: string): void {
-    for (const job of jobs.values()) {
-      if (!isGameJob(job)) continue
-      if (job.id === currentJobId || job.instanceName !== instanceName) continue
-      if (job.state === 'done' || job.state === 'cancelled' || job.state === 'failed') {
-        archiveJob(job)
-      }
-    }
-  }
-
-  function toSummary(job: InstallJob): InstallJobSummary {
+  function toSummary(job: PipelineJob): InstallJobSummary {
     const stats = statsOf(job)
+    const state = job.state === 'downloading' || job.state === 'finalizing' ? 'ready' : job.state
     return {
       id: job.id,
-      kind: job.kind,
-      packKind: job.packKind,
+      kind: job.kind as InstallJobKind,
+      packKind: job.display?.packKind as never,
       title: job.title,
       detail: job.detail,
-      instanceName: job.instanceName,
-      gameVersion: job.gameVersion,
-      loader: job.loader,
-      mode: job.mode,
-      state: job.state ?? 'ready',
+      instanceName: job.scope?.instanceName ?? job.title,
+      gameVersion: job.display?.gameVersion ?? '',
+      loader: job.display?.loader as never,
+      mode: job.display?.mode as never,
+      state,
       error: job.error,
       note: job.note,
       preparePercent: job.preparePercent,
-      // 归档传输只在准备阶段有意义；就绪后不再把旧字节数发给下载页
-      prepareLoaded: job.state === 'preparing' ? job.prepareLoaded : undefined,
-      prepareTotal: job.state === 'preparing' ? job.prepareTotal : undefined,
-      prepareTransferAt: job.state === 'preparing' ? job.prepareTransferAt : undefined,
+      prepareLoaded: job.prepareLoaded,
+      prepareTotal: job.prepareTotal,
+      prepareTransferAt: job.prepareTransferAt,
       createdAt: job.createdAt,
-      finished: isFinishedJob(job, stats),
+      finished: job.state === 'done' || job.state === 'failed' || job.state === 'cancelled',
       stats
     }
   }
 
-  /**
-   * 同一实例名可能有多条安装记录（失败后重新安装、取消后重装）。
-   * 只有最新的一条代表磁盘上的实例，旧记录只作为历史，不能再去改实例目录。
-   */
-  function latestJobFor(instanceName: string): InstallJob | undefined {
-    let latest: InstallJob | undefined
-    for (const job of jobs.values()) {
-      if (!isGameJob(job) || job.instanceName !== instanceName) continue
-      if (!latest || jobSequence(job) >= jobSequence(latest)) latest = job
-    }
-    return latest
+  function jobSequence(job: PipelineJob): number {
+    const sequence = Number(job.id.startsWith('job_') ? job.id.slice('job_'.length) : '')
+    return Number.isFinite(sequence) ? sequence : job.createdAt
   }
 
-  function isCurrentJob(job: InstallJob): boolean {
-    // Mod 安装不接管实例目录，也不存在「被更新安装取代」的问题
-    if (!isGameJob(job)) return true
-    const latest = latestJobFor(job.instanceName)
-    return !latest || latest.id === job.id
+  function isFinished(job: PipelineJob): boolean {
+    return job.state === 'done' || job.state === 'failed' || job.state === 'cancelled'
   }
 
-  /**
-   * 把覆盖文件暂存目录合并进实例。
-   *
-   * 只复制文件、不整目录替换：实例里已经有下载好的 Mod / 配置时，覆盖文件
-   * 只应补上或替换同名项，不能把其它文件一起删掉。
-   */
-  async function mergeOverrides(
-    source: string,
-    target: string,
-    reservedRoot: Set<string>,
-    depth = 0
-  ): Promise<void> {
-    const entries = await readdir(source, { withFileTypes: true })
-    for (const entry of entries) {
-      if (depth === 0 && reservedRoot.has(entry.name)) continue
-      const from = path.join(source, entry.name)
-      const to = path.join(target, entry.name)
-      if (entry.isDirectory()) {
-        ensureDir(to)
-        await mergeOverrides(from, to, reservedRoot, depth + 1)
-      } else if (entry.isFile()) {
-        ensureDir(path.dirname(to))
-        await copyFile(from, to)
-      }
+  function resolveWaiters(task: PipelineTask): void {
+    if (!isValidTerminal(task.state)) return
+    const waiters = taskWaiters.get(task.id)
+    if (!waiters || waiters.length === 0) return
+    taskWaiters.delete(task.id)
+    const result: DownloadFileResult = {
+      taskId: task.id,
+      state: task.state === 'done' ? 'done' : 'failed',
+      ...(task.error ? { error: task.error } : {})
     }
+    for (const resolve of waiters) resolve(result)
   }
 
-  /** 整合包任务完成前的收尾：合并覆盖文件，失败时不能写 ready 标记 */
-  async function finalizeModpackJob(job: InstallJob): Promise<void> {
-    const meta = job.modpack
-    if (!meta?.overridesDir) return
-    const staging = meta.overridesDir
-    const instanceDir = instanceDirOf(job.instanceName)
-    if (!existsSync(staging)) {
-      delete meta.overridesDir
-      return
+  function waitForTask(taskId: string): Promise<DownloadFileResult> {
+    const task = tasks.get(taskId)
+    if (!task) return Promise.resolve({ taskId, state: 'failed', error: '任务不存在' })
+    if (isValidTerminal(task.state)) {
+      return Promise.resolve({
+        taskId,
+        state: task.state === 'done' ? 'done' : 'failed',
+        ...(task.error ? { error: task.error } : {})
+      })
     }
+    return new Promise((resolve) => {
+      const waiters = taskWaiters.get(taskId) ?? []
+      waiters.push(resolve)
+      taskWaiters.set(taskId, waiters)
+    })
+  }
 
-    const reserved = new Set([...RESERVED_INSTANCE_ROOT_FILES, `${installedVersionId(job)}.json`])
-    await mergeOverrides(staging, instanceDir, reserved)
-    await rm(staging, { recursive: true, force: true }).catch(() => undefined)
-    delete meta.overridesDir
-    log.info('整合包「%s」的覆盖文件已合并进实例', meta.name || job.instanceName)
+  /** 任务进入终态：发通知、唤醒等待者、尝试结算所属任务 */
+  function settleTask(task: PipelineTask): void {
+    if (!isValidTerminal(task.state)) return
+    ctx.emit('download/fileFinished', task.jobId, {
+      taskId: task.id,
+      state: task.state === 'done' ? 'done' : 'failed',
+      ...(task.error ? { error: task.error } : {})
+    })
+    resolveWaiters(task)
+    void settleJob(task.jobId)
   }
 
   /**
-   * 任务全部完成时给实例落 ready 标记。
-   *
-   * 只有标记写成功才把 job 记为完成：写失败时保持 ready 状态，下一次任务回调、
-   * 下次启动的校正或用户重试都会再试一次，实例不会被误判为可用。
-   */
-  async function completeJob(job: InstallJob): Promise<void> {
-    if (job.state === 'done' || completingJobs.has(job.id) || cancelledJobs.has(job.id)) return
-
-    // Mod 安装没有实例就绪标记：文件写进各实例的 mods/ 目录即可收尾
-    if (!isGameJob(job)) {
-      completingJobs.add(job.id)
-      try {
-        job.state = 'done'
-        delete job.error
-        const fileCount = job.taskIds.length
-        archiveJob(job)
-        persistRecords(true)
-        log.info(
-          '%s安装「%s」已完成：%d 个文件，job %s',
-          jobContentLabel(job),
-          job.title || job.instanceName,
-          fileCount,
-          job.id
-        )
-      } finally {
-        completingJobs.delete(job.id)
-      }
-      return
-    }
-
-    // 旧记录即使下完了也不能再写实例标记：同名的实例可能已经被新记录接管
-    if (!isCurrentJob(job)) {
-      job.state = 'done'
-      delete job.error
-      archiveJob(job)
-      persistRecords(true)
-      log.info('安装「%s」已完成，但记录已被更新的安装取代，job %s', job.instanceName, job.id)
-      return
-    }
-    completingJobs.add(job.id)
-
-    try {
-      const instanceDir = instanceDirOf(job.instanceName)
-      if (existsSync(instanceDir)) {
-        // 实例可能在下载期间被用户从启动页删掉；没有版本文件就不能算安装完成
-        if (!existsSync(versionJsonOf(job.instanceName, installedVersionId(job)))) {
-          job.state = 'failed'
-          job.error = '实例文件已被删除，安装未完成'
-          log.warn('安装「%s」的实例文件已被删除，job %s 标记为失败', job.instanceName, job.id)
-          persistRecords(true)
-          return
-        }
-        if (job.kind === 'modpack') {
-          try {
-            // 覆盖文件必须在所有 Mod 下载完成后合并，才能覆盖同名文件
-            await finalizeModpackJob(job)
-          } catch (cause) {
-            job.state = 'failed'
-            job.error = `合并整合包覆盖文件失败：${toError(cause).message}`
-            log.error('整合包「%s」合并覆盖文件失败：%s', job.instanceName, job.error)
-            persistRecords(true)
-            return
-          }
-        }
-        try {
-          await writeInstallState(instanceDir, installRecordOf(job, 'ready'))
-        } catch (cause) {
-          log.warn('写入实例「%s」的完成标记失败：%s', job.instanceName, toError(cause).message)
-          return
-        }
-      }
-
-      job.state = 'done'
-      delete job.error
-      const fileCount = job.taskIds.length
-      archiveJob(job)
-      persistRecords(true)
-      log.info('安装「%s」已完成：%d 个文件全部就绪，job %s', job.instanceName, fileCount, job.id)
-    } finally {
-      completingJobs.delete(job.id)
-    }
-  }
-
-  /**
-   * 汇总一次安装的终态：任务全部完成 -> done；有失败且没有未结束任务 -> failed。
-   * 还在下载/暂停的安装保持 ready，下载页继续展示为进行中。
+   * 汇总一次任务的终态：
+   * - 有失败且没有未结束任务 -> failed；
+   * - 全部完成 -> finalizing，等编排方 finish；
+   * - 还有进行中的任务 -> 保持 downloading。
    */
   async function settleJob(jobId: string): Promise<void> {
     const job = jobs.get(jobId)
-    if (!job || job.state === 'done' || job.state === 'cancelled') return
+    if (!job || isFinished(job) || job.state === 'finalizing') return
+    if (!job.sealed) return
+    if (job.taskIds.length === 0) return
 
     const list = job.taskIds.map((id) => tasks.get(id))
-    if (list.length === 0 || list.length !== job.taskIds.length) return
-    if (!list.every((task) => task?.state === 'done' || task?.state === 'failed')) return
-
-    if (list.every((task) => task?.state === 'done')) {
-      await completeJob(job)
+    if (list.length !== job.taskIds.length) return
+    // 还有在途 / 暂停的任务时先等；deferred 表示本轮所有源都失败，可以进入重试轮
+    if (
+      list.some(
+        (task) =>
+          !task ||
+          task.state === 'pending' ||
+          task.state === 'downloading' ||
+          task.state === 'verifying' ||
+          task.state === 'paused'
+      )
+    ) {
       return
     }
-    if (job.state === 'failed') return
 
-    const failed = list.filter((task) => task?.state === 'failed').length
-    job.state = 'failed'
-    job.error = `${failed} 个文件下载失败，可重试或删除该安装`
-    log.warn('安装「%s」未完成：%s，job %s', job.instanceName, job.error, job.id)
-    persistRecords(true)
-  }
-
-  /** 把已完成实例的标记修复回 ready（不改变 job 状态，供启动校正使用） */
-  async function ensureReadyMarker(job: InstallJob): Promise<void> {
-    const instanceDir = instanceDirOf(job.instanceName)
-    if (!existsSync(instanceDir)) return
-    if (!existsSync(versionJsonOf(job.instanceName, installedVersionId(job)))) return
-    try {
-      await writeInstallState(instanceDir, installRecordOf(job, 'ready'))
-    } catch (cause) {
-      log.warn('修复实例「%s」的完成标记失败：%s', job.instanceName, toError(cause).message)
-    }
-  }
-
-  /** 清理半成品实例目录：先写回 installing 再删，删除不完整时也不会暴露成可用实例 */
-  async function discardInstanceDir(job: InstallJob): Promise<void> {
-    const instanceDir = instanceDirOf(job.instanceName)
-    if (!existsSync(instanceDir)) return
-
-    await writeInstallState(instanceDir, installRecordOf(job, 'installing')).catch(() => undefined)
-    try {
-      await rm(instanceDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })
-    } catch (cause) {
-      log.warn('清理安装「%s」的残留文件失败：%s', job.instanceName, toError(cause).message)
-    }
-  }
-
-  /**
-   * 启动时校正磁盘上的安装状态。
-   *
-   * 同一实例名可能残留多条历史记录，只有最新的一条能代表磁盘上的实例：
-   * 按旧记录的状态去写标记，会把后来装好的实例重新标成未完成。
-   *
-   * - 最新记录已完成：修复/补写 ready；
-   * - 最新记录仍未完成：补写 installing（启动页显示为未完成，不提供启动入口）；
-   * - 已结束但未结算的旧记录补记 failed，下载页因此能提供重试。
-   */
-  async function reconcileInstalls(): Promise<void> {
-    const latest = new Map<string, InstallJob>()
-    for (const job of jobs.values()) {
-      if (!isGameJob(job)) continue
-      const current = latest.get(job.instanceName)
-      if (!current || jobSequence(job) >= jobSequence(current)) latest.set(job.instanceName, job)
-    }
-
-    for (const job of latest.values()) {
-      if (job.state === 'cancelled') continue
-
-      if (job.state === 'done') {
-        await ensureReadyMarker(job)
-        continue
-      }
-      if (job.taskIds.length === 0) {
-        // 清单为空、状态却是 ready：文件本来就不缺，这同样是一次装好的安装
-        if ((job.state ?? 'ready') === 'ready') await completeJob(job)
-        continue
-      }
-
-      const list = job.taskIds.map((id) => tasks.get(id))
-      if (list.length !== job.taskIds.length) continue
-
-      if (list.every((task) => task?.state === 'done')) {
-        await completeJob(job)
-        continue
-      }
-
-      await settleJob(job.id)
-
-      const instanceDir = instanceDirOf(job.instanceName)
-      if (!existsSync(instanceDir)) continue
-      try {
-        await writeInstallState(instanceDir, installRecordOf(job, 'installing'))
-      } catch (cause) {
-        log.warn('校正实例「%s」的安装状态失败：%s', job.instanceName, toError(cause).message)
-      }
-    }
-
-    // Mod 安装只校正任务状态，不碰实例安装标记
-    for (const job of jobs.values()) {
-      if (isGameJob(job)) continue
-      if (job.state === 'done' || job.state === 'cancelled') continue
-      if (job.taskIds.length === 0) {
-        if ((job.state ?? 'ready') === 'ready') await completeJob(job)
-        continue
-      }
-      const list = job.taskIds.map((id) => tasks.get(id))
-      if (list.length !== job.taskIds.length) continue
-      if (list.every((task) => task?.state === 'done')) {
-        await completeJob(job)
-        continue
-      }
-      await settleJob(job.id)
-    }
-  }
-
-  const flushOnQuit = (): void => {
-    if (persistTimer) {
-      clearTimeout(persistTimer)
-      persistTimer = null
-    }
-    if (recordsDirty) flushRecords()
-  }
-  // 子进程里没有 `app.before-quit`：把「退出前落盘」挂到插件 dispose 上。
-  // 进程内由内核停止插件触发，子进程由 dispose 触发，两种执行位置一致。
-  ctx.effect(() => () => {
-    flushOnQuit()
-    httpAgent.destroy()
-    httpsAgent.destroy()
-  })
-
-  /** 元数据文本请求：跟随重定向，复用 keep-alive 连接 */
-  function requestText(url: string, signal: AbortSignal, redirects = 0): Promise<string> {
-    return new Promise((resolve, reject) => {
-      if (redirects > 8) {
-        reject(new Error('重定向次数过多'))
-        return
-      }
-      const secure = url.startsWith('https')
-      const proto = secure ? https : http
-      const req = proto.get(
-        url,
-        {
-          signal,
-          headers: downloadHeaders(),
-          agent: secure ? httpsAgent : httpAgent
-        },
-        (res) => {
-          const status = res.statusCode ?? 0
-
-          if (status >= 300 && status < 400) {
-            res.resume()
-            const location = res.headers.location
-            if (!location) {
-              reject(new Error(`HTTP ${status}`))
-              return
-            }
-            let next: string
-            try {
-              next = new URL(location, url).toString()
-            } catch {
-              reject(new Error(`无效的重定向地址：${location}`))
-              return
-            }
-            requestText(next, signal, redirects + 1).then(resolve, reject)
-            return
-          }
-
-          if (status >= 400) {
-            res.resume()
-            reject(new Error(`HTTP ${status} from ${url}`))
-            return
-          }
-
-          let data = ''
-          res.setEncoding('utf-8')
-          res.on('data', (chunk: string) => {
-            data += chunk
-          })
-          res.on('end', () => resolve(data))
-          res.on('error', reject)
-        }
-      )
-
-      req.setTimeout(10_000, () => req.destroy(new Error('请求超时')))
-      req.on('error', reject)
-    })
-  }
-
-  /**
-   * 在所有候选地址上并行请求同一份元数据，最先成功的返回。
-   *
-   * 串行重试时，一个不可达的源会把「点击安装」拖住整整一个超时周期；
-   * 并行后慢源不再影响结果，取消安装时也能立刻中断所有请求。
-   */
-  async function firstSuccessful<T>(
-    targets: string[],
-    signal: AbortSignal | undefined,
-    parse: (text: string) => T,
-    emptyMessage = '未启用任何下载源'
-  ): Promise<T> {
-    if (targets.length === 0) throw new Error(emptyMessage)
-
-    const controller = new AbortController()
-    const forwardAbort = (): void => controller.abort()
-    if (signal) {
-      if (signal.aborted) controller.abort()
-      else signal.addEventListener('abort', forwardAbort, { once: true })
-    }
-
-    const attempts = targets.map((target) => {
-      const timeout = new Promise<never>((_resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`请求超时：${target}`)), METADATA_TIMEOUT)
-        controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
-      })
-      return Promise.race([requestText(target, controller.signal).then(parse), timeout])
-    })
-
-    try {
-      return await Promise.any(attempts)
-    } catch (cause) {
-      if (cause instanceof AggregateError) {
-        const reasons = cause.errors.map(toError)
-        throw (
-          reasons.find((reason) => reason.name !== 'AbortError') ??
-          reasons[0] ??
-          new Error('所有下载源均不可用')
-        )
-      }
-      throw toError(cause)
-    } finally {
-      signal?.removeEventListener('abort', forwardAbort)
-      controller.abort()
-    }
-  }
-
-  async function fetchJsonFromSources(url: string, signal?: AbortSignal): Promise<unknown> {
-    const targets = downloadCandidates(url).map((candidate) => candidate.url)
-    return firstSuccessful(targets, signal, (text) => JSON.parse(text) as unknown)
-  }
-
-  /**
-   * 与 `fetchJsonFromSources` 相同，但返回原始文本。
-   *
-   * 用于必须原样落盘、之后要按 sha1 校验的文件（资源索引）：解析后再序列化会
-   * 改变字节，摘要校验必然失败。
-   */
-  async function fetchTextFromSources(url: string, signal?: AbortSignal): Promise<string> {
-    const targets = downloadCandidates(url).map((candidate) => candidate.url)
-    return firstSuccessful(targets, signal, (text) => text)
-  }
-
-  async function fetchMojangManifest(signal?: AbortSignal): Promise<MojangManifestSummary> {
-    if (cachedManifest && Date.now() - cachedAt < CACHE_TTL) {
-      return cachedManifest
-    }
-    const data = (await fetchJsonFromSources(
-      'https://launchermeta.mojang.com/mc/game/version_manifest.json',
-      signal
-    )) as MojangManifestSummary
-    cachedManifest = data
-    cachedAt = Date.now()
-    return data
-  }
-
-  async function fetchVersionDetail(
-    version: string,
-    signal?: AbortSignal
-  ): Promise<MojangVersionDetail> {
-    const manifest = await fetchMojangManifest(signal)
-    const entry = manifest.versions.find((v) => v.id === version)
-    if (!entry) throw new Error(`未找到版本 ${version}`)
-    return (await fetchJsonFromSources(entry.url, signal)) as MojangVersionDetail
-  }
-
-  /** 加载器元数据请求：只在同类型的加载器源之间回退 */
-  function fetchLoaderText(
-    sources: LoaderSource[],
-    kind: LoaderSourceKind,
-    path: string,
-    role: 'meta' | 'maven' = 'meta',
-    signal?: AbortSignal
-  ): Promise<string> {
-    return firstSuccessful(
-      metadataCandidates(sources, kind, path, role),
-      signal,
-      (text) => text,
-      `未启用任何 ${LOADER_LABELS[kind]} 下载源`
+    const deferred = list.filter(
+      (task): task is PipelineTask => task !== undefined && task.state === 'deferred'
     )
-  }
-
-  /**
-   * 直接下载一个必需文件（安装器、客户端 jar），不进入任务队列。
-   *
-   * 准备阶段必须先把这些文件拿到才能继续，所以这里**同时向所有可用源发起请求**，
-   * 谁先下完用谁的：官方 maven 在国内常常只有几 KB/s，而镜像可能早就下完了，
-   * 串行等慢源会让「准备下载清单」看起来像卡死。落败的源立即停止，各自写的
-   * `.part<序号>` 也一并清掉，不会污染目标文件。
-   */
-  async function downloadFileNow(
-    url: string,
-    target: string,
-    sha1 = '',
-    size = 0,
-    signal?: AbortSignal,
-    onProgress?: (progress: TransferProgress) => void,
-    options: {
-      direct?: boolean
-      useCache?: boolean
-      /** 本次调用真正从网络收到的字节增量；命中缓存直接返回时不会触发 */
-      onBytes?: (delta: number) => void
-    } = {}
-  ): Promise<void> {
-    const candidates: DownloadCandidate[] = options.direct
-      ? [{ key: `direct:${url}`, label: '直链', url, category: 'other' }]
-      : downloadCandidates(url)
-    if (candidates.length === 0) throw new Error('没有可用的下载源')
-    if (signal?.aborted) throw new Error('已取消')
-
-    const useCache = options.useCache !== false && cacheEnabled()
-    // 以前这里只写缓存不读缓存：取消一次重试就得把安装器、依赖库重新下一遍
-    const cached = !useCache ? '' : sha1 ? cachePath(sha1) : urlCachePath(url)
-    const sameFile = Boolean(cached) && path.resolve(cached) === path.resolve(target)
-    if (cached) {
-      const release = pinCacheFile(cached)
-      try {
-        if (await cachedFileUsable(cached, sha1, target)) {
-          if (!sameFile) {
-            ensureDir(path.dirname(target))
-            await copyFile(cached, target)
-          }
-          await touchCacheFile(cached)
-          onProgress?.({ loaded: 1, total: 1 })
-          return
+    if (deferred.length > 0) {
+      const round = job.retryRound ?? 0
+      const previous = job.failedBeforeRound
+      // 重试后失败数没有减少（或达到轮次上限）就结束，避免无限重试
+      if (round >= RETRY_ROUNDS || (previous !== undefined && deferred.length >= previous)) {
+        for (const task of deferred) {
+          task.state = 'failed'
+          task.error = task.error ?? '所有下载源均失败'
         }
-        await rm(cached, { force: true }).catch(() => undefined)
-      } finally {
-        release()
-      }
-    }
-
-    ensureDir(path.dirname(target))
-
-    const transfers: FileTransferHandle[] = []
-    const partPaths: string[] = []
-    const failures: Error[] = []
-    let settled = false
-    /** 进度取各源里最大的那个：多个源同时下，不能让进度条来回跳 */
-    let reported = 0
-    /** 首帧可能包含上次中断留下的 .part 字节；那不是本次网络流量，不能算进速度 */
-    let byteBaselineSet = false
-
-    // 取消安装时立刻掐断所有在途请求，而不是等它们跑完
-    const abortAll = (): void => {
-      for (const handle of transfers) void handle.stop().catch(() => undefined)
-    }
-    signal?.addEventListener('abort', abortAll, { once: true })
-
-    const attempt = async (candidate: DownloadCandidate, index: number): Promise<void> => {
-      const partPath = `${target}.part${index}`
-      partPaths.push(partPath)
-      const transfer = ctx.capabilities.require<FileTransferCapability>(FILE_TRANSFER).create({
-        url: candidate.url,
-        partPath,
-        sha1,
-        size,
-        headers: downloadHeaders(),
-        agents: { http: httpAgent, https: httpsAgent },
-        onProgress: (progress) => {
-          if (settled || progress.loaded <= reported) return
-          const previous = reported
-          reported = progress.loaded
-          if (byteBaselineSet) options.onBytes?.(progress.loaded - previous)
-          else byteBaselineSet = true
-          onProgress?.(progress)
-        }
-      })
-      transfers.push(transfer)
-
-      let outcome: TransferOutcome
-      try {
-        outcome = await transfer.start()
-      } catch (cause) {
-        outcome = { status: 'failed', error: toError(cause) }
+        job.state = 'failed'
+        job.error = `${deferred.length} 个文件下载失败，可重试或删除该安装`
+        job.note = undefined
+        job.stats = collectStats(job)
+        log.warn('下载任务「%s」未完成：%s，job %s', job.title, job.error, job.id)
+        persistRecords(true)
+        emitFinished(job)
+        return
       }
 
-      if (settled) throw new Error('已有更快的源完成')
-      if (signal?.aborted) throw new Error('已取消')
-      if (outcome.status !== 'done') {
-        throw outcome.error ?? new Error(`${candidate.label} 下载失败`)
+      job.retryRound = round + 1
+      job.failedBeforeRound = deferred.length
+      job.state = 'downloading'
+      job.note = `第 ${job.retryRound} 轮重试：${deferred.length} 个文件`
+      for (const task of deferred) {
+        task.state = 'pending'
+        delete task.error
+        task.progress.loaded = partSizeOf(task.savePath)
+        task.progress.total = task.size > 0 ? task.size : task.progress.total
+        task.progress.speed = 0
+        cancelledTasks.delete(task.id)
       }
-      if (sha1 && outcome.digest !== sha1) {
-        throw new Error(`${candidate.label} 下载的文件校验失败`)
-      }
-
-      settled = true
-      try {
-        await rename(partPath, target)
-        if (!sha1 && target.toLowerCase().endsWith('.jar') && !isReadableJar(target)) {
-          // 安装器 / 无摘要文件：拒绝截断或错误页，让其它源继续竞争
-          await rm(target, { force: true }).catch(() => undefined)
-          throw new Error(`${candidate.label} 下载的文件不是有效的 jar`)
-        }
-      } catch (cause) {
-        settled = false
-        throw toError(cause)
-      }
-
-      // 单个文件本身就超过上限时不再写缓存：写了也会在下一轮清理里被淘汰
-      const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
-      const tooLargeToCache = cacheLimit !== null && size > 0 && size > cacheLimit
-      const cacheTarget =
-        useCache && cacheEnabled() && !tooLargeToCache
-          ? sha1
-            ? cachePath(sha1)
-            : urlCachePath(url)
-          : ''
-      const sameCacheTarget =
-        Boolean(cacheTarget) && path.resolve(cacheTarget) === path.resolve(target)
-      if (cacheTarget && !sameCacheTarget && !existsSync(cacheTarget)) {
-        const release = pinCacheFile(cacheTarget)
-        try {
-          ensureDir(path.dirname(cacheTarget))
-          await copyFile(target, cacheTarget)
-          await touchCacheFile(cacheTarget)
-          scheduleCachePrune()
-        } catch {
-          /* 缓存只是加速手段 */
-        } finally {
-          release()
-        }
-      }
-    }
-
-    try {
-      await Promise.any(
-        candidates.map((candidate, index) =>
-          attempt(candidate, index).catch((cause: unknown) => {
-            const error = toError(cause)
-            failures.push(error)
-            throw error
-          })
-        )
+      log.info(
+        '下载任务「%s」进入第 %d 轮重试：%d 个文件',
+        job.title,
+        job.retryRound,
+        deferred.length
       )
-    } catch (cause) {
-      if (signal?.aborted) throw new Error('已取消', { cause })
-      throw new Error((failures[0] ?? toError(cause)).message, { cause })
-    } finally {
-      signal?.removeEventListener('abort', abortAll)
-      await Promise.all(transfers.map((handle) => handle.stop().catch(() => undefined)))
-      for (const partPath of partPaths) {
-        if (!existsSync(partPath)) continue
-        await rm(partPath, { force: true }).catch(() => undefined)
-      }
-    }
-  }
-
-  /** 运行 Java 进程并等待退出；取消时结束进程 */
-  function runJavaProcess(
-    spec: { args: string[]; cwd: string; logFile: string; requiredMajor: number },
-    signal?: AbortSignal,
-    options: { stallMs?: number } = {}
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new Error('已取消'))
-        return
-      }
-
-      let javaPath: string
-      try {
-        javaPath = findJava(spec.requiredMajor).java
-      } catch (cause) {
-        reject(toError(cause))
-        return
-      }
-
-      ensureDir(path.dirname(spec.logFile))
-      log.info('使用 Java 运行进程：%s %s', javaPath, spec.args[0] ?? '')
-      const shell = ctx.capabilities.require<ShellExecuteCapability>(SHELL_EXECUTE)
-      let child: ShellProcess | null = null
-      let settled = false
-      let watcher: NodeJS.Timeout | null = null
-      const stallMs = options.stallMs ?? 0
-      let lastSize = -1
-      let lastGrowth = Date.now()
-
-      function settle(error?: Error): void {
-        if (settled) return
-        settled = true
-        signal?.removeEventListener('abort', onAbort)
-        if (watcher) {
-          clearInterval(watcher)
-          watcher = null
-        }
-        if (error) reject(error)
-        else resolve()
-      }
-
-      function onAbort(): void {
-        child?.kill()
-        settle(new Error('已取消'))
-      }
-
-      signal?.addEventListener('abort', onAbort, { once: true })
-
-      // 安装器没有任何进度接口：日志长时间不增长就认为它已经卡死，
-      // 结束进程并把日志交给上层展示，而不是无限等下去。
-      if (stallMs > 0) {
-        watcher = setInterval(() => {
-          let size = 0
-          try {
-            size = statSync(spec.logFile).size
-          } catch {
-            /* 还没写出日志 */
-          }
-          if (size !== lastSize) {
-            lastSize = size
-            lastGrowth = Date.now()
-            return
-          }
-          if (Date.now() - lastGrowth < stallMs) return
-          child?.kill()
-          settle(
-            new Error(
-              `安装器 ${Math.round(stallMs / 1000)} 秒没有任何输出，已终止（日志：${spec.logFile}）`
-            )
-          )
-        }, 5000)
-      }
-
-      void shell
-        .spawn({ command: javaPath, args: spec.args, cwd: spec.cwd, logFile: spec.logFile })
-        .then((process) => {
-          if (settled) {
-            process.kill()
-            return
-          }
-          child = process
-          process.once('exit', (...args) => {
-            const code = args[0]
-            if (typeof code === 'number' && code !== 0) settle(new Error(`安装器退出码 ${code}`))
-            else settle()
-          })
-        })
-        .catch((cause) => settle(toError(cause)))
-    })
-  }
-
-  function createLoaderEnvironment(
-    kind: LoaderSourceKind,
-    signal: AbortSignal,
-    progress?: PrepareProgress
-  ): LoaderEnvironment {
-    const sources = enabledSourcesOf(loadLoaderSources(), kind)
-    /** 加载器自己的日志文本就是「当前步骤」 */
-    let step = ''
-
-    const publish = (loaded?: number, total?: number): void => {
-      if (!progress || !step) return
-      if (loaded === undefined || total === undefined) {
-        progress.report(step)
-        return
-      }
-      progress.report(step, total > 0 ? (loaded / total) * 100 : undefined)
+      persistRecords(true)
+      scheduleLoop()
+      return
     }
 
-    return {
-      signal,
-      sources,
-      report: (note: string, percent?: number) => {
-        progress?.report(note, percent)
-      },
-      log: (level, message) => {
-        if (level === 'warn') log.warn('[%s] %s', LOADER_LABELS[kind], message)
-        else log.info('[%s] %s', LOADER_LABELS[kind], message)
-        if (level === 'info') {
-          step = message
-          publish()
-        }
-      },
-      fetchText: (path, role = 'meta') => fetchLoaderText(sources, kind, path, role, signal),
-      fetchJson: <T>(path: string, role: 'meta' | 'maven' = 'meta'): Promise<T> => {
-        return fetchLoaderText(sources, kind, path, role, signal).then(
-          (text) => JSON.parse(text) as T
-        )
-      },
-      fetchJsonUrl: <T>(url: string): Promise<T> => {
-        return firstSuccessful([url], signal, (text) => JSON.parse(text) as T)
-      },
-      download: (url, target, sha1 = '', size = 0, options = {}) => {
-        // 预取依赖库不逐文件上报：清掉上一个文件的字节显示，避免看着像没变
-        if (options.reportProgress === false) progress?.clearTransfer()
-        return downloadFileNow(
-          url,
-          target,
-          sha1,
-          size,
-          signal,
-          options.reportProgress === false
-            ? undefined
-            : ({ loaded, total }) => {
-                progress?.transfer(loaded, total)
-                publish(loaded, total)
-              },
-          // 预取依赖库时关闭逐文件百分比（避免多个文件来回跳），但仍要统计网络字节
-          { onBytes: (delta) => progress?.bytes(delta) }
-        )
-      },
-      runJava: async (spec) => {
-        publish()
-        // 安装器没有进度接口：把它的日志末行和已用时间报给界面，同时用停滞超时兜底
-        const started = Date.now()
-        let lastLine = ''
-        const timer = setInterval(() => {
-          void tailLastLine(spec.logFile)
-            .then((line) => {
-              if (line) lastLine = line
-              const seconds = Math.floor((Date.now() - started) / 1000)
-              const detail = lastLine ? `：${lastLine}` : ''
-              progress?.report(`${step || '运行安装器'}（已 ${seconds} 秒）${detail}`)
-            })
-            .catch(() => undefined)
-        }, 1500)
-        try {
-          await runJavaProcess(spec, signal, { stallMs: 180_000 })
-        } finally {
-          clearInterval(timer)
-        }
-      }
+    const failedTasks = list.filter(
+      (task): task is PipelineTask => task !== undefined && task.state === 'failed'
+    )
+    if (failedTasks.length > 0) {
+      job.state = 'failed'
+      job.error = `${failedTasks.length} 个文件下载失败，可重试或删除该安装`
+      // 失败任务要留给「重试」：这里只记录汇总，不删除逐文件明细
+      job.stats = collectStats(job)
+      log.warn('下载任务「%s」未完成：%s，job %s', job.title, job.error, job.id)
+      persistRecords(true)
+      emitFinished(job)
+      return
     }
+
+    if (job.autoFinish) {
+      job.state = 'done'
+      delete job.error
+      job.note = undefined
+      job.preparePercent = undefined
+      job.stats = collectStats(job)
+      archiveJob(job)
+      persistRecords(true)
+      emitFinished(job)
+      return
+    }
+
+    job.state = 'finalizing'
+    job.note = '正在完成安装…'
+    job.preparePercent = undefined
+    persistRecords(true)
+    ctx.emit('download/filesDone', job.id)
   }
+
+  function emitFinished(job: PipelineJob): void {
+    const result: DownloadJobResult = {
+      jobId: job.id,
+      state: job.state === 'done' || job.state === 'cancelled' ? job.state : 'failed',
+      stats: { ...statsOf(job), transferred: statsOf(job).transferred ?? 0 },
+      ...(job.error ? { error: job.error } : {})
+    }
+    ctx.emit('download/jobFinished', job.id, result)
+  }
+
+  // -------------------------------------------------------------------------
+  // 调度与传输
+  // -------------------------------------------------------------------------
 
   function scheduleLoop(): void {
-    const active = [...tasks.values()].filter((t) => t.state === 'downloading').length
+    const active = [...tasks.values()].filter((task) => task.state === 'downloading').length
     const slots = maxConcurrency() - active
     if (slots <= 0) return
     const pending = [...tasks.values()].filter(
-      (task) => task.state === 'pending' && !pausedJobs.has(task.installId)
+      (task) => task.state === 'pending' && !pausedJobs.has(task.jobId)
     )
     for (const task of pending.slice(0, slots)) {
       void startDownload(task)
     }
   }
 
-  async function dropCancelled(task: DownloadTask, ...files: string[]): Promise<boolean> {
+  function partSizeOf(savePath: string): number {
+    const partPath = `${savePath}.part`
+    const segmented = transferStateProgress(partPath)
+    if (segmented !== null) return segmented
+    try {
+      return statSync(partPath).size
+    } catch {
+      return 0
+    }
+  }
+
+  function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  async function dropCancelled(task: PipelineTask, ...files: string[]): Promise<boolean> {
     if (!cancelledTasks.has(task.id)) return false
     task.state = 'failed'
     task.error = '已取消'
@@ -2061,10 +914,242 @@ export function apply(ctx: Context): void {
     return true
   }
 
-  async function startDownload(task: DownloadTask): Promise<void> {
-    if (cancelledTasks.has(task.id) || pausedJobs.has(task.installId) || task.state !== 'pending') {
-      return
+  function failTask(task: PipelineTask, error: string): void {
+    task.state = 'failed'
+    task.error = error
+    task.progress.speed = 0
+    task.transferred = task.transferred ?? 0
+    persistRecords()
+    scheduleLoop()
+    settleTask(task)
+  }
+
+  /** 所有源都失败：先挂起，等本轮其它文件结束后由任务级重试轮次再试 */
+  function deferTask(task: PipelineTask, error: string): void {
+    task.state = 'deferred'
+    task.error = error
+    task.progress.speed = 0
+    task.transferred = task.transferred ?? 0
+    persistRecords()
+    scheduleLoop()
+    void settleJob(task.jobId)
+  }
+
+  type DownloadOutcome =
+    | { status: 'done'; partPath: string }
+    | { status: 'paused' }
+    | { status: 'aborted' }
+    | { status: 'deferred'; error: string }
+    | { status: 'failed'; error: string }
+
+  function newTransfer(
+    task: PipelineTask,
+    candidate: DownloadEndpoint,
+    partPath: string,
+    onProgress: (progress: TransferProgress) => void
+  ): FileTransferHandle {
+    return ctx.capabilities.require<FileTransferCapability>(FILE_TRANSFER).create({
+      url: candidate.url,
+      partPath,
+      sha1: task.sha1,
+      // 没有摘要的文件不做断点续传：服务端忽略 Range 时会把完整文件追加到
+      // 残缺的 .part 后面，得到结构损坏却「下载完成」的文件
+      size: task.sha1 && task.size > 0 ? task.size : 0,
+      // 大文件才给多连接；服务端不支持 Range 时传输层自动回退单连接
+      segments: segmentsFor(task),
+      headers: downloadHeaders(),
+      agents: { http: httpAgent, https: httpsAgent },
+      onProgress,
+      onRestart: () => {
+        if (task.state === 'downloading') task.progress.loaded = 0
+      }
+    })
+  }
+
+  async function removePart(partPath: string): Promise<void> {
+    await rm(partPath, { force: true }).catch(() => undefined)
+    await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
+  }
+
+  /** 校验下载结果；失败时删掉残缺文件并返回错误 */
+  async function verifyPart(
+    task: PipelineTask,
+    partPath: string,
+    digest: string | undefined
+  ): Promise<string | null> {
+    if (task.sha1 && digest !== task.sha1) {
+      await removePart(partPath)
+      return `SHA1 校验失败：期望 ${task.sha1}，实际 ${digest ?? '未知'}`
     }
+    if (!task.sha1 && task.savePath.toLowerCase().endsWith('.jar') && !isReadableJar(partPath)) {
+      await removePart(partPath)
+      return '下载的文件不是有效的 jar'
+    }
+    return null
+  }
+
+  /**
+   * 顺序尝试：同一个源最多试 3 次，仍失败才换下一个源（按配置顺序）。
+   * 所有源都失败时把任务推迟到本轮末尾，由任务级重试轮次处理。
+   */
+  async function downloadSequential(
+    task: PipelineTask,
+    candidates: DownloadEndpoint[],
+    current: () => boolean,
+    pausedNow: () => boolean
+  ): Promise<DownloadOutcome> {
+    const partPath = task.savePath + '.part'
+    let lastError = '下载失败'
+
+    for (const candidate of candidates) {
+      for (let attempt = 1; attempt <= SOURCE_ATTEMPTS; attempt += 1) {
+        if (!current()) return { status: 'aborted' }
+        if (await dropCancelled(task, partPath)) return { status: 'aborted' }
+        if (pausedNow()) return { status: 'paused' }
+
+        task.state = 'downloading'
+        let reported = task.progress.loaded
+        const transfer = newTransfer(task, candidate, partPath, ({ loaded, total }) => {
+          if (!current() || loaded <= reported) return
+          task.transferred = (task.transferred ?? 0) + (loaded - reported)
+          reported = loaded
+          task.progress.loaded = loaded
+          if (total > 0) {
+            task.progress.total = total
+            if (task.size <= 0) task.size = total
+          }
+        })
+        transfers.set(task.id, transfer)
+
+        let result: TransferOutcome
+        try {
+          result = await transfer.start()
+        } catch (cause) {
+          result = { status: 'failed', error: toError(cause) }
+        } finally {
+          if (transfers.get(task.id) === transfer) transfers.delete(task.id)
+        }
+
+        if (!current()) return { status: 'aborted' }
+        if (await dropCancelled(task, partPath, task.savePath)) return { status: 'aborted' }
+
+        if (result.status === 'paused') return { status: 'paused' }
+        if (result.status === 'failed') {
+          if (pausedNow()) return { status: 'paused' }
+          lastError = result.error?.message ?? '下载失败'
+          if (attempt < SOURCE_ATTEMPTS) await delay(RETRY_DELAY_MS * attempt)
+          continue
+        }
+
+        task.state = 'verifying'
+        const invalid = await verifyPart(task, partPath, result.digest)
+        if (invalid) {
+          lastError = invalid
+          if (attempt < SOURCE_ATTEMPTS) await delay(RETRY_DELAY_MS * attempt)
+          continue
+        }
+        return { status: 'done', partPath }
+      }
+    }
+
+    return { status: 'deferred', error: lastError }
+  }
+
+  /**
+   * 竞速：同时向所有源发起请求，谁先完成用谁的。
+   *
+   * 安装器、客户端这类「文件大、源之间速度差异大」的下载用它；失败的源
+   * 立即停止并清理自己的 `.part`，不阻塞其它源。
+   */
+  async function downloadRace(
+    task: PipelineTask,
+    candidates: DownloadEndpoint[],
+    current: () => boolean,
+    pausedNow: () => boolean
+  ): Promise<DownloadOutcome> {
+    const handles: FileTransferHandle[] = []
+    const parts: string[] = []
+    let reported = 0
+    let winner: { partPath: string } | null = null
+
+    const lane = async (
+      candidate: DownloadEndpoint,
+      index: number
+    ): Promise<{ partPath: string }> => {
+      const partPath = `${task.savePath}.part${index}`
+      parts.push(partPath)
+      let lastError = '下载失败'
+
+      for (let attempt = 1; attempt <= SOURCE_ATTEMPTS; attempt += 1) {
+        if (!current() || pausedNow()) throw new Error('已暂停')
+        const transfer = newTransfer(task, candidate, partPath, ({ loaded, total }) => {
+          if (!current() || loaded <= reported) return
+          task.transferred = (task.transferred ?? 0) + (loaded - reported)
+          reported = loaded
+          task.progress.loaded = loaded
+          if (total > 0) {
+            task.progress.total = total
+            if (task.size <= 0) task.size = total
+          }
+        })
+        handles.push(transfer)
+
+        let result: TransferOutcome
+        try {
+          result = await transfer.start()
+        } catch (cause) {
+          result = { status: 'failed', error: toError(cause) }
+        }
+
+        if (!current() || pausedNow()) throw new Error('已暂停')
+        if (result.status === 'done') {
+          const invalid = await verifyPart(task, partPath, result.digest)
+          if (!invalid) return { partPath }
+          lastError = invalid
+        } else {
+          lastError = result.error?.message ?? '下载失败'
+        }
+        if (attempt < SOURCE_ATTEMPTS) await delay(RETRY_DELAY_MS * attempt)
+      }
+
+      throw new Error(lastError)
+    }
+
+    // 把并发请求登记成一个合成句柄，暂停 / 取消时一次性停掉所有源
+    transfers.set(task.id, {
+      start: async () => ({ status: 'paused' }),
+      stop: async () => {
+        await Promise.all(handles.map((handle) => handle.stop().catch(() => undefined)))
+      }
+    })
+
+    try {
+      winner = await Promise.any(candidates.map((candidate, index) => lane(candidate, index)))
+      return { status: 'done', partPath: winner.partPath }
+    } catch (cause) {
+      if (!current()) return { status: 'aborted' }
+      if (pausedNow()) return { status: 'paused' }
+      const message =
+        cause instanceof AggregateError
+          ? cause.errors[0] instanceof Error
+            ? cause.errors[0].message
+            : String(cause.errors[0])
+          : cause instanceof Error
+            ? cause.message
+            : String(cause)
+      return { status: 'deferred', error: message || '下载失败' }
+    } finally {
+      await Promise.all(handles.map((handle) => handle.stop().catch(() => undefined)))
+      transfers.delete(task.id)
+      for (const partPath of parts) {
+        if (partPath !== winner?.partPath) await removePart(partPath)
+      }
+    }
+  }
+
+  async function startDownload(task: PipelineTask): Promise<void> {
+    if (cancelledTasks.has(task.id) || pausedJobs.has(task.jobId) || task.state !== 'pending')
+      return
 
     // 暂停后马上恢复时，上一轮下载可能还没退出；用代号确保只有最新一轮能改状态
     const run = (downloadRuns.get(task.id) ?? 0) + 1
@@ -2073,78 +1158,35 @@ export function apply(ctx: Context): void {
 
     task.state = 'downloading'
     task.progress.speed = 0
-    const partPath = task.savePath + '.part'
-    const pausedNow = (): boolean => pausedJobs.has(task.installId) || task.state === 'paused'
+    const pausedNow = (): boolean => pausedJobs.has(task.jobId) || task.state === 'paused'
 
-    // Mod 任务的目标在实例目录内；实例可能在排队期间被用户删除，
-    // 不能靠 ensureDir 把空目录重新建出来。整合包任务同理：它的目标全在实例内。
-    if (task.direct) {
-      if (task.guardDir && !existsSync(task.guardDir)) {
-        task.state = 'failed'
-        task.error = '目标实例或存档已被删除'
-        task.progress.speed = 0
-        persistRecords()
-        scheduleLoop()
-        void settleJob(task.installId)
-        return
-      }
-
-      const job = jobs.get(task.installId)
-      if (!task.guardDir) {
-        if (job?.kind === 'modpack') {
-          if (!existsSync(instanceDirOf(job.instanceName))) {
-            task.state = 'failed'
-            task.error = '目标实例已被删除'
-            task.progress.speed = 0
-            persistRecords()
-            scheduleLoop()
-            void settleJob(task.installId)
-            return
-          }
-        } else if (job && !isGameJob(job)) {
-          const instanceDir = path.dirname(path.dirname(task.savePath))
-          if (!existsSync(instanceDir)) {
-            task.state = 'failed'
-            task.error = '目标实例已被删除'
-            task.progress.speed = 0
-            persistRecords()
-            scheduleLoop()
-            void settleJob(task.installId)
-            return
-          }
-        }
-      }
-    }
-
-    /** 进入暂停态；.part 保留，恢复时从已有字节续传 */
-    const settlePaused = (): void => {
-      if (!current()) return
-      task.state = 'paused'
-      task.progress.speed = 0
-      persistRecords()
-    }
-
-    // 库与资源现在放在共享目录：另一个实例已经装过的文件直接复用，
-    // 不必再走一遍下载或缓存复制。
-    if (await fileMatchesSpec(task)) {
-      if (!current()) return
-      task.progress.loaded = task.size
-      task.progress.total = task.size
-      task.state = 'done'
-      persistRecords()
-      scheduleLoop()
-      void settleJob(task.installId)
+    // 目标目录可能在排队期间被删除；不要靠 ensureDir 把已删除的实例复活
+    if (task.guardDir && !existsSync(task.guardDir)) {
+      failTask(task, '目标实例或存档已被删除')
       return
     }
 
-    // 命中缓存的文件直接复制，不再阻塞安装提交（提交只负责建任务）
+    // 另一个实例已经装过的文件直接复用，不必再走下载或缓存复制
+    if (await fileMatchesSpec(task)) {
+      if (!current()) return
+      task.progress.loaded = task.size
+      if (task.size > 0) task.progress.total = task.size
+      task.state = 'done'
+      persistRecords()
+      scheduleLoop()
+      settleTask(task)
+      return
+    }
+
     if (task.sha1) {
       try {
         if (await tryCopyFromCache(task)) {
           if (!current()) return
           if (await dropCancelled(task, task.savePath)) return
           if (pausedNow()) {
-            settlePaused()
+            task.state = 'paused'
+            task.progress.speed = 0
+            persistRecords()
             return
           }
           if (task.size > 0) {
@@ -2154,7 +1196,7 @@ export function apply(ctx: Context): void {
           task.state = 'done'
           persistRecords()
           scheduleLoop()
-          void settleJob(task.installId)
+          settleTask(task)
           return
         }
       } catch {
@@ -2163,242 +1205,81 @@ export function apply(ctx: Context): void {
     }
     if (!current()) return
 
-    // Mod 文件来自第三方 CDN，不受「原版下载源」开关影响
-    const candidates: DownloadCandidate[] = task.direct
-      ? [
-          {
-            key: `direct:${task.id}`,
-            label: '直链',
-            url: task.url,
-            category: 'other'
-          }
-        ]
-      : downloadCandidates(task.url)
-    if (candidates.length === 0) {
-      task.state = 'failed'
-      task.error = '所有下载源均已禁用'
-      task.progress.speed = 0
-      log.warn('下载失败 %s：所有下载源均已禁用', task.label ?? task.url)
-      persistRecords()
-      scheduleLoop()
-      void settleJob(task.installId)
-      return
-    }
-    const preferred = candidates.filter((candidate) =>
-      sourceAvailable(candidate.key, candidate.category)
-    )
-    const order = preferred.length > 0 ? preferred : candidates
+    const candidates =
+      task.sources.length > 0
+        ? task.sources
+        : [{ id: `direct:${task.url}`, label: '直链', url: task.url }]
 
     try {
       ensureDir(path.dirname(task.savePath))
     } catch (cause) {
-      task.state = 'failed'
-      task.error = `无法创建下载目录：${toError(cause).message}`
-      log.warn('下载失败 %s：%s', task.label ?? task.url, task.error)
-      persistRecords()
-      scheduleLoop()
-      void settleJob(task.installId)
+      failTask(task, `无法创建下载目录：${toError(cause).message}`)
       return
     }
 
-    for (let ci = 0; ci < order.length; ci++) {
-      const candidate = order[ci]
-      if (!candidate) continue
+    const outcome = task.race
+      ? await downloadRace(task, candidates, current, pausedNow)
+      : await downloadSequential(task, candidates, current, pausedNow)
 
-      if (!current()) return
-      if (await dropCancelled(task, partPath)) return
-      if (pausedNow()) {
-        settlePaused()
-        return
-      }
-
-      const transfer = ctx.capabilities.require<FileTransferCapability>(FILE_TRANSFER).create({
-        url: candidate.url,
-        partPath,
-        sha1: task.sha1,
-        // 没有摘要的文件不做断点续传：服务端忽略 Range 时会把完整文件追加到
-        // 残缺的 .part 后面，得到结构损坏却「下载完成」的文件
-        size: task.sha1 && task.size > 0 ? task.size : 0,
-        // 大文件才给多连接；服务端不支持 Range 时传输层自动回退单连接
-        segments: segmentsFor(task),
-        headers: downloadHeaders(),
-        agents: { http: httpAgent, https: httpsAgent },
-        onProgress: ({ loaded, total }) => {
-          if (!current()) return
-          // 只把前进的字节算作本次网络流量；缓存复制、共享库复用不会走到这里
-          const previous = task.progress.loaded
-          task.transferred =
-            (task.transferred ?? 0) + (loaded >= previous ? loaded - previous : loaded)
-          task.progress.loaded = loaded
-          if (total > 0) {
-            task.progress.total = total
-            if (task.size <= 0) task.size = total
-          }
-        },
-        onRestart: () => {
-          if (current()) task.progress.loaded = 0
-        }
-      })
-      transfers.set(task.id, transfer)
-
-      let result: TransferOutcome
-      try {
-        result = await transfer.start()
-      } catch (cause) {
-        // 传输层自身异常也要走「换源/失败」流程，不能让 Promise 无人处理
-        result = {
-          status: 'failed',
-          error: cause instanceof Error ? cause : new Error(String(cause))
-        }
-      } finally {
-        // 恢复可能已经创建了新一轮传输，不能误删别人的句柄
-        if (transfers.get(task.id) === transfer) transfers.delete(task.id)
-      }
-
-      if (!current()) return
-      if (await dropCancelled(task, partPath, task.savePath)) return
-
-      if (result.status === 'paused') {
-        settlePaused()
-        return
-      }
-
-      if (result.status === 'failed') {
-        // 暂停引发的请求中断在底层可能表现为失败，以任务状态为准
-        if (pausedNow()) {
-          settlePaused()
-          return
-        }
-        reportSource(candidate.key, candidate.category, false, candidate.label)
-        if (ci < order.length - 1) continue
-        task.state = 'failed'
-        task.error = result.error?.message ?? '下载失败'
-        log.warn(
-          '下载失败 %s（已尝试 %d 个源）：%s',
-          task.label ?? task.url,
-          order.length,
-          task.error
-        )
-        persistRecords()
-        scheduleLoop()
-        void settleJob(task.installId)
-        return
-      }
-
-      // done：先校验，再改名并写入缓存
-      if (task.sha1) {
-        task.state = 'verifying'
-        if (result.digest !== task.sha1) {
-          // 分片来自损坏的镜像或残留文件，删掉后从下一个源重新开始
-          await rm(partPath, { force: true }).catch(() => undefined)
-          await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
-          reportSource(candidate.key, candidate.category, false, candidate.label)
-          if (ci < order.length - 1) continue
-          task.state = 'failed'
-          task.error = `SHA1 校验失败：期望 ${task.sha1}，实际 ${result.digest ?? '未知'}`
-          log.warn('下载失败 %s：%s', task.label ?? task.url, task.error)
-          persistRecords()
-          scheduleLoop()
-          void settleJob(task.installId)
-          return
-        }
-      } else if (task.savePath.toLowerCase().endsWith('.jar') && !isReadableJar(partPath)) {
-        // 没有摘要的 jar 也要拒绝镜像的错误页 / 空文件
-        await rm(partPath, { force: true }).catch(() => undefined)
-        await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
-        reportSource(candidate.key, candidate.category, false, candidate.label)
-        if (ci < order.length - 1) continue
-        task.state = 'failed'
-        task.error = '下载的文件不是有效的 jar'
-        log.warn('下载失败 %s：%s', task.label ?? task.url, task.error)
-        persistRecords()
-        scheduleLoop()
-        void settleJob(task.installId)
-        return
-      }
-
-      if (await dropCancelled(task, partPath)) return
-
-      try {
-        await rename(partPath, task.savePath)
-      } catch (cause) {
-        task.state = 'failed'
-        task.error = `无法写入目标文件：${toError(cause).message}`
-        log.warn('下载失败 %s：%s', task.label ?? task.url, task.error)
-        persistRecords()
-        scheduleLoop()
-        void settleJob(task.installId)
-        return
-      }
-
-      if (await dropCancelled(task, task.savePath)) return
-
-      const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
-      if (task.sha1 && cacheEnabled() && (cacheLimit === null || task.size <= cacheLimit)) {
-        const cached = cachePath(task.sha1)
-        if (!existsSync(cached)) {
-          const release = pinCacheFile(cached)
-          try {
-            ensureDir(path.dirname(cached))
-            await copyFile(task.savePath, cached)
-            await touchCacheFile(cached)
-            scheduleCachePrune()
-          } catch {
-            /* 缓存只是加速手段，写不进去不影响本次安装 */
-          } finally {
-            release()
-          }
-        }
-      }
-
-      if (!current()) return
-      if (await dropCancelled(task, task.savePath)) return
-
-      reportSource(candidate.key, candidate.category, true, candidate.label)
-      if (task.size > 0) {
-        task.progress.loaded = task.size
-        task.progress.total = task.size
-      }
+    if (outcome.status === 'aborted') return
+    if (outcome.status === 'paused') {
+      task.state = 'paused'
       task.progress.speed = 0
-      task.state = 'done'
       persistRecords()
-      scheduleLoop()
-      void settleJob(task.installId)
       return
     }
-  }
+    if (outcome.status === 'failed') {
+      failTask(task, outcome.error)
+      return
+    }
+    if (outcome.status === 'deferred') {
+      deferTask(task, outcome.error)
+      return
+    }
 
-  /** 单个任务暂停：未开始与下载中的任务都可以暂停；.part 保留以便续传 */
-  function pauseTask(taskId: string): Promise<void> {
-    const task = tasks.get(taskId)
-    if (!task) return Promise.resolve()
-    if (task.state !== 'pending' && task.state !== 'downloading') return Promise.resolve()
-    task.state = 'paused'
-    task.progress.speed = 0
-    const transfer = transfers.get(taskId)
-    return transfer ? transfer.stop().catch(() => undefined) : Promise.resolve()
-  }
+    if (await dropCancelled(task, outcome.partPath)) return
+    try {
+      await rename(outcome.partPath, task.savePath)
+    } catch (cause) {
+      failTask(task, `无法写入目标文件：${toError(cause).message}`)
+      return
+    }
 
-  /** 单个任务恢复：从 .part 继续，首次进度回调会按文件实际大小校正 */
-  function resumeTask(taskId: string): void {
-    const task = tasks.get(taskId)
-    if (!task || task.state !== 'paused') return
-    task.state = 'pending'
-    task.progress.speed = 0
-  }
+    if (await dropCancelled(task, task.savePath)) return
 
-  async function cancelTask(taskId: string): Promise<void> {
-    const task = tasks.get(taskId)
-    if (!task || task.state === 'done' || task.state === 'failed') return
-    cancelledTasks.add(taskId)
-    task.state = 'failed'
-    task.error = '已取消'
+    const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
+    const cacheTarget =
+      cacheEnabled() && (cacheLimit === null || task.size <= cacheLimit)
+        ? task.sha1
+          ? cachePath(task.sha1)
+          : urlCachePath(task.url)
+        : ''
+    if (cacheTarget && !existsSync(cacheTarget)) {
+      const release = pinCacheFile(cacheTarget)
+      try {
+        ensureDir(path.dirname(cacheTarget))
+        await copyFile(task.savePath, cacheTarget)
+        await touchCacheFile(cacheTarget)
+        scheduleCachePrune()
+      } catch {
+        /* 缓存只是加速手段，写不进去不影响本次安装 */
+      } finally {
+        release()
+      }
+    }
+
+    if (!current()) return
+    if (await dropCancelled(task, task.savePath)) return
+
+    if (task.size > 0) {
+      task.progress.loaded = task.size
+      task.progress.total = task.size
+    }
     task.progress.speed = 0
-    const transfer = transfers.get(taskId)
-    if (transfer) await transfer.stop().catch(() => undefined)
-    const partPath = task.savePath + '.part'
-    await rm(partPath, { force: true }).catch(() => undefined)
-    await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
+    task.state = 'done'
+    persistRecords()
+    scheduleLoop()
+    settleTask(task)
   }
 
   function nextTaskId(): string {
@@ -2411,1672 +1292,383 @@ export function apply(ctx: Context): void {
     return `job_${jobSeq}`
   }
 
-  async function tryCopyFromCache(task: Pick<DownloadTask, 'sha1' | 'savePath'>): Promise<boolean> {
-    if (!task.sha1 || !cacheEnabled()) return false
-    const cached = cachePath(task.sha1)
-    const release = pinCacheFile(cached)
-    try {
-      if (!existsSync(cached)) return false
-      // 缓存可能来自旧版下载器，也可能是写坏的条目；复制前必须按文件名重新校验，
-      // 否则坏内容会被当成「已下载」装进每个实例，补全也永远修不好。
-      if ((await hashFile(cached)) !== task.sha1) {
-        await rm(cached, { force: true }).catch(() => undefined)
-        log.warn('下载缓存内容与摘要不符，已丢弃：%s', task.sha1)
-        return false
-      }
-      ensureDir(path.dirname(task.savePath))
-      await copyFile(cached, task.savePath)
-      await touchCacheFile(cached)
-      return true
-    } finally {
-      release()
-    }
-  }
-
-  /** 目标文件是否已完整；补全时据此跳过已下载的文件 */
-  async function fileMatchesSpec(spec: TaskSpec): Promise<boolean> {
-    try {
-      const info = await stat(spec.savePath)
-      if (!info.isFile()) return false
-
-      // 有摘要时必须校验内容：大小相同但内容损坏的文件（旧缓存、镜像错误页）
-      // 只看大小会被判成「已下载」，补全永远修不好，启动又一直提示缺失。
-      if (spec.sha1) {
-        if (spec.size > 0 && info.size !== spec.size) return false
-        return (await hashFile(spec.savePath)) === spec.sha1
-      }
-
-      // 已知大小、没有摘要时按大小判断；未知大小至少要求非空
-      if (spec.size > 0) return info.size === spec.size
-      // 没有摘要/大小的 jar 只能做结构校验，避免把截断文件当成已下载
-      if (spec.savePath.toLowerCase().endsWith('.jar')) {
-        return isReadableJar(spec.savePath)
-      }
-      return info.size > 0
-    } catch {
-      return false
-    }
-  }
-
-  /** 并发筛掉已存在的文件，避免几千个资源对象串行 stat */
-  async function onlyMissingSpecs(specs: TaskSpec[]): Promise<TaskSpec[]> {
-    const present = new Array<boolean>(specs.length).fill(false)
-    const workers = Math.min(32, specs.length)
-    let cursor = 0
-
-    await Promise.all(
-      Array.from({ length: workers }, async () => {
-        while (true) {
-          const index = cursor
-          cursor += 1
-          const spec = specs[index]
-          if (!spec) return
-          present[index] = await fileMatchesSpec(spec)
-        }
-      })
-    )
-
-    return specs.filter((_, index) => !present[index])
-  }
-
-  /**
-   * 读取资源索引：优先用已有的副本（补全时通常已经下载过），缺失或内容与摘要
-   * 不符时再从下载源拉取。
-   *
-   * 落盘必须是**原文**：启动前会按 `assetIndex.sha1` 校验这个文件，用
-   * `JSON.stringify` 重新序列化会改变字节（缩进），摘要永远对不上——表现就是
-   * 「补全成功但启动仍提示缺少资源索引」。
-   */
-  async function loadAssetIndex(
-    detail: MojangVersionDetail,
-    indexPath: string,
-    signal: AbortSignal
-  ): Promise<AssetIndex> {
-    const expectedSha1 = detail.assetIndex?.sha1
-    if (await assetIndexIsUsable(indexPath, expectedSha1)) {
-      try {
-        return JSON.parse(await readFile(indexPath, 'utf8')) as AssetIndex
-      } catch {
-        /* 索引损坏，重新下载 */
-      }
-    }
-
-    if (!detail.assetIndex?.url) throw new Error('版本缺少资源索引地址')
-    const text = await fetchTextFromSources(detail.assetIndex.url, signal)
-    const raw = JSON.parse(text) as AssetIndex
-    ensureDir(path.dirname(indexPath))
-    await writeFile(indexPath, text)
-
-    // 镜像若重新编码过 JSON，摘要仍会不符；写下去也没用，至少要留下线索
-    if (expectedSha1 && (await hashFile(indexPath)) !== expectedSha1) {
-      log.warn('资源索引与版本文件里的摘要不符（可能来自镜像）：%s', indexPath)
-    }
-    return raw
-  }
-
-  /** 已有索引是否可信：有摘要按摘要比对，没有摘要时只要求文件存在 */
-  async function assetIndexIsUsable(
-    file: string,
-    expectedSha1: string | undefined
-  ): Promise<boolean> {
-    let info
-    try {
-      info = await stat(file)
-    } catch {
-      return false
-    }
-    if (!info.isFile()) return false
-    if (!expectedSha1) return true
-    try {
-      return (await hashFile(file)) === expectedSha1
-    } catch {
-      return false
-    }
-  }
-
-  /** 把版本详情展开成下载清单；补全模式只保留目标文件缺失的项 */
-  async function collectTaskSpecs(
-    detail: MojangVersionDetail,
-    layout: InstanceLayout,
-    gameVersion: string,
-    signal: AbortSignal,
-    options: { onlyMissing?: boolean } = {}
-  ): Promise<TaskSpec[]> {
-    const taskSpecs: TaskSpec[] = []
-
-    // client.jar
-    const clientArtifact = detail.downloads?.client
-    if (clientArtifact?.url) {
-      taskSpecs.push({
-        label: `client.jar (${gameVersion})`,
-        url: clientArtifact.url,
-        savePath: instanceClientJar(layout.instanceDir, gameVersion),
-        sha1: clientArtifact.sha1 ?? '',
-        size: clientArtifact.size ?? 0
-      })
-    }
-
-    // Libraries（常规 + native classifiers）
-    for (const lib of detail.libraries ?? []) {
-      // 只下载本机会用到的库；跨平台 native 既不进 classpath，也不该占下载清单
-      if (!rulesAllow(lib.rules)) continue
-
-      const artifacts: MojangArtifact[] = []
-      if (lib.downloads?.artifact) artifacts.push(lib.downloads.artifact)
-      // 旧版 profile 只给 name + 仓库基址：补全时按 maven 规则拼出地址，
-      // 否则这些库永远不会下载
-      if (!lib.downloads?.artifact && lib.url) {
-        const relative = mavenPath(lib.name)
-        artifacts.push({
-          url: joinBase(lib.url, relative),
-          path: relative,
-          sha1: lib.sha1,
-          size: lib.size
-        })
-      }
-
-      if (lib.downloads?.classifiers) {
-        for (const [classifier, art] of Object.entries(lib.downloads.classifiers)) {
-          const classifierOs = classifier.replace('natives-', '')
-          if (classifierOs === 'windows' || classifierOs.startsWith('natives-windows')) {
-            artifacts.push(art)
-          }
-        }
-      }
-
-      for (const art of artifacts) {
-        const artifactUrl = art.url ?? ''
-        if (!artifactUrl) continue
-        const libParts = lib.name.split(':')
-        const libFile =
-          libParts.length >= 3
-            ? `${libParts[1]}-${libParts[2]}${artifactUrl.includes('natives') ? '-' + (artifactUrl.match(/natives-[^/]+/)?.[0] ?? '') : ''}.jar`
-            : `${lib.name.replace(/:/g, '/')}.jar`
-        const libDir =
-          libParts.length >= 3
-            ? path.join(libParts[0]!.replace(/\./g, '/'), libParts[1]!, libParts[2]!)
-            : path.dirname(lib.name.replace(/:/g, '/'))
-        const relative = art.path ?? path.join(libDir, libFile)
-        // rules 常常不写 arch，文件名里的 classifier 才是最终依据
-        if (!artifactPlatformMatches(relative)) continue
-
-        taskSpecs.push({
-          label: lib.name,
-          url: artifactUrl,
-          savePath: path.join(layout.librariesDir, relative),
-          // 老的合并文件把加载器库的摘要留在条目顶层
-          sha1: art.sha1 || lib.sha1 || '',
-          size: art.size ?? lib.size ?? 0
-        })
-      }
-    }
-
-    // Asset index + objects
-    if (detail.assetIndex) {
-      const assetDir = layout.assetsDir
-      // 文件名与启动侧一致：优先用 assetIndex.id，其次 assets 字段
-      const indexId = detail.assetIndex.id || detail.assets || gameVersion
-      const indexPath = path.join(assetDir, 'indexes', `${indexId}.json`)
-      const rawIndex = await loadAssetIndex(detail, indexPath, signal)
-
-      for (const [, obj] of Object.entries(rawIndex.objects ?? {})) {
-        const hash2 = obj.hash.slice(0, 2)
-        taskSpecs.push({
-          label: `asset ${obj.hash.slice(0, 12)}…`,
-          url: `https://resources.download.minecraft.net/${hash2}/${obj.hash}`,
-          savePath: path.join(assetDir, 'objects', hash2, obj.hash),
-          sha1: obj.hash,
-          size: obj.size
-        })
-      }
-    }
-
-    // Logging config
-    if (detail.logging?.client?.file) {
-      const lf = detail.logging.client.file
-      if (lf.url) {
-        taskSpecs.push({
-          label: `logging config (${lf.id})`,
-          url: lf.url,
-          savePath: path.join(layout.logConfigsDir, lf.id),
-          sha1: lf.sha1 ?? '',
-          size: lf.size ?? 0
-        })
-      }
-    }
-
-    return options.onlyMissing ? onlyMissingSpecs(taskSpecs) : taskSpecs
-  }
-
-  /** 登记下载任务；安装与补全共用 */
-  function enqueueTasks(job: InstallJob, specs: TaskSpec[], paused: boolean): void {
-    // 大文件优先：并发充足时先啃硬骨头，尾部的剩余任务更小，
-    // 不会出现「最后几个大文件各自只有一条连接」的长尾。
-    // 排序只做一次；之后调度按 Map 插入顺序取任务，避免每次完成都重排。
-    const ordered = [...specs].sort((a, b) => Math.max(b.size, 0) - Math.max(a.size, 0))
-    for (const spec of ordered) {
-      const task: DownloadTask = {
+  function enqueueTasks(job: PipelineJob, files: DownloadFileRequest[], paused: boolean): string[] {
+    // 大文件优先：并发充足时先啃硬骨头，尾部的剩余任务更小
+    const ordered = [...files].sort((a, b) => Math.max(b.size ?? 0, 0) - Math.max(a.size ?? 0, 0))
+    const taskIds: string[] = []
+    for (const file of ordered) {
+      const task: PipelineTask = {
         id: nextTaskId(),
-        installId: job.id,
-        url: spec.url,
-        savePath: spec.savePath,
-        sha1: spec.sha1,
-        size: spec.size,
-        label: spec.label,
-        direct: spec.direct,
-        ...(spec.guardDir ? { guardDir: spec.guardDir } : {}),
+        jobId: job.id,
+        url: file.url,
+        savePath: file.savePath,
+        sha1: file.sha1 ?? '',
+        size: file.size ?? 0,
+        label: file.label,
+        sources:
+          Array.isArray(file.sources) && file.sources.length > 0
+            ? file.sources
+            : [{ id: `direct:${file.url}`, label: '直链', url: file.url }],
+        ...(file.race ? { race: true } : {}),
+        ...(file.guardDir ? { guardDir: file.guardDir } : {}),
         state: paused ? 'paused' : 'pending',
         progress: {
           loaded: 0,
-          total: spec.size > 0 ? spec.size : -1,
+          total: (file.size ?? 0) > 0 ? (file.size ?? 0) : -1,
           speed: 0,
-          label: spec.label
+          label: file.label
         },
         createdAt: Date.now()
       }
       tasks.set(task.id, task)
       job.taskIds.push(task.id)
+      taskIds.push(task.id)
     }
+    return taskIds
   }
 
-  /**
-   * 准备游戏本体（原版或加载器）并写入版本档案。
-   *
-   * 原版安装与整合包安装共用：整合包只是先解析归档拿到游戏版本 / 加载器，
-   * 之后的客户端、依赖库、资源索引生成逻辑完全一致。
-   */
-  async function prepareGameVersion(
-    job: InstallJob,
-    gameVersion: string,
-    loader: InstallJob['loader'],
-    instanceDir: string,
-    signal: AbortSignal,
-    progress: PrepareProgress,
-    isCancelled: () => boolean
-  ): Promise<{ versionId: string; versionDetail: MojangVersionDetail; onlyMissing: boolean }> {
-    progress.report('获取版本信息')
-    const parent = await fetchVersionDetail(gameVersion, signal)
-    if (isCancelled()) throw new Error('已取消')
+  // -------------------------------------------------------------------------
+  // 事件：管线请求
+  // -------------------------------------------------------------------------
 
-    let versionId = gameVersion
-    let versionDetail: MojangVersionDetail = parent
-    let onlyMissing = false
+  ctx.on('download/create', async (request: DownloadJobRequest): Promise<DownloadJobHandle> => {
+    if (!request || typeof request.title !== 'string') throw new Error('缺少任务标题')
+    const job: PipelineJob = {
+      id: nextJobId(),
+      kind: typeof request.kind === 'string' && request.kind ? request.kind : 'download',
+      title: request.title.slice(0, 120),
+      ...(request.detail ? { detail: request.detail.slice(0, 120) } : {}),
+      ...(request.scope ? { scope: request.scope } : {}),
+      ...(request.data !== undefined ? { data: request.data } : {}),
+      ...(request.display ? { display: request.display } : {}),
+      ...(request.autoFinish ? { autoFinish: true } : {}),
+      state: 'preparing',
+      taskIds: [],
+      createdAt: Date.now()
+    }
+    jobs.set(job.id, job)
+    persistRecords()
+    ctx.emit('download/started', job.id)
+    log.info('已受理下载任务「%s」（%s），job %s', job.title, job.kind, job.id)
+    return { jobId: job.id }
+  })
 
-    if (loader) {
-      const kind = safeLoaderKind(loader.kind)
-      if (!kind) throw new Error(`不支持的加载器：${String(loader.kind)}`)
-      const loaderVersion = safeVersionId(loader.version)
-      if (!loaderVersion) throw new Error('无效的加载器版本')
+  ctx.on(
+    'download/addFiles',
+    async (request: DownloadAddFilesRequest): Promise<DownloadAddFilesResult> => {
+      const job = jobs.get(request.jobId)
+      if (!job) throw new Error('下载任务不存在')
+      if (isFinished(job)) throw new Error('下载任务已结束')
+      const files = Array.isArray(request.files) ? request.files : []
+      for (const file of files) {
+        if (!file || typeof file.url !== 'string' || typeof file.savePath !== 'string') {
+          throw new Error('下载文件缺少地址或目标路径')
+        }
+        if (!path.isAbsolute(file.savePath))
+          throw new Error(`下载目标必须是绝对路径：${file.savePath}`)
+      }
+      if (files.length === 0) return { taskIds: [] }
 
-      // 安装器类加载器在准备阶段就把文件放进实例；profile 类只需要版本档案
-      const plan = await prepareLoaderInstall(
-        kind,
-        {
-          gameVersion,
-          loaderVersion,
-          instanceDir,
-          librariesDir: sharedLibrariesDir(dataDir),
-          parent
-        },
-        createLoaderEnvironment(kind, signal, progress)
+      const taskIds = enqueueTasks(job, files, pausedJobs.has(job.id))
+      job.sealed = false
+      if (job.state === 'preparing') job.state = 'downloading'
+      persistRecords()
+      if (!job.paused && !pausedJobs.has(job.id)) scheduleLoop()
+      log.info('任务「%s」追加 %d 个文件，job %s', job.title, files.length, job.id)
+      return { taskIds }
+    }
+  )
+
+  ctx.on('download/awaitFiles', async (request: DownloadAwaitRequest) => {
+    const ids = Array.isArray(request.taskIds) ? request.taskIds : []
+    return Promise.all(ids.map((taskId) => waitForTask(taskId)))
+  })
+
+  ctx.on('download/finish', async (request: DownloadFinishRequest) => {
+    const job = jobs.get(request.jobId)
+    if (!job) return
+    if (job.state === 'cancelled') return
+
+    if (request.state === 'failed') {
+      // 编排方放弃时，停止仍在进行的传输，避免它继续往半成品目录写文件
+      for (const taskId of job.taskIds) {
+        const task = tasks.get(taskId)
+        if (task && !isValidTerminal(task.state)) await cancelTask(task)
+      }
+      job.state = 'failed'
+      job.error = request.error ?? job.error ?? '下载任务失败'
+      job.note = undefined
+      job.stats = collectStats(job)
+      persistRecords(true)
+      emitFinished(job)
+      log.warn('下载任务「%s」失败：%s，job %s', job.title, job.error, job.id)
+      return
+    }
+
+    const failed = job.taskIds
+      .map((id) => tasks.get(id))
+      .filter((task) => task?.state === 'failed' && task.error !== '已取消')
+    if (failed.length > 0) {
+      job.state = 'failed'
+      job.error = `${failed.length} 个文件下载失败，可重试或删除该安装`
+      job.stats = collectStats(job)
+      persistRecords(true)
+      emitFinished(job)
+      return
+    }
+
+    job.state = 'done'
+    delete job.error
+    job.note = undefined
+    job.preparePercent = undefined
+    job.prepareLoaded = undefined
+    job.prepareTotal = undefined
+    archiveJob(job)
+    persistRecords(true)
+    emitFinished(job)
+    log.info('下载任务「%s」已完成，job %s', job.title, job.id)
+  })
+
+  ctx.on('download/data', async (request) => {
+    const job = jobs.get(request.jobId)
+    if (!job || isFinished(job)) return
+    job.data = request.data
+    persistRecords()
+  })
+
+  ctx.on('download/seal', async (jobId: string) => {
+    const job = jobs.get(jobId)
+    if (!job || isFinished(job)) return
+    job.sealed = true
+    if (job.state === 'preparing') job.state = 'downloading'
+    persistRecords()
+    await settleJob(jobId)
+  })
+
+  ctx.on('download/retry', async (jobId: string): Promise<boolean> => {
+    const job = jobs.get(jobId)
+    if (!job || job.state === 'done' || job.state === 'cancelled') return false
+    const failed = job.taskIds
+      .map((id) => tasks.get(id))
+      .filter(
+        (task): task is PipelineTask =>
+          task !== undefined && task.state === 'failed' && task.error !== '已取消'
       )
-      if (isCancelled()) throw new Error('已取消')
+    if (failed.length === 0) return false
 
-      versionId = safeVersionId(plan.versionId) ?? ''
-      if (!versionId) throw new Error('加载器返回了无效的版本 id')
-      versionDetail = mergeVersion(parent, plan.version)
-      onlyMissing = plan.mode === 'installer'
-      // 安装器可能改写过版本 jar，不能再按原版 sha1 校验
-      if (onlyMissing) versionDetail = stripClientChecksum(versionDetail)
-      // 版本文件与版本目录同名，启动时按 id 找 jar / 版本文件
-      versionDetail = { ...versionDetail, id: versionId }
-      job.loader = { kind, version: loaderVersion }
-      log.info('加载器 %s %s 已就绪：实例版本 %s', LOADER_LABELS[kind], loaderVersion, versionId)
+    job.state = 'downloading'
+    delete job.error
+    job.paused = false
+    job.retryRound = 0
+    job.failedBeforeRound = undefined
+    job.note = undefined
+    pausedJobs.delete(job.id)
+    for (const task of failed) {
+      task.state = 'pending'
+      delete task.error
+      task.progress.loaded = partSizeOf(task.savePath)
+      task.progress.total = task.size > 0 ? task.size : task.progress.total
+      task.progress.speed = 0
+      cancelledTasks.delete(task.id)
     }
+    persistRecords(true)
+    scheduleLoop()
+    log.info('任务「%s」重试 %d 个失败文件，job %s', job.title, failed.length, job.id)
+    return true
+  })
 
-    job.versionId = versionId
-    // 实例目录本身就是版本目录：版本档案与客户端 jar 直接放在实例根
-    ensureDir(instanceDir)
-    await writeFile(
-      instanceVersionJson(instanceDir, versionId),
-      JSON.stringify(versionDetail, null, 2),
-      'utf8'
-    )
-    return { versionId, versionDetail, onlyMissing }
-  }
+  ctx.on('download/report', (jobId: string, patch: DownloadReportPatch) => {
+    const job = jobs.get(jobId)
+    if (!job || isFinished(job)) return
+    const stepChanged = patch.note !== undefined && job.note !== patch.note
+    if (patch.note !== undefined) job.note = patch.note
+    if (patch.percent !== undefined && Number.isFinite(patch.percent)) {
+      job.preparePercent = Math.max(0, Math.min(100, Math.round(patch.percent)))
+    } else if (stepChanged) {
+      job.preparePercent = undefined
+    }
+    if (patch.loaded !== undefined && patch.total !== undefined) {
+      job.prepareLoaded = patch.loaded
+      if (patch.total > 0) job.prepareTotal = patch.total
+      job.prepareTransferAt = Date.now()
+    }
+    if (patch.bytes !== undefined && patch.bytes > 0) {
+      job.prepareLoaded = (job.prepareLoaded ?? 0) + patch.bytes
+      job.prepareTransferAt = Date.now()
+    }
+    persistRecords()
+  })
 
-  interface PrepareProgress {
-    /** 更新步骤文字与当前步骤的百分比（0–100） */
-    report: (note: string, percent?: number) => void
-    /** 记录归档这类单文件传输的当前位置，供下载页显示已下载字节 */
-    transfer: (loaded: number, total: number) => void
-    /** 清掉单文件字节显示；批量下载不逐文件上报时使用 */
-    clearTransfer: () => void
-    /** 累加真正从网络收到的字节；缓存复制、共享库复用不会调用 */
-    bytes: (delta: number) => void
-  }
-
-  /**
-   * 准备阶段的上报器。
-   *
-   * 百分比是「当前步骤」的进度（和 PCL 的分步百分比一致），换到一个没有
-   * 可度量进度的步骤时清空：否则进度条会停在上一步的 100%，看起来像卡死。
-   * 字节与传输时刻单独记录：下载页据此在任意「下载…」步骤显示速度，并在
-   * 传输停止后自动收起。
-   */
-  function createPrepareProgress(job: InstallJob): PrepareProgress {
+  /** 旧版源配置：只读，供各插件启动时导入一次 */
+  ctx.on('download/legacy-config', async (): Promise<LegacyDownloadConfig> => {
+    const read = <T>(key: string, normalize: (value: unknown) => T): T | undefined => {
+      const raw = ctx.storage.get<string>(key, '')
+      if (!raw) return undefined
+      try {
+        return normalize(JSON.parse(raw))
+      } catch {
+        return undefined
+      }
+    }
     return {
-      report(note, percent) {
-        const stepChanged = job.note !== note
-        job.note = note
-        if (percent !== undefined && !Number.isNaN(percent)) {
-          job.preparePercent = Math.max(0, Math.min(100, Math.round(percent)))
-          return
-        }
-        if (stepChanged) job.preparePercent = undefined
-      },
-      transfer(loaded, total) {
-        // downloadFileNow 命中缓存时用 1/1 表示完成，不是真实传输，不能显示成 1 B
-        if (loaded <= 1 && total <= 1) return
-        job.prepareLoaded = loaded
-        if (total > 0) job.prepareTotal = total
-        job.prepareTransferAt = Date.now()
-      },
-      clearTransfer() {
-        job.prepareLoaded = undefined
-        job.prepareTotal = undefined
-      },
-      bytes(delta) {
-        if (delta <= 0) return
-        job.prepareTransferred = (job.prepareTransferred ?? 0) + delta
-        job.prepareTransferAt = Date.now()
-      }
+      ...(read('sources', normalizeDownloadSources)
+        ? { sources: read('sources', normalizeDownloadSources) }
+        : {}),
+      ...(read('loaderSources', normalizeLoaderSources)
+        ? { loaderSources: read('loaderSources', normalizeLoaderSources) }
+        : {}),
+      ...(read('modSources', normalizeModSources)
+        ? { modSources: read('modSources', normalizeModSources) }
+        : {})
     }
-  }
+  })
 
-  /**
-   * 后台准备安装：拉版本详情、资源索引与清单，再登记下载任务。
-   *
-   * 它不阻塞 `install/start`：界面可以先跳到下载页，任务就绪后自动出现。
-   * 失败或取消时把刚创建的实例目录清掉，避免留下无法重装的空实例。
-   */
-  async function prepareJob(job: InstallJob, request: InstallRequest): Promise<void> {
-    const instanceDir = instanceDirOf(job.instanceName)
-    const nameKey = instanceKey(job.instanceName)
-    const abort = new AbortController()
-    prepAborts.set(job.id, abort)
-    const isCancelled = (): boolean => cancelledJobs.has(job.id)
-    const progress = createPrepareProgress(job)
-    let createdInstance = false
-    log.info('开始准备安装「%s」（版本 %s，job %s）', job.instanceName, request.gameVersion, job.id)
-
-    try {
-      // 1. 安装状态：先落 installing 再写实例文件。启动页据此把它显示为
-      //    「下载中」，完成（ready）之后才提供启动入口。
-      createdInstance = true
-      await writeInstallState(instanceDir, installRecordOf(job, 'installing'))
-      if (isCancelled()) return
-
-      const prepared = await prepareGameVersion(
-        job,
-        request.gameVersion,
-        request.loader,
-        instanceDir,
-        abort.signal,
-        progress,
-        isCancelled
-      )
-      if (isCancelled()) return
-
-      const layout = resolveInstanceLayout(dataDir, instanceDir)
-
-      progress.report('生成下载清单')
-      const taskSpecs = await collectTaskSpecs(
-        prepared.versionDetail,
-        layout,
-        prepared.versionId,
-        abort.signal,
-        { onlyMissing: prepared.onlyMissing }
-      )
-      if (isCancelled()) return
-
-      // 一个文件都不缺（缓存命中、共享库已有、或刚预取过）时没有任务可跑，
-      // 也就不会有「任务完成」事件来收尾，必须在这里直接标记完成。
-      if (taskSpecs.length === 0) {
-        job.note = undefined
-        job.preparePercent = undefined
-        await completeJob(job)
-        return
-      }
-
-      // 任务先全部登记（缓存命中由下载循环判断），提交因此始终是常数级耗时
-      const paused = pausedJobs.has(job.id)
-      enqueueTasks(job, taskSpecs, paused)
-
-      job.state = 'ready'
-      job.note = undefined
-      job.preparePercent = undefined
-      log.info(
-        '安装「%s」的下载清单已就绪：%d 个文件，job %s',
-        job.instanceName,
-        taskSpecs.length,
-        job.id
-      )
-      persistRecords(true)
-      if (!paused) scheduleLoop()
-    } catch (cause) {
-      if (isCancelled()) return
-      job.state = 'failed'
-      job.note = undefined
-      job.preparePercent = undefined
-      job.error = toError(cause).message
-      log.error('准备安装「%s」失败：%s', job.instanceName, job.error)
-    } finally {
-      prepAborts.delete(job.id)
-      if (isCancelled()) {
-        job.state = 'cancelled'
-        job.note = undefined
-        job.preparePercent = undefined
-        log.info('安装「%s」已取消，job %s', job.instanceName, job.id)
-      }
-      if (job.state === 'failed' || job.state === 'cancelled') {
-        pausedJobs.delete(job.id)
-        // 先清掉半成品目录再释放名称，否则重试会被残留的目录判成重名
-        if (createdInstance) {
-          await rm(instanceDir, { recursive: true, force: true }).catch(() => undefined)
-        }
-      }
-      // 版本目录此时已落盘；后续重名判断交给目录检查
-      reservedInstanceNames.delete(nameKey)
-      persistRecords(true)
-    }
-  }
-
-  /**
-   * 整合包安装的准备阶段。
-   *
-   * 顺序很重要：先下载归档并解析清单拿到「真实」游戏版本 / 加载器，再复用
-   * 原版安装的准备逻辑；包内文件与游戏文件一起进同一个下载队列，覆盖文件
-   * 暂存到实例内，等所有任务完成后再合并（避免同名文件被下载结果覆盖）。
-   */
-  async function prepareModpackJob(job: InstallJob, request: ModpackInstallRequest): Promise<void> {
-    const instanceDir = instanceDirOf(job.instanceName)
-    const nameKey = instanceKey(job.instanceName)
-    const abort = new AbortController()
-    prepAborts.set(job.id, abort)
-    const isCancelled = (): boolean => cancelledJobs.has(job.id)
-    const progress = createPrepareProgress(job)
-    let createdInstance = false
-    let archive = ''
-    let releaseArchive: (() => void) | null = null
-    let removeArchiveAfterPrepare = false
-    log.info(
-      '开始准备整合包安装「%s」（实例 %s，job %s）',
-      request.title || request.file.fileName,
-      job.instanceName,
-      job.id
-    )
-
-    try {
-      createdInstance = true
-      // 先占住实例目录：归档可能很大，下载期间启动页也应该看到「安装中」
-      await writeInstallState(instanceDir, { state: 'installing', jobId: job.id })
-      progress.report('下载整合包', 0)
-      // 有摘要时直接以缓存为落点，避免同一个大归档在磁盘上存两份；
-      // 关闭缓存或归档本身超过上限时改用 job 专属临时文件，准备完成后删除。
-      const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
-      const caching =
-        cacheEnabled() && (cacheLimit === null || (request.file.size ?? 0) <= cacheLimit)
-      const archiveName = modpackArchiveName('', request.file.url, request.file.fileName)
-      archive =
-        caching && request.file.sha1
-          ? cachePath(request.file.sha1)
-          : path.join(
-              cacheRoot,
-              'modpacks',
-              caching ? archiveName : `work-${job.id}-${archiveName}`
-            )
-      removeArchiveAfterPrepare = !caching
-      // 解析与解压期间不能被上限清理删掉
-      releaseArchive = pinCacheFile(archive)
-      await downloadFileNow(
-        request.file.url,
-        archive,
-        request.file.sha1 ?? '',
-        request.file.size ?? 0,
-        abort.signal,
-        ({ loaded, total }) => {
-          progress.transfer(loaded, total)
-          progress.report('下载整合包', total > 0 ? (loaded / total) * 100 : undefined)
-        },
-        {
-          direct: true,
-          useCache: Boolean(request.file.sha1),
-          onBytes: progress.bytes
-        }
-      )
-      if (isCancelled()) return
-
-      progress.report('读取整合包清单')
-      const pack = await parseModpackArchive(archive)
-      if (pack.unsupportedLoader) {
-        throw new Error(`暂不支持 ${pack.unsupportedLoader} 加载器，无法安装该整合包`)
-      }
-      if (!safeVersionId(pack.gameVersion)) throw new Error('整合包没有声明有效的游戏版本')
-
-      job.gameVersion = pack.gameVersion
-      job.title = [pack.name, pack.version].filter(Boolean).join(' ').trim()
-      job.detail = `实例：${job.instanceName}`
-      if (pack.loader)
-        job.loader = { kind: pack.loader.kind as LoaderKind, version: pack.loader.version }
-
-      // 先落 installing，启动页从解析归档开始就把它显示为「下载中」
-      await writeInstallState(instanceDir, installRecordOf(job, 'installing'))
-      if (isCancelled()) return
-
-      const prepared = await prepareGameVersion(
-        job,
-        pack.gameVersion,
-        pack.loader
-          ? { kind: pack.loader.kind as LoaderKind, version: pack.loader.version }
-          : undefined,
-        instanceDir,
-        abort.signal,
-        progress,
-        isCancelled
-      )
-      if (isCancelled()) return
-
-      const layout = resolveInstanceLayout(dataDir, instanceDir)
-      progress.report('生成下载清单')
-      const gameSpecs = await collectTaskSpecs(
-        prepared.versionDetail,
-        layout,
-        prepared.versionId,
-        abort.signal,
-        { onlyMissing: prepared.onlyMissing }
-      )
-      if (isCancelled()) return
-
-      const packSpecs: TaskSpec[] = []
-      const reservedRoot = new Set([
-        ...RESERVED_INSTANCE_ROOT_FILES,
-        `${prepared.versionId}.json`,
-        MODPACK_OVERRIDES_DIR
-      ])
-      for (const file of pack.files) {
-        if (file.kind !== 'direct') continue
-        // 整合包文件不能改写实例元数据 / 版本档案 / 暂存目录
-        if (reservedRoot.has(file.path.split('/')[0] ?? '')) {
-          throw new Error(`整合包包含不允许的文件路径：${file.path}`)
-        }
-        packSpecs.push({
-          label: path.basename(file.path) || file.path,
-          url: file.url,
-          savePath: path.join(instanceDir, file.path),
-          sha1: file.sha1,
-          size: file.size,
-          direct: true
-        })
-      }
-
-      const curseforgeEntries = pack.files
-        .filter((file) => file.kind === 'curseforge')
-        .map((file) => ({
-          projectId: file.projectId,
-          fileId: file.fileId,
-          required: file.required
-        }))
-      if (curseforgeEntries.length > 0) {
-        progress.report('解析整合包文件', 0)
-        let source: ModSource
-        try {
-          source = resolveModSource(
-            loadModSources(),
-            'curseforge',
-            request.source === 'curseforge' ? request.sourceApi : undefined
-          )
-        } catch (cause) {
-          throw new Error(
-            `整合包包含 CurseForge 文件，但无法使用 CurseForge 下载源：${toError(cause).message}`,
-            { cause }
-          )
-        }
-        const resolved = await resolveCurseforgeModpackFiles(
-          source,
-          curseforgeEntries,
-          abort.signal,
-          (done, total) =>
-            progress.report('解析整合包文件', total > 0 ? (done / total) * 100 : undefined)
-        )
-        if (isCancelled()) return
-        for (const { file } of resolved) {
-          packSpecs.push({
-            label: file.fileName,
-            url: file.url,
-            savePath: path.join(instanceDir, 'mods', file.fileName),
-            sha1: file.sha1 ?? '',
-            size: file.size ?? 0,
-            direct: true
-          })
-        }
-      }
-
-      progress.report('解压整合包覆盖文件')
-      let overridesDir: string | undefined
-      if (pack.overridePrefixes.length > 0) {
-        const staging = path.join(instanceDir, MODPACK_OVERRIDES_DIR)
-        const count = await extractModpackOverrides(archive, pack.overridePrefixes, staging)
-        if (count > 0) overridesDir = staging
-        else await rm(staging, { recursive: true, force: true }).catch(() => undefined)
-      }
-      if (isCancelled()) return
-
-      job.modpack = {
-        name: pack.name,
-        version: pack.version,
-        ...(overridesDir ? { overridesDir } : {})
-      }
-
-      const taskSpecs = [...gameSpecs, ...packSpecs]
-      if (taskSpecs.length === 0) {
-        job.note = undefined
-        job.preparePercent = undefined
-        await completeJob(job)
-        return
-      }
-
-      const paused = pausedJobs.has(job.id)
-      enqueueTasks(job, taskSpecs, paused)
-      job.state = 'ready'
-      job.note = undefined
-      job.preparePercent = undefined
-      log.info(
-        '整合包「%s」的下载清单已就绪：%d 个文件（其中包内文件 %d 个），job %s',
-        job.title || job.instanceName,
-        taskSpecs.length,
-        packSpecs.length,
-        job.id
-      )
-      persistRecords(true)
-      if (!paused) scheduleLoop()
-    } catch (cause) {
-      if (isCancelled()) return
-      job.state = 'failed'
-      job.note = undefined
-      job.preparePercent = undefined
-      job.error = toError(cause).message
-      log.error('准备整合包安装「%s」失败：%s', job.instanceName, job.error)
-    } finally {
-      if (removeArchiveAfterPrepare && archive) {
-        await rm(archive, { force: true }).catch(() => undefined)
-        scheduleCachePrune()
-      }
-      releaseArchive?.()
-      scheduleCachePrune()
-      prepAborts.delete(job.id)
-      if (isCancelled()) {
-        job.state = 'cancelled'
-        job.note = undefined
-        job.preparePercent = undefined
-        log.info('整合包安装「%s」已取消，job %s', job.instanceName, job.id)
-      }
-      if (job.state === 'failed' || job.state === 'cancelled') {
-        pausedJobs.delete(job.id)
-        if (createdInstance) {
-          await rm(instanceDir, { recursive: true, force: true }).catch(() => undefined)
-        }
-      }
-      reservedInstanceNames.delete(nameKey)
-      persistRecords(true)
-    }
-  }
-
-  /**
-   * 补全已有实例：读取实例里的版本文件，只登记缺失文件的任务。
-   *
-   * 与安装不同，补全失败或取消不删除实例目录——用户只是还没补完，
-   * 之后可以再点一次「补全文件」。
-   */
-  async function prepareRepair(job: InstallJob): Promise<void> {
-    const instanceDir = instanceDirOf(job.instanceName)
-    const abort = new AbortController()
-    prepAborts.set(job.id, abort)
-    const isCancelled = (): boolean => cancelledJobs.has(job.id)
-    log.info('开始补全实例「%s」（版本 %s，job %s）', job.instanceName, job.gameVersion, job.id)
-
-    try {
-      const versionFile = versionJsonOf(job.instanceName, job.gameVersion)
-      const detail = JSON.parse(await readFile(versionFile, 'utf8')) as MojangVersionDetail
-      if (!detail?.id || !detail.mainClass) throw new Error('实例版本文件不完整')
-
-      await writeInstallState(instanceDir, installRecordOf(job, 'installing'))
-      if (isCancelled()) return
-
-      job.note = '检查缺失文件'
-      const layout = resolveInstanceLayout(dataDir, instanceDir)
-      const taskSpecs = await collectTaskSpecs(detail, layout, job.gameVersion, abort.signal, {
-        onlyMissing: true
-      })
-      if (isCancelled()) return
-
-      if (taskSpecs.length === 0) {
-        if (isCancelled()) return
-        job.note = undefined
-        job.preparePercent = undefined
-        await completeJob(job)
-        return
-      }
-
-      const paused = pausedJobs.has(job.id)
-      enqueueTasks(job, taskSpecs, paused)
-      job.state = 'ready'
-      job.note = undefined
-      job.preparePercent = undefined
-      log.info(
-        '补全实例「%s」：需要下载 %d 个文件，job %s',
-        job.instanceName,
-        taskSpecs.length,
-        job.id
-      )
-      persistRecords(true)
-      if (!paused) scheduleLoop()
-    } catch (cause) {
-      if (isCancelled()) return
-      job.state = 'failed'
-      job.note = undefined
-      job.preparePercent = undefined
-      job.error = toError(cause).message
-      log.error('补全实例「%s」失败：%s', job.instanceName, job.error)
-    } finally {
-      prepAborts.delete(job.id)
-      if (isCancelled()) {
-        job.state = 'cancelled'
-        job.note = undefined
-        job.preparePercent = undefined
-        pausedJobs.delete(job.id)
-        log.info('补全实例「%s」已取消，job %s', job.instanceName, job.id)
-      }
-      persistRecords(true)
-    }
-  }
+  // -------------------------------------------------------------------------
+  // 启动恢复
+  // -------------------------------------------------------------------------
 
   migrateCacheLimitSetting()
   loadRecords()
   if (jobs.size > 0 || tasks.size > 0) {
-    log.info('下载记录已恢复：%d 个安装，%d 个下载任务', jobs.size, tasks.size)
+    log.info('下载记录已恢复：%d 个任务，%d 个文件', jobs.size, tasks.size)
   }
-  void reconcileInstalls()
-  // 上次退出时可能已经超过上限（或用户刚把上限调小），启动后补一轮清理
   scheduleCachePrune()
 
-  // ── IPC handlers ──
-
-  /**
-   * 原版版本列表。
-   *
-   * 与下载走同一套下载源：Mojang 不可达时会自动尝试镜像，元数据请求也有
-   * 超时，页面不会停在「正在获取版本列表」。
-   */
-  ctx.ipc.handle('versions/list', async (): Promise<GameVersion[]> => {
-    const manifest = await fetchMojangManifest()
-    return manifest.versions.map((version) => ({
-      id: version.id,
-      type: mapVersionType(version.type),
-      releaseTime: version.releaseTime,
-      url: version.url
-    }))
-  })
-
-  ctx.ipc.handle('settings/get', () => ({
-    concurrency: String(maxConcurrency()),
-    segments: normalizeDownloadSegments(
-      ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS)
-    ),
-    segmentThreshold: normalizeDownloadSegmentThreshold(
-      ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD)
-    ),
-    cacheLimit: loadCacheLimit(),
-    sources: loadSources(),
-    loaderSources: loadLoaderSources(),
-    modSources: loadModSources()
-  }))
-
-  ctx.ipc.handle<{ key: string; value: string }>('settings/set', async ({ key, value }) => {
-    if (key === 'sources' || key === 'loaderSources' || key === 'modSources') {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(value)
-      } catch {
-        parsed = null
+  // 延后派发：编排方（原版 / 整合包）在依赖本插件之后才注册 jobResumed 监听，
+  // 立即 emit 会丢事件。3 秒足够所有启动插件挂完监听，也不影响首屏。
+  ctx.effect(() => {
+    const timer = setTimeout(() => {
+      for (const job of jobs.values()) {
+        if (isFinished(job)) continue
+        ctx.emit('download/jobResumed', job.id, {
+          id: job.id,
+          kind: job.kind,
+          title: job.title,
+          ...(job.detail ? { detail: job.detail } : {}),
+          ...(job.scope ? { scope: job.scope } : {}),
+          ...(job.data !== undefined ? { data: job.data } : {}),
+          ...(job.display ? { display: job.display } : {}),
+          state: job.state,
+          ...(job.note ? { note: job.note } : {}),
+          ...(job.error ? { error: job.error } : {}),
+          taskIds: [...job.taskIds],
+          createdAt: job.createdAt
+        })
       }
-      const normalized =
-        key === 'sources'
-          ? normalizeDownloadSources(parsed)
-          : key === 'loaderSources'
-            ? normalizeLoaderSources(parsed)
-            : normalizeModSources(parsed)
-      ctx.storage.set(key, JSON.stringify(normalized))
-      sourceHealth.clear()
-      loaderVersionCache.clear()
-      modSearchCache.clear()
-      modVersionCache.clear()
-      modProjectCache.clear()
-      modIdentityCache.clear()
-      log.info(
-        '%s设置已更新',
-        key === 'sources' ? '下载源' : key === 'loaderSources' ? '模组加载器下载源' : 'Mod 下载源'
-      )
-      return
-    }
-    if (key === 'segments') {
-      const normalized = normalizeDownloadSegments(value)
-      ctx.storage.set('segments', normalized)
-      log.info('单文件分段连接数已更新：%s', normalized)
-      return
-    }
-    if (key === 'segmentThreshold') {
-      const normalized = normalizeDownloadSegmentThreshold(value)
-      ctx.storage.set('segmentThreshold', normalized)
-      log.info('分段阈值已更新：%s MB', normalized)
-      return
-    }
-    if (key === 'cacheLimit') {
-      const normalized = normalizeDownloadCacheLimit(value)
-      ctx.storage.set('cacheLimit', normalized)
-      log.info('下载缓存上限已更新：%s', describeCacheLimit(normalized))
-      // 调小上限（或选择「不缓存」）后立即淘汰，页面能马上看到新的占用
-      await pruneCacheNow()
-      return cacheUsage()
-    }
-    ctx.storage.set(key, value)
-    log.info('下载设置已更新：%s', key)
+    }, 3000)
+    return () => clearTimeout(timer)
   })
 
-  ctx.ipc.handle('cache/stats', () => cacheUsage())
-
-  /**
-   * 清空下载缓存。
-   *
-   * 只删共享缓存，不动实例目录与游戏文件。传输中拒绝清理：整合包归档本身
-   * 就落在缓存里，边下边删会让解析失败。
-   */
-  ctx.ipc.handle('cache/clear', async () => {
-    const busy =
-      [...jobs.values()].some((job) => job.state === 'preparing') ||
-      [...tasks.values()].some((task) => task.state === 'downloading' || task.state === 'verifying')
-    if (busy) throw new Error('正在下载，暂时不能清空缓存')
-    const before = await cacheUsage()
-    try {
-      await rm(cacheRoot, { recursive: true, force: true })
-    } catch (cause) {
-      throw new Error(`清空缓存失败：${toError(cause).message}`, { cause })
+  const flushOnQuit = (): void => {
+    if (persistTimer) {
+      clearTimeout(persistTimer)
+      persistTimer = null
     }
-    log.info('下载缓存已清空：%d 个文件，%d 字节', before.files, before.bytes)
-    return cacheUsage()
+    if (recordsDirty) flushRecords()
+  }
+  ctx.effect(() => () => {
+    flushOnQuit()
+    httpAgent.destroy()
+    httpsAgent.destroy()
   })
 
-  /**
-   * 查询某个游戏版本的加载器版本列表。
-   *
-   * 版本来源随下载设置里的加载器源变化；查询失败时把原因原样抛回渲染进程，
-   * 页面不需要知道具体是哪个镜像挂了。
-   */
-  ctx.ipc.handle<{ gameVersion?: string; kind?: string }>('loaders/versions', async (params) => {
-    const kind = safeLoaderKind(params?.kind)
-    if (!kind) throw new Error('不支持的加载器类型')
-    const gameVersion = safeVersionId(params?.gameVersion)
-    if (!gameVersion) throw new Error('无效的游戏版本')
+  // -------------------------------------------------------------------------
+  // IPC：任务控制
+  // -------------------------------------------------------------------------
 
-    const cacheKey = `${kind}:${gameVersion}`
-    const cached = loaderVersionCache.get(cacheKey)
-    if (cached && Date.now() - cached.at < LOADER_VERSION_TTL) return cached.versions
-
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), METADATA_TIMEOUT)
-    try {
-      const versions = await listLoaderVersions(
-        kind,
-        gameVersion,
-        createLoaderEnvironment(kind, abort.signal)
-      )
-      // 空结果（该游戏版本确实没有加载器）也缓存，避免反复打慢接口
-      loaderVersionCache.set(cacheKey, { at: Date.now(), versions })
-      return versions
-    } finally {
-      clearTimeout(timeout)
-      // 慢源（例如 Forge 官方 promotions）不再需要：结果已返回或已失败
-      abort.abort()
-    }
-  })
-
-  // ── Mod 目录（Modrinth / CurseForge）──
-
-  /** 来源列表给页面渲染筛选器；不包含 API Key */
-  ctx.ipc.handle('mods/sources', (): ModSourceInfo[] => modSourceInfos())
-
-  ctx.ipc.handle('mods/categories', (): ModCategory[] => listCategories())
-
-  /**
-   * 通过本地文件指纹精确识别来源项目。
-   *
-   * 只依赖 jar 字节，不需要这个 Mod 是 Mics 安装的；查不到时返回空数组，
-   * 由页面回退到名称搜索。
-   */
-  ctx.ipc.handle<ModIdentifyRequest>('mods/identify', async (request): Promise<ModIdentity[]> => {
-    const rawFiles = Array.isArray(request?.files) ? request.files.slice(0, 256) : []
-    const files: ModIdentifyFile[] = []
-    const seen = new Set<string>()
-    for (const entry of rawFiles) {
-      if (!entry || typeof entry.key !== 'string') continue
-      const key = entry.key.trim().slice(0, 180)
-      if (!key || seen.has(key)) continue
-      const sha1 =
-        typeof entry.sha1 === 'string' && /^[0-9a-f]{40}$/i.test(entry.sha1.trim())
-          ? entry.sha1.trim().toLowerCase()
-          : undefined
-      const murmur2 =
-        typeof entry.murmur2 === 'number' &&
-        Number.isInteger(entry.murmur2) &&
-        entry.murmur2 >= 0 &&
-        entry.murmur2 <= 0xffffffff
-          ? entry.murmur2
-          : undefined
-      if (!sha1 && murmur2 === undefined) continue
-      seen.add(key)
-      files.push({ key, ...(sha1 ? { sha1 } : {}), ...(murmur2 !== undefined ? { murmur2 } : {}) })
-    }
-    if (files.length === 0) return []
-
-    const cacheKey = files
-      .map((file) => `${file.key}:${file.sha1 ?? ''}:${file.murmur2 ?? ''}`)
-      .sort()
-      .join('|')
-    const cached = readModCache(modIdentityCache, cacheKey, MOD_IDENTITY_TTL)
-    if (cached) return cached
-
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-    try {
-      const identities = await identifyMods(loadModSources(), files, abort.signal)
-      if (identities.length > 0) writeModCache(modIdentityCache, cacheKey, identities)
-      log.debug('Mod 指纹识别：%d / %d 个文件命中', identities.length, files.length)
-      return identities
-    } finally {
-      clearTimeout(timeout)
-      abort.abort()
-    }
-  })
-
-  /** 搜索参数来自渲染进程，页码与枚举值在这里做一次收敛 */
-  function normalizeModSearch(request: ModSearchRequest): ModSearchRequest {
-    const page = Number.isInteger(request?.page) && request.page > 0 ? request.page : 1
-    const rawSize = Number.isInteger(request?.pageSize) ? Number(request.pageSize) : 20
-    const pageSize = Math.max(1, Math.min(50, rawSize))
-    const source =
-      request?.source === 'curseforge' || request?.source === 'modrinth' ? request.source : 'all'
-    const loader = isModLoader(request?.loader) ? request.loader : 'all'
-    return {
-      query: typeof request?.query === 'string' ? request.query.trim().slice(0, 120) : '',
-      source,
-      gameVersion: safeVersionId(request?.gameVersion) ?? '',
-      loader,
-      category: typeof request?.category === 'string' ? request.category.trim() : '',
-      page,
-      pageSize
-    }
+  function pauseTask(task: PipelineTask): Promise<void> {
+    if (task.state !== 'pending' && task.state !== 'downloading') return Promise.resolve()
+    task.state = 'paused'
+    task.progress.speed = 0
+    const transfer = transfers.get(task.id)
+    return transfer ? transfer.stop().catch(() => undefined) : Promise.resolve()
   }
 
-  ctx.ipc.handle<ModSearchRequest>('mods/search', async (request): Promise<ModSearchResult> => {
-    const normalized = normalizeModSearch(request)
-    const cacheKey = JSON.stringify(normalized)
-    const cached = readModCache(modSearchCache, cacheKey, MOD_SEARCH_TTL)
-    if (cached) return cached
+  function resumeTask(task: PipelineTask): void {
+    if (task.state !== 'paused') return
+    task.state = 'pending'
+    task.progress.speed = 0
+  }
 
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-    try {
-      const result = await searchMods(loadModSources(), normalized, abort.signal)
-      // 只缓存完整成功的结果；部分来源失败时下次仍应重新尝试
-      if (result.errors.length === 0) writeModCache(modSearchCache, cacheKey, result)
-      return result
-    } finally {
-      clearTimeout(timeout)
-      abort.abort()
-    }
-  })
-
-  ctx.ipc.handle<ModVersionRequest>('mods/versions', async (request): Promise<ModVersion[]> => {
-    const source =
-      request?.source === 'curseforge'
-        ? 'curseforge'
-        : request?.source === 'modrinth'
-          ? 'modrinth'
-          : null
-    if (!source) throw new Error('不支持的 Mod 下载源')
-    const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
-    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的 Mod 项目 id')
-
-    const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
-    const normalized: ModVersionRequest = {
-      source,
-      ...(sourceApi ? { sourceApi } : {}),
-      projectId,
-      gameVersion: safeVersionId(request?.gameVersion) ?? '',
-      loader: isModLoader(request?.loader) ? request.loader : 'all'
-    }
-    const cacheKey = `${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}:${normalized.gameVersion}:${normalized.loader}`
-    const cached = readModCache(modVersionCache, cacheKey, MOD_VERSION_TTL)
-    if (cached) return cached
-
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-    try {
-      const versions = await listModVersions(loadModSources(), normalized, abort.signal)
-      writeModCache(modVersionCache, cacheKey, versions)
-      return versions
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
-    } finally {
-      clearTimeout(timeout)
-      abort.abort()
-    }
-  })
-
-  /**
-   * 单个项目摘要。
-   *
-   * 版本列表只带项目名、图标等基础信息；Modrinth 的作者要从团队 Owner 推，
-   * 前置跳转打开详情后调用这里补齐头部，不拖慢版本列表本身。
-   */
-  ctx.ipc.handle<ModProjectRequest>('mods/project', async (request): Promise<ModSummary> => {
-    const source =
-      request?.source === 'curseforge'
-        ? 'curseforge'
-        : request?.source === 'modrinth'
-          ? 'modrinth'
-          : null
-    if (!source) throw new Error('不支持的 Mod 下载源')
-    const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
-    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的 Mod 项目 id')
-
-    const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
-    const normalized: ModProjectRequest = {
-      source,
-      ...(sourceApi ? { sourceApi } : {}),
-      projectId
-    }
-    const cacheKey = `${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}`
-    const cached = readModCache(modProjectCache, cacheKey, MOD_VERSION_TTL)
-    if (cached) return cached
-
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-    try {
-      const project = await loadModProject(loadModSources(), normalized, abort.signal)
-      writeModCache(modProjectCache, cacheKey, project)
-      return project
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
-    } finally {
-      clearTimeout(timeout)
-      abort.abort()
-    }
-  })
-
-  // ── 整合包目录（与 Mod 共用来源 / 缓存，仅项目类型不同）──
-
-  ctx.ipc.handle('modpacks/sources', (): ModSourceInfo[] => modSourceInfos())
-
-  ctx.ipc.handle('modpacks/categories', (): ModCategory[] => listModpackCategories())
-
-  ctx.ipc.handle<ModSearchRequest>('modpacks/search', async (request): Promise<ModSearchResult> => {
-    const normalized = normalizeModSearch(request)
-    const cacheKey = `modpack:${JSON.stringify(normalized)}`
-    const cached = readModCache(modSearchCache, cacheKey, MOD_SEARCH_TTL)
-    if (cached) return cached
-
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-    try {
-      const result = await searchMods(loadModSources(), normalized, abort.signal, 'modpack')
-      if (result.errors.length === 0) writeModCache(modSearchCache, cacheKey, result)
-      return result
-    } finally {
-      clearTimeout(timeout)
-      abort.abort()
-    }
-  })
-
-  ctx.ipc.handle<ModVersionRequest>('modpacks/versions', async (request): Promise<ModVersion[]> => {
-    const source =
-      request?.source === 'curseforge'
-        ? 'curseforge'
-        : request?.source === 'modrinth'
-          ? 'modrinth'
-          : null
-    if (!source) throw new Error('不支持的整合包下载源')
-    const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
-    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的整合包项目 id')
-
-    const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
-    const normalized: ModVersionRequest = {
-      source,
-      ...(sourceApi ? { sourceApi } : {}),
-      projectId,
-      gameVersion: safeVersionId(request?.gameVersion) ?? '',
-      loader: isModLoader(request?.loader) ? request.loader : 'all'
-    }
-    const cacheKey = `modpack:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}:${normalized.gameVersion}:${normalized.loader}`
-    const cached = readModCache(modVersionCache, cacheKey, MOD_VERSION_TTL)
-    if (cached) return cached
-
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-    try {
-      const versions = await listModVersions(loadModSources(), normalized, abort.signal, 'modpack')
-      writeModCache(modVersionCache, cacheKey, versions)
-      return versions
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
-    } finally {
-      clearTimeout(timeout)
-      abort.abort()
-    }
-  })
-
-  ctx.ipc.handle<ModProjectRequest>('modpacks/project', async (request): Promise<ModSummary> => {
-    const source =
-      request?.source === 'curseforge'
-        ? 'curseforge'
-        : request?.source === 'modrinth'
-          ? 'modrinth'
-          : null
-    if (!source) throw new Error('不支持的整合包下载源')
-    const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
-    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的整合包项目 id')
-
-    const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
-    const normalized: ModProjectRequest = {
-      source,
-      ...(sourceApi ? { sourceApi } : {}),
-      projectId
-    }
-    const cacheKey = `modpack:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}`
-    const cached = readModCache(modProjectCache, cacheKey, MOD_VERSION_TTL)
-    if (cached) return cached
-
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-    try {
-      const project = await loadModProject(loadModSources(), normalized, abort.signal, 'modpack')
-      writeModCache(modProjectCache, cacheKey, project)
-      return project
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
-    } finally {
-      clearTimeout(timeout)
-      abort.abort()
-    }
-  })
-
-  /**
-   * 把同一个 Mod 文件登记为下载任务，写进多个实例的 mods/ 目录。
-   *
-   * 与游戏安装一样「受理即返回」：真正的传输由下载页的队列展示，支持暂停、
-   * 取消、失败重试；每个实例一个任务，目标文件已有相同 SHA1 时会被快速跳过。
-   */
-  ctx.ipc.handle<ModInstallRequest>('mods/install', (request): InstallStartResult => {
-    const file: ModInstallRequest['file'] | undefined = request?.file
-    if (!file) throw new Error('缺少 Mod 文件信息')
-
-    const rawUrl = typeof file.url === 'string' ? file.url.trim() : ''
-    let parsedUrl: URL
-    try {
-      parsedUrl = new URL(rawUrl)
-    } catch {
-      throw new Error('无效的 Mod 下载地址')
-    }
-    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
-      throw new Error('Mod 下载地址必须使用 HTTP(S)')
-    }
-
-    const rawName = typeof file.fileName === 'string' ? file.fileName : ''
-    const fileName = path.basename(rawName)
-    if (
-      !fileName ||
-      fileName !== rawName ||
-      !/\.jar$/i.test(fileName) ||
-      INVALID_INSTANCE_NAME_TEST.test(fileName)
-    ) {
-      throw new Error('无效的 Mod 文件名')
-    }
-
-    const rawSha1 = typeof file.sha1 === 'string' ? file.sha1.trim().toLowerCase() : ''
-    const sha1 = /^[0-9a-f]{40}$/.test(rawSha1) ? rawSha1 : ''
-    const size =
-      typeof file.size === 'number' && Number.isFinite(file.size) ? Math.max(0, file.size) : 0
-
-    const requested = Array.isArray(request?.instanceNames) ? request.instanceNames : []
-    const names = [...new Set(requested.filter((name): name is string => typeof name === 'string'))]
-    if (names.length === 0) throw new Error('请选择至少一个实例')
-    if (names.length > 64) throw new Error('一次最多安装到 64 个实例')
-
-    // Windows 上实例名大小写不敏感，按同一份 key 去重，避免写两次同一目录
-    const targets = new Map<string, { instanceName: string; target: string }>()
-    for (const rawInstance of names) {
-      const instanceName = safeInstanceName(rawInstance)
-      if (!instanceName) throw new Error(`无效的实例名称：${rawInstance}`)
-      const instanceDir = instanceDirOf(instanceName)
-      if (!existsSync(instanceDir) || !statSync(instanceDir).isDirectory()) {
-        throw new Error(`实例「${instanceName}」不存在`)
-      }
-      targets.set(instanceKey(instanceName), {
-        instanceName,
-        target: path.join(instanceDir, 'mods', fileName)
-      })
-    }
-
-    const title =
-      typeof request?.title === 'string' && request.title.trim()
-        ? request.title.trim().slice(0, 120)
-        : fileName
-    const detail =
-      typeof request?.detail === 'string' && request.detail.trim()
-        ? request.detail.trim().slice(0, 80)
-        : `${targets.size} 个实例`
-
-    const job: InstallJob = {
-      id: nextJobId(),
-      kind: 'mod',
-      title,
-      detail,
-      instanceName: title,
-      gameVersion: '',
-      taskIds: [],
-      createdAt: Date.now(),
-      state: 'ready'
-    }
-    jobs.set(job.id, job)
-
-    enqueueTasks(
-      job,
-      [...targets.values()].map(({ instanceName, target }): TaskSpec => ({
-        label: `${fileName} → ${instanceName}`,
-        url: parsedUrl.toString(),
-        savePath: target,
-        sha1,
-        size,
-        direct: true
-      })),
-      false
-    )
-
-    persistRecords(true)
-    log.info(
-      '已受理 Mod 安装「%s」：%s → %d 个实例，job %s',
-      title,
-      fileName,
-      job.taskIds.length,
-      job.id
-    )
-    scheduleLoop()
-    return { jobId: job.id }
-  })
-
-  // ── 资源包 / 光影包 / 数据包目录（与 Mod 共用来源与队列，仅项目类型不同）──
-
-  ctx.ipc.handle('packs/sources', (): ModSourceInfo[] => modSourceInfos())
-
-  // 包类暂不做「类型」分类筛选：CurseForge / Modrinth 的分类体系各自一套，
-  // 第一版先把来源与 MC 版本做好，避免维护三套无意义的映射。
-  ctx.ipc.handle('packs/categories', (): ModCategory[] => [])
-
-  ctx.ipc.handle<ModSearchRequest & { kind: PackKind }>(
-    'packs/search',
-    async (request): Promise<ModSearchResult> => {
-      const kind = packKindOf(request?.kind)
-      const normalized = normalizeModSearch(request)
-      const cacheKey = `pack:${kind}:${JSON.stringify(normalized)}`
-      const cached = readModCache(modSearchCache, cacheKey, MOD_SEARCH_TTL)
-      if (cached) return cached
-
-      const abort = new AbortController()
-      const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-      try {
-        const result = await searchMods(loadModSources(), normalized, abort.signal, kind)
-        if (result.errors.length === 0) writeModCache(modSearchCache, cacheKey, result)
-        return result
-      } finally {
-        clearTimeout(timeout)
-        abort.abort()
-      }
-    }
-  )
-
-  ctx.ipc.handle<ModVersionRequest & { kind: PackKind }>(
-    'packs/versions',
-    async (request): Promise<ModVersion[]> => {
-      const kind = packKindOf(request?.kind)
-      const source =
-        request?.source === 'curseforge'
-          ? 'curseforge'
-          : request?.source === 'modrinth'
-            ? 'modrinth'
-            : null
-      if (!source) throw new Error('不支持的下载源')
-      const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
-      if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的项目 id')
-
-      const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
-      const normalized: ModVersionRequest = {
-        source,
-        ...(sourceApi ? { sourceApi } : {}),
-        projectId,
-        gameVersion: safeVersionId(request?.gameVersion) ?? '',
-        loader: isModLoader(request?.loader) ? request.loader : 'all'
-      }
-      const cacheKey = `pack:${kind}:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}:${normalized.gameVersion}:${normalized.loader}`
-      const cached = readModCache(modVersionCache, cacheKey, MOD_VERSION_TTL)
-      if (cached) return cached
-
-      const abort = new AbortController()
-      const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-      try {
-        const versions = await listModVersions(loadModSources(), normalized, abort.signal, kind)
-        writeModCache(modVersionCache, cacheKey, versions)
-        return versions
-      } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause)
-        throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
-      } finally {
-        clearTimeout(timeout)
-        abort.abort()
-      }
-    }
-  )
-
-  ctx.ipc.handle<ModProjectRequest & { kind: PackKind }>(
-    'packs/project',
-    async (request): Promise<ModSummary> => {
-      const kind = packKindOf(request?.kind)
-      const source =
-        request?.source === 'curseforge'
-          ? 'curseforge'
-          : request?.source === 'modrinth'
-            ? 'modrinth'
-            : null
-      if (!source) throw new Error('不支持的下载源')
-      const projectId = typeof request?.projectId === 'string' ? request.projectId.trim() : ''
-      if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) throw new Error('无效的项目 id')
-
-      const sourceApi = typeof request?.sourceApi === 'string' ? request.sourceApi.trim() : ''
-      const normalized: ModProjectRequest = {
-        source,
-        ...(sourceApi ? { sourceApi } : {}),
-        projectId
-      }
-      const cacheKey = `pack:${kind}:${normalized.source}:${normalized.sourceApi ?? ''}:${normalized.projectId}`
-      const cached = readModCache(modProjectCache, cacheKey, MOD_VERSION_TTL)
-      if (cached) return cached
-
-      const abort = new AbortController()
-      const timeout = setTimeout(() => abort.abort(), MOD_METADATA_TIMEOUT)
-      try {
-        const project = await loadModProject(loadModSources(), normalized, abort.signal, kind)
-        writeModCache(modProjectCache, cacheKey, project)
-        return project
-      } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause)
-        throw new Error(/abort/i.test(message) ? '请求超时，请稍后重试' : message, { cause })
-      } finally {
-        clearTimeout(timeout)
-        abort.abort()
-      }
-    }
-  )
-
-  /**
-   * 把资源包 / 光影包 / 数据包写入实例目录。
-   *
-   * 只落盘，不改 `options.txt` / `iris.properties`，也不动存档的 `level.dat`：
-   * 玩家在游戏内自行启用。数据包必须指定存档，且一次只写一个存档。
-   */
-  ctx.ipc.handle<PackInstallRequest>('packs/install', (request): InstallStartResult => {
-    const kind = packKindOf(request?.kind)
-    const file = request?.file
-    if (!file) throw new Error('缺少文件信息')
-
-    const rawUrl = typeof file.url === 'string' ? file.url.trim() : ''
-    let parsedUrl: URL
-    try {
-      parsedUrl = new URL(rawUrl)
-    } catch {
-      throw new Error('无效的下载地址')
-    }
-    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
-      throw new Error('下载地址必须使用 HTTP(S)')
-    }
-
-    const rawName = typeof file.fileName === 'string' ? file.fileName : ''
-    const fileName = path.basename(rawName)
-    if (
-      !fileName ||
-      fileName !== rawName ||
-      !/\.zip$/i.test(fileName) ||
-      INVALID_INSTANCE_NAME_TEST.test(fileName)
-    ) {
-      throw new Error('无效的文件名')
-    }
-
-    const rawSha1 = typeof file.sha1 === 'string' ? file.sha1.trim().toLowerCase() : ''
-    const sha1 = /^[0-9a-f]{40}$/.test(rawSha1) ? rawSha1 : ''
-    const size =
-      typeof file.size === 'number' && Number.isFinite(file.size) ? Math.max(0, file.size) : 0
-
-    const requested = Array.isArray(request?.instanceNames) ? request.instanceNames : []
-    const names = [...new Set(requested.filter((name): name is string => typeof name === 'string'))]
-    if (names.length === 0) throw new Error('请选择至少一个实例')
-    if (kind === 'datapack' && names.length !== 1) {
-      throw new Error('数据包一次只能安装到一个存档')
-    }
-    if (names.length > 64) throw new Error('一次最多安装到 64 个实例')
-
-    const worldName = kind === 'datapack' ? safeWorldName(request?.worldName) : null
-    if (kind === 'datapack' && !worldName) throw new Error('请选择一个存档')
-
-    const targets = new Map<
-      string,
-      { instanceName: string; target: string; guardDir: string; detail: string }
-    >()
-    for (const rawInstance of names) {
-      const instanceName = safeInstanceName(rawInstance)
-      if (!instanceName) throw new Error(`无效的实例名称：${rawInstance}`)
-      const instanceDir = instanceDirOf(instanceName)
-      if (!existsSync(instanceDir) || !statSync(instanceDir).isDirectory()) {
-        throw new Error(`实例「${instanceName}」不存在`)
-      }
-
-      if (kind === 'datapack') {
-        const worldDir = path.join(instanceDir, 'saves', worldName!)
-        if (!existsSync(worldDir) || !statSync(worldDir).isDirectory()) {
-          throw new Error(`实例「${instanceName}」里没有存档「${worldName}」`)
-        }
-        targets.set(instanceKey(instanceName), {
-          instanceName,
-          target: path.join(worldDir, 'datapacks', fileName),
-          guardDir: worldDir,
-          detail: `${instanceName} · ${worldName}`
-        })
-        continue
-      }
-
-      targets.set(instanceKey(instanceName), {
-        instanceName,
-        target: path.join(instanceDir, PACK_DIRS[kind], fileName),
-        guardDir: instanceDir,
-        detail: instanceName
-      })
-    }
-
-    const title =
-      typeof request?.title === 'string' && request.title.trim()
-        ? request.title.trim().slice(0, 120)
-        : fileName
-    const detail = kind === 'datapack' ? [...targets.values()][0]!.detail : `${targets.size} 个实例`
-
-    const job: InstallJob = {
-      id: nextJobId(),
-      kind: 'pack',
-      packKind: kind,
-      title,
-      detail,
-      instanceName: title,
-      gameVersion: '',
-      taskIds: [],
-      createdAt: Date.now(),
-      state: 'ready'
-    }
-    jobs.set(job.id, job)
-
-    enqueueTasks(
-      job,
-      [...targets.values()].map(({ instanceName, target, guardDir }): TaskSpec => ({
-        label: `${fileName} → ${instanceName}`,
-        url: parsedUrl.toString(),
-        savePath: target,
-        sha1,
-        size,
-        direct: true,
-        guardDir
-      })),
-      false
-    )
-
-    persistRecords(true)
-    log.info(
-      '已受理%s安装「%s」：%s → %d 个%s，job %s',
-      PACK_KIND_LABELS[kind],
-      title,
-      fileName,
-      targets.size,
-      kind === 'datapack' ? '存档' : '实例',
-      job.id
-    )
-    scheduleLoop()
-    return { jobId: job.id }
-  })
-
-  /**
-   * 受理整合包安装。
-   *
-   * 与原版安装一样「受理即返回」：归档解析、游戏版本 / 加载器准备、包内文件
-   * 解析都在后台完成。实例名在这里就校验，避免准备阶段跑很久后才因重名失败。
-   */
-  ctx.ipc.handle<ModpackInstallRequest>('modpacks/install', (request): InstallStartResult => {
-    const file = request?.file
-    if (!file) return { jobId: '', error: '缺少整合包文件信息' }
-
-    const rawUrl = typeof file.url === 'string' ? file.url.trim() : ''
-    let parsedUrl: URL
-    try {
-      parsedUrl = new URL(rawUrl)
-    } catch {
-      return { jobId: '', error: '无效的整合包下载地址' }
-    }
-    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
-      return { jobId: '', error: '整合包下载地址必须使用 HTTP(S)' }
-    }
-
-    const rawName = typeof file.fileName === 'string' ? file.fileName : ''
-    const fileName = path.basename(rawName)
-    if (
-      !fileName ||
-      fileName !== rawName ||
-      !/\.(mrpack|zip)$/i.test(fileName) ||
-      INVALID_INSTANCE_NAME_TEST.test(fileName)
-    ) {
-      return { jobId: '', error: '无效的整合包文件名' }
-    }
-    if (request.source !== 'modrinth' && request.source !== 'curseforge') {
-      return { jobId: '', error: '不支持的整合包下载源' }
-    }
-    if (typeof request.instanceName !== 'string') {
-      return { jobId: '', error: '无效的实例名称' }
-    }
-
-    const check = checkInstanceName(request.instanceName)
-    if (!check.ok) return { jobId: '', error: check.message ?? '实例名称无效' }
-
-    const rawSha1 = typeof file.sha1 === 'string' ? file.sha1.trim().toLowerCase() : ''
-    const sha1 = /^[0-9a-f]{40}$/.test(rawSha1) ? rawSha1 : ''
-    const size =
-      typeof file.size === 'number' && Number.isFinite(file.size) ? Math.max(0, file.size) : 0
-    const title =
-      typeof request.title === 'string' && request.title.trim()
-        ? request.title.trim().slice(0, 120)
-        : fileName
-    const sourceApi = typeof request.sourceApi === 'string' ? request.sourceApi.trim() : ''
-
-    const job: InstallJob = {
-      id: nextJobId(),
-      kind: 'modpack',
-      title,
-      detail: `实例：${check.name}`,
-      instanceName: check.name,
-      gameVersion: '',
-      taskIds: [],
-      createdAt: Date.now(),
-      state: 'preparing',
-      mode: 'install'
-    }
-    jobs.set(job.id, job)
-    archiveSupersededJobs(check.name, job.id)
-    reservedInstanceNames.add(instanceKey(check.name))
-    persistRecords()
-    log.info('已受理整合包安装「%s」：%s → 实例「%s」，job %s', title, fileName, check.name, job.id)
-
-    void prepareModpackJob(job, {
-      ...request,
-      instanceName: check.name,
-      file: { url: parsedUrl.toString(), fileName, ...(sha1 ? { sha1 } : {}), size },
-      ...(sourceApi ? { sourceApi } : {})
-    }).catch(() => undefined)
-
-    return { jobId: job.id }
-  })
+  async function cancelTask(task: PipelineTask): Promise<void> {
+    if (task.state === 'done' || task.state === 'failed') return
+    cancelledTasks.add(task.id)
+    task.state = 'failed'
+    task.error = '已取消'
+    task.progress.speed = 0
+    const transfer = transfers.get(task.id)
+    if (transfer) await transfer.stop().catch(() => undefined)
+    const partPath = task.savePath + '.part'
+    await rm(partPath, { force: true }).catch(() => undefined)
+    await rm(transferStatePath(partPath), { force: true }).catch(() => undefined)
+  }
 
   ctx.ipc.handle('tasks/list', () => [...tasks.values()])
 
   ctx.ipc.handle<{ taskId: string }>('tasks/cancel', async ({ taskId }) => {
-    await cancelTask(taskId)
+    const task = tasks.get(taskId)
+    if (task) await cancelTask(task)
     persistRecords(true)
   })
   ctx.ipc.handle<{ taskId: string }>('tasks/pause', async ({ taskId }) => {
-    await pauseTask(taskId)
+    const task = tasks.get(taskId)
+    if (task) await pauseTask(task)
     persistRecords(true)
   })
   ctx.ipc.handle<{ taskId: string }>('tasks/resume', ({ taskId }) => {
-    resumeTask(taskId)
+    const task = tasks.get(taskId)
+    if (task) resumeTask(task)
     persistRecords(true)
     scheduleLoop()
   })
 
-  ctx.ipc.handle('install/list', () => [...jobs.values()])
+  // -------------------------------------------------------------------------
+  // IPC：任务级控制与查询
+  // -------------------------------------------------------------------------
 
-  // 下载页首屏只需要聚合结果；逐文件任务可能有几万条，全部传输会拖慢开页
+  ctx.ipc.handle('install/list', () => [...jobs.values()])
   ctx.ipc.handle('install/summary', (): InstallJobSummary[] => [...jobs.values()].map(toSummary))
 
-  /** 汇总一次安装的实时阶段：准备 / 下载中 / 已暂停 / 失败 / 完成 */
-  function liveStateOf(job: InstallJob): InstallLiveState {
+  /**
+   * 展开详情：返回该任务里尚未完成的文件。
+   *
+   * 一次安装可能有几千个资源对象，全量返回会拖垮每 1.5 秒的轮询；只给
+   * 正在下载 / 等待 / 失败的行，并限制条数，页面内部滚动查看。
+   */
+  ctx.ipc.handle<{ jobId: string }>('install/tasks', ({ jobId }): DownloadTaskView[] => {
+    const job = jobs.get(jobId)
+    if (!job) return []
+    const priority: Record<DownloadTaskState, number> = {
+      downloading: 0,
+      verifying: 1,
+      pending: 2,
+      deferred: 3,
+      paused: 4,
+      failed: 5,
+      done: 6
+    }
+    return job.taskIds
+      .map((id) => tasks.get(id))
+      .filter((task): task is PipelineTask => task !== undefined && task.state !== 'done')
+      .sort((a, b) => priority[a.state] - priority[b.state])
+      .slice(0, 300)
+      .map((task) => ({
+        id: task.id,
+        label: task.label,
+        state: task.state,
+        loaded: task.progress.loaded,
+        total: task.progress.total,
+        size: task.size,
+        ...(task.error ? { error: task.error } : {})
+      }))
+  })
+
+  function liveStateOf(job: PipelineJob): InstallLiveState {
     if (job.state === 'preparing') return pausedJobs.has(job.id) ? 'paused' : 'preparing'
     if (job.state === 'done') return 'done'
     if (job.state === 'cancelled') return 'cancelled'
     if (job.state === 'failed') return 'failed'
+    if (job.state === 'finalizing') return 'downloading'
 
     let active = 0
     let pending = 0
@@ -4098,16 +1690,16 @@ export function apply(ctx: Context): void {
   }
 
   ctx.ipc.handle('install/status', (): InstanceInstallStatus[] => {
-    const latest = new Map<string, InstallJob>()
+    const latest = new Map<string, PipelineJob>()
     for (const job of jobs.values()) {
-      // 启动页只关心真实实例；Mod 安装任务不能混进实例状态
-      if (!isGameJob(job)) continue
-      const current = latest.get(job.instanceName)
-      if (!current || jobSequence(job) >= jobSequence(current)) latest.set(job.instanceName, job)
+      const instanceName = job.scope?.instanceName
+      if (!instanceName) continue
+      const current = latest.get(instanceName)
+      if (!current || jobSequence(job) >= jobSequence(current)) latest.set(instanceName, job)
     }
 
     return [...latest.values()].map((job) => ({
-      instanceName: job.instanceName,
+      instanceName: job.scope?.instanceName ?? job.title,
       jobId: job.id,
       state: liveStateOf(job),
       retryable:
@@ -4122,255 +1714,145 @@ export function apply(ctx: Context): void {
   ctx.ipc.handle<{ jobId: string }>('install/cancel', async ({ jobId }) => {
     const job = jobs.get(jobId)
     if (!job) return
-    // 已完成的安装不能被取消改写历史
-    const unfinished =
-      job.state === 'preparing' ||
-      job.taskIds.some((taskId) => {
-        const task = tasks.get(taskId)
-        return task !== undefined && task.state !== 'done' && task.state !== 'failed'
-      })
-    if (!unfinished) return
-    cancelledJobs.add(jobId)
+    if (isFinished(job)) return
     pausedJobs.delete(jobId)
     job.state = 'cancelled'
-    log.info('取消安装「%s」，job %s', job.instanceName, job.id)
-    // 准备阶段的安装没有任务，中断元数据请求后由 prepareJob 负责清理实例目录
-    prepAborts.get(jobId)?.abort()
-    await Promise.all(job.taskIds.map((taskId) => cancelTask(taskId)))
-    // 取消的任务只会出现在历史行里，汇总后即可丢掉逐文件明细
+    job.note = undefined
+    job.preparePercent = undefined
+    log.info('取消下载任务「%s」，job %s', job.title, job.id)
+    await Promise.all(
+      job.taskIds.map(async (taskId) => {
+        const task = tasks.get(taskId)
+        if (task) await cancelTask(task)
+      })
+    )
     archiveJob(job)
-    // 取消的安装不保留半成品：清掉实例目录，名称可以立即重新使用。
-    // 补全任务只停下载，实例本身要保留；Mod 安装只清理自己排队的任务，
-    // 旧记录也不能删掉新版实例的文件。
-    if (isGameJob(job) && isCurrentJob(job) && job.mode !== 'repair') {
-      await discardInstanceDir(job)
-    }
     persistRecords(true)
+    emitFinished(job)
   })
 
   ctx.ipc.handle<{ jobId: string }>('install/pause', async ({ jobId }) => {
     const job = jobs.get(jobId)
-    if (!job) return
-    if (job.state === 'failed' || job.state === 'cancelled') return
-    // 任务级状态负责展示，任务级暂停集体生效；未开始的任务也要一起停下
+    if (!job || isFinished(job)) return
+    // 准备阶段还没有稳定的文件阶段：此时暂停只记状态，避免把加载器安装器
+    // 正在 awaitFiles 的任务挂起，导致「准备下载清单」永远不结束。
+    if (job.state === 'preparing') {
+      job.paused = true
+      persistRecords()
+      return
+    }
     pausedJobs.add(jobId)
-    log.info('暂停安装「%s」，job %s', job.instanceName, job.id)
-    await Promise.all(job.taskIds.map((taskId) => pauseTask(taskId)))
+    job.paused = true
+    log.info('暂停下载任务「%s」，job %s', job.title, job.id)
+    await Promise.all(
+      job.taskIds.map(async (taskId) => {
+        const task = tasks.get(taskId)
+        if (task) await pauseTask(task)
+      })
+    )
     persistRecords(true)
   })
 
   ctx.ipc.handle<{ jobId: string }>('install/resume', ({ jobId }) => {
     const job = jobs.get(jobId)
-    if (!job) return
-    if (job.state === 'failed' || job.state === 'cancelled') return
-    // 旧记录继续下载会写进新版实例的目录，直接拒绝
-    if (!isCurrentJob(job)) return
+    if (!job || isFinished(job)) return
     pausedJobs.delete(jobId)
-    log.info('继续安装「%s」，job %s', job.instanceName, job.id)
-    for (const taskId of job.taskIds) resumeTask(taskId)
+    job.paused = false
+    log.info('继续下载任务「%s」，job %s', job.title, job.id)
+    for (const taskId of job.taskIds) {
+      const task = tasks.get(taskId)
+      if (task) resumeTask(task)
+    }
     persistRecords(true)
     scheduleLoop()
   })
 
-  /**
-   * 重试一次失败的安装。
-   *
-   * 只把失败的任务重新排队，已完成的文件与下载缓存继续复用；实例在重试期间
-   * 仍保持 installing，直到全部任务完成才重新变得可启动。
-   */
   ctx.ipc.handle<{ jobId: string }>('install/retry', async ({ jobId }) => {
     const job = jobs.get(jobId)
-    if (!job || job.state === 'done' || job.state === 'cancelled' || job.state === 'preparing')
-      return
-    if (!isCurrentJob(job)) throw new Error('该安装记录已被更新的安装取代，不能重试')
-    if (job.taskIds.length === 0) throw new Error('该安装没有可续传的下载记录，请删除后重新安装')
-    if (isGameJob(job) && !existsSync(versionJsonOf(job.instanceName, installedVersionId(job)))) {
-      throw new Error('实例版本文件已丢失，请删除该安装后重新下载')
-    }
-
-    const failed = job.taskIds
-      .map((taskId) => tasks.get(taskId))
-      .filter(
-        (task): task is DownloadTask =>
-          task !== undefined && task.state === 'failed' && task.error !== '已取消'
-      )
-    if (failed.length === 0) {
-      // 整合包可能在合并覆盖文件时失败：文件都下完了，重试应重新收尾
-      if (job.kind === 'modpack') {
-        job.state = 'ready'
-        await completeJob(job)
-      }
-      return
-    }
-
-    if (isGameJob(job)) {
-      await writeInstallState(instanceDirOf(job.instanceName), installRecordOf(job, 'installing'))
-    }
-    job.state = 'ready'
-    delete job.error
-    pausedJobs.delete(job.id)
-    for (const task of failed) {
-      task.state = 'pending'
-      delete task.error
-      task.progress.loaded = partSizeOf(task.savePath)
-      task.progress.total = task.size > 0 ? task.size : task.progress.total
-      task.progress.speed = 0
-    }
-
-    if (isGameJob(job)) {
-      log.info(
-        '重试安装「%s」：%d 个失败任务重新排队，job %s',
-        job.title || job.instanceName,
-        failed.length,
-        job.id
-      )
-    } else {
-      log.info(
-        '重试 %s 安装「%s」：%d 个失败任务重新排队，job %s',
-        jobContentLabel(job),
-        job.title || job.instanceName,
-        failed.length,
-        job.id
-      )
-    }
-    persistRecords(true)
-    scheduleLoop()
+    if (!job || job.state === 'done' || job.state === 'cancelled') return
+    const handled = await serialEvent(ctx, 'download/retry', jobId)
+    if (!handled) throw new Error('该安装没有可续传的下载记录，请删除后重新安装')
   })
 
-  /**
-   * 删除一条下载记录。
-   *
-   * 记录与实例是两回事：这里只清任务与历史记录，不碰实例目录。任何已经结束的
-   * 记录（完成、失败、取消或被更新安装取代）都可以删除；仍在进行的记录要先取消。
-   */
   ctx.ipc.handle<{ jobId: string }>('install/discard', async ({ jobId }) => {
     const job = jobs.get(jobId)
     if (!job) return
-
     const active =
       job.state === 'preparing' ||
       job.taskIds.some((taskId) => {
         const task = tasks.get(taskId)
-        return task !== undefined && task.state !== 'done' && task.state !== 'failed'
+        return task !== undefined && !isValidTerminal(task.state)
       })
     if (active) throw new Error('安装仍在进行，请先取消')
 
-    // 实例目录留给启动页；这里只丢弃这条记录自己的任务
     for (const taskId of job.taskIds) tasks.delete(taskId)
     jobs.delete(jobId)
     pausedJobs.delete(jobId)
     persistRecords(true)
-    log.info('已删除安装记录「%s」，job %s', job.instanceName, job.id)
+    ctx.emit('download/discarded', jobId)
+    log.info('已删除下载记录「%s」，job %s', job.title, jobId)
   })
 
-  /**
-   * 补全已有实例：从实例里的版本文件重建下载清单，只下载缺失文件。
-   *
-   * 补全不创建新实例，也不检查重名；调用方（启动页）传实例目录名和当前版本 id。
-   */
-  ctx.ipc.handle<InstallRepairRequest>('install/repair', (request) => {
-    const instanceName = safeInstanceName(request?.instanceName)
-    if (!instanceName) return { jobId: '', error: '无效的实例名称' }
+  // -------------------------------------------------------------------------
+  // IPC：设置与缓存
+  // -------------------------------------------------------------------------
 
-    const versionId = safeVersionId(request?.versionId)
-    if (!versionId) return { jobId: '', error: '无效的版本 id' }
+  ctx.ipc.handle('settings/get', () => ({
+    concurrency: String(maxConcurrency()),
+    segments: normalizeDownloadSegments(
+      ctx.storage.get<string>('segments', DEFAULT_DOWNLOAD_SEGMENTS)
+    ),
+    segmentThreshold: normalizeDownloadSegmentThreshold(
+      ctx.storage.get<string>('segmentThreshold', DEFAULT_DOWNLOAD_SEGMENT_THRESHOLD)
+    ),
+    cacheLimit: loadCacheLimit()
+  }))
 
-    const instanceDir = instanceDirOf(instanceName)
-    if (!existsSync(instanceDir)) return { jobId: '', error: '实例不存在' }
-    if (!existsSync(versionJsonOf(instanceName, versionId))) {
-      return { jobId: '', error: '实例版本文件不存在' }
+  ctx.ipc.handle<{ key: string; value: string }>('settings/set', async ({ key, value }) => {
+    if (key === 'segments') {
+      const normalized = normalizeDownloadSegments(value)
+      ctx.storage.set('segments', normalized)
+      log.info('单文件分段连接数已更新：%s', normalized)
+      return
     }
-
-    // 已有进行中的任务时直接复用，避免同一实例并发下载
-    const active = [...jobs.values()].find(
-      (job) =>
-        isGameJob(job) &&
-        job.instanceName === instanceName &&
-        job.state !== 'done' &&
-        job.state !== 'failed' &&
-        job.state !== 'cancelled'
-    )
-    if (active) return { jobId: active.id }
-
-    const job: InstallJob = {
-      id: nextJobId(),
-      kind: 'game',
-      instanceName,
-      gameVersion: versionId,
-      taskIds: [],
-      createdAt: Date.now(),
-      state: 'preparing',
-      mode: 'repair'
+    if (key === 'segmentThreshold') {
+      const normalized = normalizeDownloadSegmentThreshold(value)
+      ctx.storage.set('segmentThreshold', normalized)
+      log.info('分段阈值已更新：%s MB', normalized)
+      return
     }
-    jobs.set(job.id, job)
-    archiveSupersededJobs(instanceName, job.id)
-    persistRecords()
-    log.info('已受理补全实例「%s」：版本 %s，job %s', instanceName, versionId, job.id)
-
-    void prepareRepair(job).catch(() => undefined)
-    return { jobId: job.id }
+    if (key === 'cacheLimit') {
+      const normalized = normalizeDownloadCacheLimit(value)
+      ctx.storage.set('cacheLimit', normalized)
+      log.info('下载缓存上限已更新：%s', describeCacheLimit(normalized))
+      await pruneCacheNow()
+      return cacheUsage()
+    }
+    // 旧版页面的源配置：接受写入但只保存，供迁移读取；新页面不再调用
+    if (key === 'sources' || key === 'loaderSources' || key === 'modSources') {
+      ctx.storage.set(key, value)
+      log.warn('%s 已改由各自的插件管理，本次写入仅保留用于迁移', key)
+      return
+    }
+    ctx.storage.set(key, value)
+    log.info('下载设置已更新：%s', key)
   })
 
-  ctx.ipc.handle<{ name: string }>('install/validate-name', ({ name }) => checkInstanceName(name))
+  ctx.ipc.handle('cache/stats', () => cacheUsage())
 
-  ctx.ipc.handle<InstallRequest>('install/start', (request) => {
-    const gameVersion = safeVersionId(request?.gameVersion)
-    if (!gameVersion) return { jobId: '', error: '无效的游戏版本' }
-
-    const check = checkInstanceName(request.instanceName)
-    if (!check.ok) return { jobId: '', error: check.message ?? '实例名称无效' }
-
-    let loader: { kind: LoaderSourceKind; version: string } | undefined
-    if (request.loader !== undefined && request.loader !== null) {
-      const kind = safeLoaderKind(request.loader.kind)
-      if (!kind) return { jobId: '', error: '不支持的加载器类型' }
-      const loaderVersion = safeVersionId(request.loader.version)
-      if (!loaderVersion) return { jobId: '', error: '无效的加载器版本' }
-      loader = { kind, version: loaderVersion }
-    }
-
-    const instanceName = check.name
-    const job: InstallJob = {
-      id: nextJobId(),
-      kind: 'game',
-      instanceName,
-      gameVersion,
-      loader,
-      taskIds: [],
-      createdAt: Date.now(),
-      state: 'preparing',
-      mode: 'install'
-    }
-    jobs.set(job.id, job)
-    archiveSupersededJobs(instanceName, job.id)
-
-    // 从受理到版本目录落盘之间占住名称，避免同一名称的并发安装互相覆盖
-    reservedInstanceNames.add(instanceKey(instanceName))
-    // 不做同步落盘：任务列表可能有上千条，写入会拖慢「点击即返回」的受理路径
-    persistRecords()
-    log.info(
-      '已受理安装「%s」：版本 %s%s，job %s',
-      instanceName,
-      gameVersion,
-      loader ? ` + ${LOADER_LABELS[loader.kind]} ${loader.version}` : '',
-      job.id
+  ctx.ipc.handle('cache/clear', async () => {
+    const busy = [...tasks.values()].some(
+      (task) => task.state === 'downloading' || task.state === 'verifying'
     )
-
-    // 立刻返回：下载清单在后台准备，调用方直接跳转到下载页
-    void prepareJob(job, { ...request, gameVersion, loader }).catch(() => undefined)
-
-    return { jobId: job.id }
-  })
-
-  // 目录 RPC 返回前给 `catalog/describe` 一次改写展示文案的机会。缓存里仍然
-  // 是来源原文（describe.ts 只在副本上改写），翻译插件禁用时没有监听器，
-  // 事件原样返回，调用方不会感知到这一层。
-  ctx.on('ipc/before', async (request, next) => {
-    const response = await next()
-    if (!response.ok || request.target !== name) return response
-    return describeResponse(ctx, request, response, (message, ...args) =>
-      log.debug(message, ...args)
-    )
+    if (busy) throw new Error('正在下载，暂时不能清空缓存')
+    const before = await cacheUsage()
+    try {
+      await rm(cacheRoot, { recursive: true, force: true })
+    } catch (cause) {
+      throw new Error(`清空缓存失败：${toError(cause).message}`, { cause })
+    }
+    log.info('下载缓存已清空：%d 个文件，%d 字节', before.files, before.bytes)
+    return cacheUsage()
   })
 }
 
