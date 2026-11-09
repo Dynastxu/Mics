@@ -1,6 +1,7 @@
 {
   "name": "@mics/desktop",
   "productName": "Mics",
+  "desktopName": "mics.desktop",
   "description": "Minecraft Integrated Control Software（MICS）桌面客户端",
   "author": "mics",
   "version": "0.1.0-alpha",
@@ -90,11 +91,17 @@
         "dmg"
       ]
     },
+    "deb": {
+      "packageName": "mics"
+    },
     "linux": {
       "target": [
         "AppImage",
         "deb"
-      ]
+      ],
+      "executableName": "mics",
+      "category": "Game",
+      "syncDesktopName": true
     }
   }
 }
