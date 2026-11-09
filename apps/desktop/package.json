@@ -1,6 +1,7 @@
 {
   "name": "@mics/desktop",
   "productName": "Mics",
+  "description": "Minecraft Integrated Control Software（MICS）桌面客户端",
   "author": "mics",
   "version": "0.1.0-alpha",
   "private": true,
@@ -11,10 +12,10 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win",
-    "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux"
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
   },
   "dependencies": {
     "@cordisjs/plugin-fs-node": "^0.1.0",
