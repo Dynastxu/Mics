@@ -1,0 +1,15 @@
+version: 2
+
+# 只盯 GitHub Actions 的版本。action 走的是 major tag（@v7），
+# 落后一整代时不会有任何提示，只能靠这里定期提 PR。
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # 一次改完所有 action，避免六个 PR 各自跑一遍 CI。
+    groups:
+      github-actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
