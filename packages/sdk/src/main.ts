@@ -6,6 +6,10 @@ import './contract/services'
 // 因此挂在 `/main` 入口；`node/` 下只放依赖 Node 的模块，渲染进程不引入。
 export * from './node/layout'
 export * from './node/zip'
+export * from './node/http'
+export * from './node/minecraft'
+export * from './node/loader'
+export * from './node/packs'
 
 /**
  * 主进程插件的类型标注辅助函数。

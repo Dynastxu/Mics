@@ -1,0 +1,9 @@
+{
+  "id": "mics.download.loaders",
+  "name": "加载器安装",
+  "description": "加载器注册表：把版本查询与安装请求路由到对应的加载器插件，并聚合各加载器的下载源设置。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.download.manager", "mics.shell"]
+}

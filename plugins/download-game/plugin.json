@@ -1,0 +1,9 @@
+{
+  "id": "mics.download.game",
+  "name": "原版游戏",
+  "description": "Mojang 版本清单与版本档案分析、实例目录与安装状态、新装与补全编排；拥有原版下载源配置。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.download.manager"]
+}

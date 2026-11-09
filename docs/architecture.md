@@ -41,29 +41,29 @@
 
 ## 2. Cordis 映射
 
-| Cordis 概念                      | 在本项目中的职责                                                                                                                                                   |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Context`                        | 一切服务的容器；渲染进程也有一棵独立的 Context 树                                                                                                                  |
-| `ctx.plugin(plugin, config)`     | 插件激活；返回 `Fiber`，await 即等待激活完成                                                                                                                       |
-| `ctx.effect(() => cleanup)`      | 注册页面/命令/IPC 时的回收钩子；插件卸载自动执行                                                                                                                   |
-| `ctx.inject(deps, cb)`           | 依赖多个服务后再执行（内核注册系统 RPC 时用到）；服务缺失时插件停在 waiting                                                                                        |
-| `ctx.waterfall('ipc/before', …)` | RPC 派发前的拦截链：权限、审计、二次确认挂在插件侧，内核不再逐条加 if                                                                                              |
+| Cordis 概念                      | 在本项目中的职责                                                                                                       |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `Context`                        | 一切服务的容器；渲染进程也有一棵独立的 Context 树                                                                      |
+| `ctx.plugin(plugin, config)`     | 插件激活；返回 `Fiber`，await 即等待激活完成                                                                           |
+| `ctx.effect(() => cleanup)`      | 注册页面/命令/IPC 时的回收钩子；插件卸载自动执行                                                                       |
+| `ctx.inject(deps, cb)`           | 依赖多个服务后再执行（内核注册系统 RPC 时用到）；服务缺失时插件停在 waiting                                            |
+| `ctx.waterfall('ipc/before', …)` | RPC 派发前的拦截链：权限、审计、二次确认挂在插件侧，内核不再逐条加 if                                                  |
 | `Service` 子类                   | 内核能力：`plugins` / `ipc` / `commands` / `storage` / `permissions` / `capabilities` / `configuration` / `mainWindow` |
-| `ctx.isolate()`                  | 后续用于单插件服务隔离（例如独立日志命名空间）                                                                                                                     |
-| `ctx.on/emit`                    | 主进程内部事件；每个 Mics 事件在 `@mics/sdk` 的 `EVENT_MODES` 里声明派发模式，见下文「事件派发模式」                                                               |
-| `ctx.registry`                   | 插件面板可据此列出所有 fiber（后续扩展点）                                                                                                                         |
+| `ctx.isolate()`                  | 后续用于单插件服务隔离（例如独立日志命名空间）                                                                         |
+| `ctx.on/emit`                    | 主进程内部事件；每个 Mics 事件在 `@mics/sdk` 的 `EVENT_MODES` 里声明派发模式，见下文「事件派发模式」                   |
+| `ctx.registry`                   | 插件面板可据此列出所有 fiber（后续扩展点）                                                                             |
 
 ### 事件派发模式
 
 cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式再派发：
 
-| 模式        | 语义                                      | 当前事件                                                                                       |
-| ----------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `emit`      | 通知，同步执行，返回值丢弃                | `plugins/changed`、`plugin/activated`、`plugin/deactivated`、`ipc/after`、`capability/changed` |
-| `bail`      | 同步投票，第一个非空返回值即结论          | `plugin/beforeActivate`（审批：`{ allow: false, reason }` 拒绝激活）                           |
-| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认）、`catalog/describe`（目录名称/描述的翻译扩展）      |
-| `serial`    | 串行等待，遇到第一个结论即停止            | 暂无（需要异步审批时使用）                                                                     |
-| `parallel`  | 扇出，等全部监听器完成                    | 暂无（纯并行的收尾工作使用）                                                                   |
+| 模式        | 语义                                      | 当前事件                                                                                                                                                                 |
+| ----------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `emit`      | 通知，同步执行，返回值丢弃                | `plugins/changed`、`plugin/activated`、`plugin/deactivated`、`ipc/after`、`capability/changed`、`download/*` 的完成通知                                                  |
+| `bail`      | 同步投票，第一个非空返回值即结论          | `plugin/beforeActivate`（审批：`{ allow: false, reason }` 拒绝激活）                                                                                                     |
+| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认）、`catalog/describe`（目录名称/描述的翻译扩展）                                                                                |
+| `serial`    | 串行等待，遇到第一个结论即停止            | `download/create`、`download/addFiles`、`download/awaitFiles`、`download/seal`、`download/finish`、`download/retry`、`game/*`、`loader/*`、`catalog/resolveModpackFiles` |
+| `parallel`  | 扇出，等全部监听器完成                    | 暂无（纯并行的收尾工作使用）                                                                                                                                             |
 
 声明集中在 `packages/sdk/src/contract/events.ts`：
 
@@ -75,7 +75,12 @@ cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式
 
 这样「`emit` 之后有没有人改返回值」不需要读派发点猜，类型和声明会直接回答。
 
-`catalog/describe` 是目录文案的扩展点：下载管线在主进程返回目录 RPC 之前派发，
+下载子系统是这套事件模型的第一个大用户：下载管线（`mics.download.manager`）只实现
+`download/*`，原版、加载器、社区来源与各分类插件通过 `serial` 事件提交「文件 + 候选源」，
+通过 `download/filesDone` / `download/finish` 收尾。管线的职责与契约见
+[download-pipeline.md](download-pipeline.md)。
+
+`catalog/describe` 是目录文案的扩展点：社区目录插件（`mics.download.catalog`）在主进程返回目录 RPC 之前派发，
 监听器按来源原文改写名称/描述；未命中时原样返回 `next()`。缓存、搜索与指纹识别
 仍然只看到原文，派发方会吞掉监听器异常并回退原文，翻译插件不能阻断目录打开。
 
@@ -429,16 +434,16 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 `app.getPath('userData')`（Windows 上是 `%APPDATA%\Mics\`，目录名由 `productName` 决定）
 是唯一的可写根：
 
-| 目录                    | 内容                                                                                           | 归属                           |
-| ----------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------ |
-| `.minecraft/`           | 游戏根，结构对齐原版启动器：`versions/`、`libraries/`、`assets/`，见下                         | 下载管线（写）/ 启动管线（读） |
-| `cache/downloads/`      | 按 URL / sha1 复用的下载缓存；大文件分段的断点状态以 `.part.segments.json` 与 `.part` 相邻存放 | 下载管线                       |
-| `plugins/`              | 第三方插件本体                                                                                 | 插件管理                       |
-| `logs/`                 | 每次启动一个 `mics-<时间>.log`                                                                 | 日志插件                       |
-| `profiles/`             | `boot.config.json` 指向的 profile                                                              | 内核                           |
-| `cordis.yml`            | 插件树：每个主进程插件的入口、配置与 `disabled`（Include 写回）                                | 内核（Include）                |
-| `disabled-plugins.json` | 纯渲染插件（没有主进程入口）的开关；其余开关已并入 `cordis.yml`                                | 内核                           |
-| `enabled-plugins.json`  | 用户显式启用的「默认关闭」插件；没有记录时按清单的 `defaultDisabled` 处理                      | 内核                           |
+| 目录                    | 内容                                                                                           | 归属                               |
+| ----------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `.minecraft/`           | 游戏根，结构对齐原版启动器：`versions/`、`libraries/`、`assets/`，见下                         | 原版游戏插件（写）/ 启动管线（读） |
+| `cache/downloads/`      | 按 URL / sha1 复用的下载缓存；大文件分段的断点状态以 `.part.segments.json` 与 `.part` 相邻存放 | 下载管线                           |
+| `plugins/`              | 第三方插件本体                                                                                 | 插件管理                           |
+| `logs/`                 | 每次启动一个 `mics-<时间>.log`                                                                 | 日志插件                           |
+| `profiles/`             | `boot.config.json` 指向的 profile                                                              | 内核                               |
+| `cordis.yml`            | 插件树：每个主进程插件的入口、配置与 `disabled`（Include 写回）                                | 内核（Include）                    |
+| `disabled-plugins.json` | 纯渲染插件（没有主进程入口）的开关；其余开关已并入 `cordis.yml`                                | 内核                               |
+| `enabled-plugins.json`  | 用户显式启用的「默认关闭」插件；没有记录时按清单的 `defaultDisabled` 处理                      | 内核                               |
 
 游戏数据与应用数据分开放：`.minecraft` 可以整目录备份或搬到别的盘，而 `plugins` /
 `logs` / `profiles` / `cache` 是启动器自己的东西。插件在根下新增目录前先确认没有

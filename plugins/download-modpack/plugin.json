@@ -3,8 +3,9 @@
   "name": "整合包下载",
   "description": "整合包目录：从 Modrinth / CurseForge 搜索整合包，解析包内清单后创建实例并下载。",
   "author": "mics",
+  "main": "dist/main.mjs",
   "renderer": "dist/renderer.mjs",
-  "dependencies": ["mics.download.manager"],
+  "dependencies": ["mics.download.manager", "mics.download.catalog", "mics.download.game"],
   "permissions": ["shell:openExternal"],
   "contributes": {
     "nav": [

@@ -38,19 +38,19 @@ const installing = ref(false)
 const installError = ref('')
 
 async function fetchSources(): Promise<CatalogSourceInfo[]> {
-  return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.manager', 'packs/sources', { kind: KIND })
+  return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.catalog', 'packs/sources', { kind: KIND })
 }
 
 async function fetchCategories(): Promise<CatalogCategory[]> {
-  return ctx.ipc.invoke<ModCategory[]>('mics.download.manager', 'packs/categories', { kind: KIND })
+  return ctx.ipc.invoke<ModCategory[]>('mics.download.catalog', 'packs/categories', { kind: KIND })
 }
 
 async function fetchGameVersions(): Promise<CatalogGameVersion[]> {
-  return ctx.ipc.invoke<GameVersion[]>('mics.download.manager', 'versions/list')
+  return ctx.ipc.invoke<GameVersion[]>('mics.download.game', 'versions/list')
 }
 
 async function search(request: CatalogSearchRequest): Promise<CatalogSearchResult> {
-  return ctx.ipc.invoke('mics.download.manager', 'packs/search', {
+  return ctx.ipc.invoke('mics.download.catalog', 'packs/search', {
     kind: KIND,
     query: request.query,
     source: request.source as ModSourceKind | 'all',
@@ -70,14 +70,14 @@ async function fetchVersions(item: CatalogItem): Promise<CatalogVersion[]> {
     gameVersion: '',
     loader: 'all'
   }
-  return ctx.ipc.invoke<ModVersion[]>('mics.download.manager', 'packs/versions', {
+  return ctx.ipc.invoke<ModVersion[]>('mics.download.catalog', 'packs/versions', {
     kind: KIND,
     ...request
   })
 }
 
 async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
-  return ctx.ipc.invoke<ModSummary>('mics.download.manager', 'packs/project', {
+  return ctx.ipc.invoke<ModSummary>('mics.download.catalog', 'packs/project', {
     kind: KIND,
     source: item.source as ModSourceKind,
     ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
@@ -129,7 +129,7 @@ async function install(payload: { instanceNames: string[] }): Promise<void> {
   installError.value = ''
   try {
     const outcome = await ctx.ipc.invoke<InstallStartResult>(
-      'mics.download.manager',
+      'mics.download.shader',
       'packs/install',
       {
         kind: KIND,

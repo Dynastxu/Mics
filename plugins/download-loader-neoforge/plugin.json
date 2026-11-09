@@ -1,0 +1,9 @@
+{
+  "id": "mics.download.loader.neoforge",
+  "name": "NeoForge 安装",
+  "description": "NeoForge 加载器：版本列表、安装器下载与运行、库合并，拥有自己的下载源配置。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.download.loaders"]
+}

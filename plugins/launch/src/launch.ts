@@ -177,7 +177,7 @@ function fileIsUsable(file: string, expectedSha1: string | undefined): boolean {
  * 启动准备阶段发现必要文件缺失。
  *
  * 这是一个「可预期的结果」，不是异常路径：调用方据此弹窗询问用户是否补全，
- * 下载交给 `mics.download.manager` 的补全流程（多源、校验、缓存都在那边）。
+ * 下载交给 `mics.download.game` 的补全流程（多源、校验、缓存由下载管线负责）。
  */
 export class InstanceFilesMissingError extends Error {
   readonly files: MissingFile[]
@@ -420,6 +420,12 @@ export async function buildLaunchPlan(
   }
 
   const natives = nativeJarFiles(libraries, librariesDir)
+  // 加载器实例的版本档案由合并生成；旧版合并可能丢掉 LWJGL 的 natives
+  // classifiers，导致这里一个 native jar 都找不到。先让用户补全：补全会重新
+  // 合并父版本档案，再按下落清单补齐 natives。
+  if (natives.length === 0 && version.inheritsFrom) {
+    throw new InstanceFilesMissingError([{ label: 'LWJGL natives', path: 'natives' }])
+  }
   expectedFiles.push(...natives)
 
   const librariesInClasspath: string[] = []

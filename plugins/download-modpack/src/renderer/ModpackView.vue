@@ -97,19 +97,19 @@ const details = computed(() => {
 })
 
 async function fetchSources(): Promise<CatalogSourceInfo[]> {
-  return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.manager', 'modpacks/sources')
+  return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.catalog', 'modpacks/sources')
 }
 
 async function fetchCategories(): Promise<CatalogCategory[]> {
-  return ctx.ipc.invoke<ModCategory[]>('mics.download.manager', 'modpacks/categories')
+  return ctx.ipc.invoke<ModCategory[]>('mics.download.catalog', 'modpacks/categories')
 }
 
 async function fetchGameVersions(): Promise<CatalogGameVersion[]> {
-  return ctx.ipc.invoke<GameVersion[]>('mics.download.manager', 'versions/list')
+  return ctx.ipc.invoke<GameVersion[]>('mics.download.game', 'versions/list')
 }
 
 async function search(request: CatalogSearchRequest): Promise<CatalogSearchResult> {
-  return ctx.ipc.invoke('mics.download.manager', 'modpacks/search', {
+  return ctx.ipc.invoke('mics.download.catalog', 'modpacks/search', {
     query: request.query,
     source: request.source as ModSourceKind | 'all',
     gameVersion: request.gameVersion,
@@ -128,11 +128,11 @@ async function fetchVersions(item: CatalogItem): Promise<CatalogVersion[]> {
     gameVersion: '',
     loader: 'all'
   }
-  return ctx.ipc.invoke<ModVersion[]>('mics.download.manager', 'modpacks/versions', request)
+  return ctx.ipc.invoke<ModVersion[]>('mics.download.catalog', 'modpacks/versions', request)
 }
 
 async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
-  return ctx.ipc.invoke<ModSummary>('mics.download.manager', 'modpacks/project', {
+  return ctx.ipc.invoke<ModSummary>('mics.download.catalog', 'modpacks/project', {
     source: item.source as ModSourceKind,
     ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
     projectId: item.projectId
@@ -141,11 +141,9 @@ async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
 
 async function checkName(name: string): Promise<InstanceNameCheck> {
   try {
-    return await ctx.ipc.invoke<InstanceNameCheck>(
-      'mics.download.manager',
-      'install/validate-name',
-      { name }
-    )
+    return await ctx.ipc.invoke<InstanceNameCheck>('mics.download.game', 'install/validate-name', {
+      name
+    })
   } catch {
     return validateInstanceName(name)
   }
@@ -190,7 +188,7 @@ async function install(name: string): Promise<void> {
   installError.value = ''
   try {
     const result = await ctx.ipc.invoke<InstallStartResult>(
-      'mics.download.manager',
+      'mics.download.modpack',
       'modpacks/install',
       {
         instanceName: name,

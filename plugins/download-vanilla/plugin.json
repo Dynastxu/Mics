@@ -5,7 +5,7 @@
   "author": "mics",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
-  "dependencies": ["mics.download.manager"],
+  "dependencies": ["mics.download.game", "mics.download.loaders"],
   "contributes": {
     "nav": [
       {

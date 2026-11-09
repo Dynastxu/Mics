@@ -1,0 +1,9 @@
+{
+  "id": "mics.download.loader.fabric",
+  "name": "Fabric 安装",
+  "description": "Fabric 加载器：版本列表、profile 获取与安装，拥有自己的下载源配置。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.download.loaders"]
+}

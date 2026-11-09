@@ -190,7 +190,7 @@ const loaderSort = bySort((row) => CHANNEL_RANK[(row.badge ?? '') as LoaderChann
 
 /** 主进程重名校验；本地规则由 InstanceNameField 负责 */
 async function checkName(name: string): Promise<InstanceNameCheck> {
-  return ctx.ipc.invoke<InstanceNameCheck>('mics.download.manager', 'install/validate-name', {
+  return ctx.ipc.invoke<InstanceNameCheck>('mics.download.game', 'install/validate-name', {
     name
   })
 }
@@ -238,7 +238,7 @@ async function loadLoaderVersions(): Promise<void> {
 
   try {
     const list = await withTimeout(
-      ctx.ipc.invoke<LoaderVersion[]>('mics.download.manager', 'loaders/versions', {
+      ctx.ipc.invoke<LoaderVersion[]>('mics.download.game', 'loaders/versions', {
         gameVersion: target.id,
         kind
       }),
@@ -341,17 +341,13 @@ async function install(): Promise<void> {
       return
     }
 
-    const result = await ctx.ipc.invoke<InstallStartResult>(
-      'mics.download.manager',
-      'install/start',
-      {
-        gameVersion: target.id,
-        instanceName: name.name,
-        ...(loader && loaderVersion.value
-          ? { loader: { kind: loader, version: loaderVersion.value } }
-          : {})
-      }
-    )
+    const result = await ctx.ipc.invoke<InstallStartResult>('mics.download.game', 'install/start', {
+      gameVersion: target.id,
+      instanceName: name.name,
+      ...(loader && loaderVersion.value
+        ? { loader: { kind: loader, version: loaderVersion.value } }
+        : {})
+    })
 
     if (result.error) {
       noticeError.value = true
@@ -377,7 +373,7 @@ async function loadVersions(): Promise<void> {
   versionsError.value = ''
   try {
     rawVersions.value = await withTimeout(
-      ctx.ipc.invoke<GameVersion[]>('mics.download.manager', 'versions/list'),
+      ctx.ipc.invoke<GameVersion[]>('mics.download.game', 'versions/list'),
       '请求超时，请检查网络或在下载设置中添加镜像源'
     )
   } catch (cause) {

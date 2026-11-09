@@ -128,19 +128,19 @@ onUnmounted(() => {
 })
 
 async function fetchSources(): Promise<CatalogSourceInfo[]> {
-  return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.manager', 'mods/sources')
+  return ctx.ipc.invoke<ModSourceInfo[]>('mics.download.catalog', 'mods/sources')
 }
 
 async function fetchCategories(): Promise<CatalogCategory[]> {
-  return ctx.ipc.invoke<ModCategory[]>('mics.download.manager', 'mods/categories')
+  return ctx.ipc.invoke<ModCategory[]>('mics.download.catalog', 'mods/categories')
 }
 
 async function fetchGameVersions(): Promise<CatalogGameVersion[]> {
-  return ctx.ipc.invoke<GameVersion[]>('mics.download.manager', 'versions/list')
+  return ctx.ipc.invoke<GameVersion[]>('mics.download.game', 'versions/list')
 }
 
 async function search(request: CatalogSearchRequest): Promise<CatalogSearchResult> {
-  return ctx.ipc.invoke('mics.download.manager', 'mods/search', {
+  return ctx.ipc.invoke('mics.download.catalog', 'mods/search', {
     query: request.query,
     source: request.source as ModSourceKind | 'all',
     gameVersion: request.gameVersion,
@@ -159,11 +159,11 @@ async function fetchVersions(item: CatalogItem): Promise<CatalogVersion[]> {
     gameVersion: '',
     loader: 'all'
   }
-  return ctx.ipc.invoke<ModVersion[]>('mics.download.manager', 'mods/versions', request)
+  return ctx.ipc.invoke<ModVersion[]>('mics.download.catalog', 'mods/versions', request)
 }
 
 async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
-  return ctx.ipc.invoke<ModSummary>('mics.download.manager', 'mods/project', {
+  return ctx.ipc.invoke<ModSummary>('mics.download.catalog', 'mods/project', {
     source: item.source as ModSourceKind,
     ...(item.sourceApi ? { sourceApi: item.sourceApi } : {}),
     projectId: item.projectId
