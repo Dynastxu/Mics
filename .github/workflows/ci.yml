@@ -1,8 +1,9 @@
 name: CI
 on:
   push:
-    # 只跑分支：tag 推送交给 cd.yml，同一个提交不用在打 tag 时再跑一遍 CI。
-    branches: ['**']
+    # 只跑 main：分支上的提交由 pull_request 事件覆盖，两边都监听会让同仓库的 PR
+    # 每推一次就跑两遍 CI。tag 推送交给 cd.yml，同一个提交不用在打 tag 时再跑一遍。
+    branches: [main]
   pull_request:
 
 permissions:
