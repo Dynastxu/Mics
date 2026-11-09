@@ -3,7 +3,11 @@
   "productName": "Mics",
   "desktopName": "mics.desktop",
   "description": "Minecraft Integrated Control Software（MICS）桌面客户端",
-  "author": "mics",
+  "author": {
+    "name": "dynastxu",
+    "email": "dynastxu@qq.com"
+  },
+  "homepage": "https://github.com/Dynastxu/Mics",
   "version": "0.1.0-alpha",
   "private": true,
   "type": "module",
@@ -92,7 +96,8 @@
       ]
     },
     "deb": {
-      "packageName": "mics"
+      "packageName": "mics",
+      "artifactName": "mics-${version}-${arch}.${ext}"
     },
     "linux": {
       "target": [
