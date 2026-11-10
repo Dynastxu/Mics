@@ -2,7 +2,7 @@ import { app, shell } from 'electron'
 import type { Context } from 'cordis'
 import path from 'node:path'
 import { defineMainPlugin } from '@mics/sdk/main'
-import { AUTH_CREDENTIALS, SHELL_EXECUTE } from '@mics/sdk'
+import { AUTH_CREDENTIALS, SHELL_EXECUTE, emitEvent } from '@mics/sdk'
 import type { AuthCredentialsCapability, ShellExecuteCapability } from '@mics/sdk'
 import { detectJavaRuntimes, resolveJavaPath } from '@mics/java'
 import {
@@ -236,10 +236,12 @@ export function apply(ctx: Context): void {
     return result
   })
 
-  ctx.ipc.handle<InstanceModDeleteRequest>('instances/mods/delete', (params) => {
+  ctx.ipc.handle<InstanceModDeleteRequest>('instances/mods/delete', async (params) => {
     const id = instanceIdOf(params)
     const fileName = typeof params?.fileName === 'string' ? params.fileName : ''
-    const result = deleteInstanceMod(dataDir, id, fileName)
+    const result = await deleteInstanceMod(dataDir, id, fileName)
+    // 实例里的文件可能只是内容库的一条硬链接：删除链接后由订阅方回收实体
+    emitEvent(ctx, 'mods/removed', { instanceName: id, fileName })
     log.info('实例 %s 的 Mod %s 已删除', id, fileName)
     return result
   })
