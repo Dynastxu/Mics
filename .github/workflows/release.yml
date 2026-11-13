@@ -63,8 +63,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup
-        uses: ./.github/actions/setup
+      - name: Set up pnpm
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm ci
 
       # 版本只写根 package.json：随后 pnpm build 里的 version:sync 会把它下发到
       # apps/desktop 与各子包，electron-builder 和 app.getVersion() 读的正是 apps/desktop。
