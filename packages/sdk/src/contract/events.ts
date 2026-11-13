@@ -257,7 +257,8 @@ export interface MicsEvents {
    *
    * 文件已写到 `savePath` 并通过校验。监听器可以把实体搬进内容库、只在原
    * 位置留一条硬链接，并返回最终落点；默认实现什么都不做。管线按返回值继续
-   * 写下载缓存与取消清理。
+   * 写下载缓存与取消清理。不经过管线、直接往实例落文件的编排方（整合包覆盖
+   * 文件）也派发同一事件，让内容库同样接管。
    */
   'download/commit'(
     placement: DownloadPlacement,
