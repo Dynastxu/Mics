@@ -41,6 +41,31 @@ export interface DownloadFileRequest {
   guardDir?: string
 }
 
+/**
+ * 文件已落盘并通过校验（`download/commit` 的载荷）。
+ *
+ * 派发点就在「`.part` 改名成目标文件」之后：监听器可以把实体搬到内容库，
+ * 只在原位置留一条硬链接。返回的 `path` 是管线后续用于写缓存与取消清理的落点。
+ */
+export interface DownloadPlacement {
+  /** 任务展示名，便于日志定位 */
+  label: string
+  url: string
+  savePath: string
+  /** 空串表示来源没有提供摘要 */
+  sha1: string
+  /** 0 表示未知 */
+  size: number
+}
+
+/** `download/commit` 的返回值；默认是 `{ path: savePath }` */
+export interface DownloadPlacementResult {
+  /** 管线最终认为的落点；通常等于 `savePath` */
+  path: string
+  /** 监听器额外创建的文件；取消时由管线一并清理 */
+  created?: string[]
+}
+
 /** 创建一次下载任务（一次安装 / 一次批量下载） */
 export interface DownloadJobRequest {
   title: string

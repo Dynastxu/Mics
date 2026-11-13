@@ -1,0 +1,31 @@
+{
+  "id": "mics.mods.store",
+  "name": "Mod 内容库",
+  "description": "把下载到实例 mods/ 的 Mod 实体集中存进用户数据目录，实例里只留一条硬链接：同一个文件装进多个实例只占一份磁盘，同名但内容不同的文件按摘要后缀并存、不会互相覆盖；删除 Mod 后回收没有引用的实体。硬链接不可用的平台或跨卷时自动退回普通文件，不影响下载。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "activation": ["onStartup"],
+  "dependencies": ["mics.kernel", "mics.shell", "mics.download.manager"],
+  "permissions": {
+    "trust": "full"
+  },
+  "contributes": {
+    "configuration": {
+      "title": "Mod 内容库",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "启用内容库",
+          "description": "关闭后 Mod 按普通文件写进实例目录，不创建硬链接",
+          "default": true
+        },
+        "directory": {
+          "type": "string",
+          "title": "库存目录",
+          "description": "相对用户数据目录；改动后需要重启应用才生效",
+          "default": "mods"
+        }
+      }
+    }
+  }
+}

@@ -20,6 +20,8 @@ import type {
   DownloadJobRequest,
   DownloadJobResult,
   DownloadJobSnapshot,
+  DownloadPlacement,
+  DownloadPlacementResult,
   DownloadReportPatch,
   DownloadRetryResult,
   LegacyDownloadConfig
@@ -32,7 +34,7 @@ import type {
   GamePrepareInput,
   GamePrepareResult
 } from './game'
-import type { InstanceNameCheck } from './instance'
+import type { InstanceNameCheck, ModRemoval } from './instance'
 import type { LoaderPrepareInput, LoaderPrepareResult, LoaderVersionQuery } from './loader'
 import type { LogEntry } from './logs'
 import type { PluginId } from './manifest'
@@ -177,6 +179,18 @@ export interface MicsEvents {
   'download/addFiles'(request: DownloadAddFilesRequest): Promise<DownloadAddFilesResult> | void
 
   /**
+   * 改写一批文件的目标（`waterfall`）。
+   *
+   * 管线在登记任务之前派发它（`download/addFiles` 内部）：此时还没有任何字节
+   * 落盘，监听器可以给同名文件让路，返回新的 `savePath`。数组必须等长、下标
+   * 对应；监听器抛出的异常由管线吞掉并回退原清单，第三方插件不能阻断下载。
+   */
+  'download/targets'(
+    files: DownloadFileRequest[],
+    next: () => Promise<DownloadFileRequest[]>
+  ): Promise<DownloadFileRequest[]>
+
+  /**
    * 等待指定文件进入终态（`serial`）。
    *
    * 用于阶段依赖：加载器插件必须等安装器下载完才能运行 Java。
@@ -237,6 +251,27 @@ export interface MicsEvents {
 
   /** 旧版下载插件保存的源配置（`serial`，只读）；各插件启动时导入一次。 */
   'download/legacy-config'(): Promise<LegacyDownloadConfig> | void
+
+  /**
+   * 自定义文件的落盘方式（`waterfall`）。
+   *
+   * 文件已写到 `savePath` 并通过校验。监听器可以把实体搬进内容库、只在原
+   * 位置留一条硬链接，并返回最终落点；默认实现什么都不做。管线按返回值继续
+   * 写下载缓存与取消清理。不经过管线、直接往实例落文件的编排方（整合包覆盖
+   * 文件）也派发同一事件，让内容库同样接管。
+   */
+  'download/commit'(
+    placement: DownloadPlacement,
+    next: () => Promise<DownloadPlacementResult>
+  ): Promise<DownloadPlacementResult>
+
+  /**
+   * 通知：实例里删除了一个 Mod 文件（`emit`）。
+   *
+   * 删除只移除实例目录里的那一条链接，实体可能仍被其它实例引用；
+   * 内容库插件据此回收没有引用的实体。
+   */
+  'mods/removed'(removed: ModRemoval): void
 
   // -------------------------------------------------------------------------
   // 原版游戏（`mics.download.game`）
@@ -315,6 +350,7 @@ export const EVENT_MODES = {
   'log/history': 'emit',
   'download/create': 'serial',
   'download/addFiles': 'serial',
+  'download/targets': 'waterfall',
   'download/awaitFiles': 'serial',
   'download/finish': 'serial',
   'download/data': 'serial',
@@ -328,6 +364,8 @@ export const EVENT_MODES = {
   'download/jobResumed': 'emit',
   'download/discarded': 'emit',
   'download/legacy-config': 'serial',
+  'download/commit': 'waterfall',
+  'mods/removed': 'emit',
   'game/versions': 'serial',
   'game/validateName': 'serial',
   'game/prepareVersion': 'serial',

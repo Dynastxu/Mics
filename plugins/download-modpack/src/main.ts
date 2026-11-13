@@ -1,12 +1,14 @@
-import { existsSync } from 'node:fs'
-import { copyFile, mkdir, readdir, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { createReadStream, existsSync } from 'node:fs'
+import { copyFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { Context } from 'cordis'
 import {
   INVALID_INSTANCE_NAME_TEST,
   INSTANCE_STATE_FILE,
   isLoaderSourceKind,
-  serialEvent
+  serialEvent,
+  waterfallEvent
 } from '@mics/sdk'
 import type {
   CatalogFileRef,
@@ -48,6 +50,17 @@ function toError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause))
 }
 
+/** 覆盖文件没有来源摘要，入库前现算一份 */
+function hashFile(file: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha1')
+    const stream = createReadStream(file)
+    stream.on('data', (chunk) => hash.update(chunk as Buffer))
+    stream.on('error', reject)
+    stream.on('end', () => resolve(hash.digest('hex')))
+  })
+}
+
 function safeVersionId(value: unknown): string | null {
   if (typeof value !== 'string' || !value || value === '.' || value === '..') return null
   if (path.basename(value) !== value) return null
@@ -59,11 +72,15 @@ function safeVersionId(value: unknown): string | null {
  *
  * 只复制文件、不整目录替换：实例里已经有下载好的 Mod / 配置时，覆盖文件
  * 只应补上或替换同名项，不能把其它文件一起删掉。
+ *
+ * 落盘交给调用方：实例里的 Mod 可能是内容库的硬链接，直接 `copyFile` 会写穿
+ * 到共享实体，必须由调用方先写临时文件再改名。
  */
 async function mergeOverrides(
   source: string,
   target: string,
   reservedRoot: Set<string>,
+  place: (from: string, to: string) => Promise<void>,
   depth = 0
 ): Promise<void> {
   const entries = await readdir(source, { withFileTypes: true })
@@ -73,10 +90,10 @@ async function mergeOverrides(
     const to = path.join(target, entry.name)
     if (entry.isDirectory()) {
       await mkdir(to, { recursive: true })
-      await mergeOverrides(from, to, reservedRoot, depth + 1)
+      await mergeOverrides(from, to, reservedRoot, place, depth + 1)
     } else if (entry.isFile()) {
       await mkdir(path.dirname(to), { recursive: true })
-      await copyFile(from, to)
+      await place(from, to)
     }
   }
 }
@@ -88,6 +105,50 @@ export function apply(ctx: Context): void {
 
   function instanceDirOf(name: string): string {
     return path.join(instancesRoot(dataDir), name)
+  }
+
+  /**
+   * 覆盖文件落到实例。
+   *
+   * 先写临时文件再改名：目标是内容库的硬链接时，直接 `copyFile` 会写穿到
+   * 共享实体，把别的实例正在用的同一个文件一起改掉。
+   */
+  async function placeOverride(from: string, to: string): Promise<void> {
+    const temporary = `${to}.mics-override`
+    await copyFile(from, temporary)
+    await rename(temporary, to)
+    await storeOverride(to)
+  }
+
+  /**
+   * 覆盖文件里的 Mod 交给内容库接管（`download/commit`）。
+   *
+   * 覆盖文件来自归档、没有下载地址，摘要现算；内容库只是优化，失败时保留
+   * 普通文件并继续安装，只有文件确实丢了才让安装失败。
+   */
+  async function storeOverride(file: string): Promise<void> {
+    if (!/\.jar$/i.test(file) || path.basename(path.dirname(file)) !== 'mods') return
+    try {
+      const info = await stat(file)
+      const placement = await waterfallEvent(
+        ctx,
+        'download/commit',
+        {
+          label: path.basename(file),
+          url: '',
+          savePath: file,
+          sha1: await hashFile(file),
+          size: info.size
+        },
+        async () => ({ path: file })
+      )
+      if (placement.path !== file && !existsSync(placement.path)) {
+        throw new Error(`覆盖文件合并后不存在：${placement.path}`)
+      }
+    } catch (cause) {
+      if (!existsSync(file)) throw toError(cause)
+      log.warn('覆盖文件写入内容库失败（保留普通文件）：%s', toError(cause).message)
+    }
   }
 
   /** 更新下载页进度条下方的阶段说明 */
@@ -179,7 +240,7 @@ export function apply(ctx: Context): void {
     if (job.overridesDir && existsSync(job.overridesDir)) {
       reportStage(job.jobId, '合并覆盖文件')
       const instanceReserved = new Set([...RESERVED_INSTANCE_ROOT_FILES, `${job.versionId}.json`])
-      await mergeOverrides(job.overridesDir, instanceDir, instanceReserved)
+      await mergeOverrides(job.overridesDir, instanceDir, instanceReserved, placeOverride)
       await rm(job.overridesDir, { recursive: true, force: true }).catch(() => undefined)
       job.overridesDir = undefined
     }

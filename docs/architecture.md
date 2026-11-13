@@ -59,9 +59,9 @@ cordis 4 提供五种派发模式，Mics 的每个事件都必须先登记模式
 
 | 模式        | 语义                                      | 当前事件                                                                                                                                                                 |
 | ----------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `emit`      | 通知，同步执行，返回值丢弃                | `plugins/changed`、`plugin/activated`、`plugin/deactivated`、`ipc/after`、`capability/changed`、`download/*` 的完成通知                                                  |
+| `emit`      | 通知，同步执行，返回值丢弃                | `plugins/changed`、`plugin/activated`、`plugin/deactivated`、`ipc/after`、`capability/changed`、`download/*` 的完成通知、`mods/removed`                                  |
 | `bail`      | 同步投票，第一个非空返回值即结论          | `plugin/beforeActivate`（审批：`{ allow: false, reason }` 拒绝激活）                                                                                                     |
-| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认）、`catalog/describe`（目录名称/描述的翻译扩展）                                                                                |
+| `waterfall` | 中间件，监听器拿到 `next()`，可短路或改写 | `ipc/before`（权限、审计、限流、二次确认）、`catalog/describe`（目录名称/描述的翻译扩展）、`download/targets`、`download/commit`（任务目标与落盘方式改写）               |
 | `serial`    | 串行等待，遇到第一个结论即停止            | `download/create`、`download/addFiles`、`download/awaitFiles`、`download/seal`、`download/finish`、`download/retry`、`game/*`、`loader/*`、`catalog/resolveModpackFiles` |
 | `parallel`  | 扇出，等全部监听器完成                    | 暂无（纯并行的收尾工作使用）                                                                                                                                             |
 
@@ -438,6 +438,7 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 | ----------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------- |
 | `.minecraft/`           | 游戏根，结构对齐原版启动器：`versions/`、`libraries/`、`assets/`，见下                         | 原版游戏插件（写）/ 启动管线（读） |
 | `cache/downloads/`      | 按 URL / sha1 复用的下载缓存；大文件分段的断点状态以 `.part.segments.json` 与 `.part` 相邻存放 | 下载管线                           |
+| `mods/`                 | Mod 内容库：`<sha1>.jar` 实体；实例的 `mods/*.jar` 是指向这里的硬链接                          | Mod 内容库插件                     |
 | `plugins/`              | 第三方插件本体                                                                                 | 插件管理                           |
 | `logs/`                 | 每次启动一个 `mics-<时间>.log`                                                                 | 日志插件                           |
 | `profiles/`             | `boot.config.json` 指向的 profile                                                              | 内核                               |
@@ -448,6 +449,27 @@ shim 从 `globalThis.__MICS_VUE__` / `__MICS_CORDIS__` 读取 shell 注入的实
 游戏数据与应用数据分开放：`.minecraft` 可以整目录备份或搬到别的盘，而 `plugins` /
 `logs` / `profiles` / `cache` 是启动器自己的东西。插件在根下新增目录前先确认没有
 其它归属方，避免两个插件写同一路径。
+
+### Mod 内容库
+
+`mics.mods.store` 把实例里的 Mod 实体集中到 `<userData>/mods/<sha1>.jar`，实例的
+`mods/` 里只留一条硬链接：同一个文件装进多个实例只占一份磁盘。它是可禁用的普通插件，
+两条约定：
+
+- **只在支持硬链接的卷上启用**：启动时在库存目录探测一次，FAT32 / 网络盘 / 权限不足
+  时整体退回普通文件；运行期的 `EXDEV` / `ENOTSUP` 等也会永久退回，单次失败（并发、
+  文件锁）只放弃当前文件。
+- **不改变启用 / 禁用的语义**：开关仍然只是重命名（`foo.jar` ↔ `foo.jar.disabled`）。
+  硬链接是独立的目录项，重命名只动实例里的那一条，库存实体与其它实例都不受影响；
+  删除 Mod 后按 `nlink`（硬链接即引用计数）回收没有实例引用的实体。
+
+它订阅下载管线的两个瀑布事件：`download/targets` 在任务登记前改写目标——同名但摘要
+不同时给新文件加 `(摘要前 8 位)` 后缀，而不是覆盖实例里已有的版本；`download/commit`
+在文件校验落盘后把实体搬进库存、在原位置建链接。两个事件的默认实现都是恒等操作，
+禁用这个插件时下载行为与以前完全一致。
+
+下载缓存仍然按 sha1 保留一份副本：第二个实例安装同一个 Mod 时直接命中缓存，不必
+重新下载；缓存条目与库存实体互相独立，清理缓存不会影响已经建好的链接。
 
 下载管线的单文件传输默认一条 HTTP 连接；「下载设置 → 大文件分段」可对达到分段阈值
 的文件启用多条 Range 连接（阈值与连接数都在设置页按数字填写，默认 1 MB / 8 条，

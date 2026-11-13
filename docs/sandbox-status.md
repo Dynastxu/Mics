@@ -19,7 +19,7 @@
 | 层 | 谁在这里 | 边界由什么提供 | 能做什么 |
 | --- | --- | --- | --- |
 | 渲染进程 | 所有 `renderer` 入口 | Chromium 沙箱：`sandbox: true`、`contextIsolation: true`、无 `nodeIntegration` | 不能碰文件/进程；只能经 `mics:rpc` 调主进程。**所有页面插件共享同一 realm 与 `window.mics`**，互相之间没有隔离 |
-| 主进程 `full` | 内核、launch、download-manager、shell、account、plugin-inspector、close-behavior | 无 | 与宿主同权限；开了沙箱也不会搬走 |
+| 主进程 `full` | 内核、launch、download-manager、mods-store、shell、account、plugin-inspector、close-behavior | 无 | 与宿主同权限；开了沙箱也不会搬走 |
 | 子进程 `sandboxed` | logger、minekuai、hello-tool | 进程边界 + Node `--permission` | 文件与子进程由引擎拒绝；网络不受限 |
 
 `trust` 缺省是 `full`（保持历史行为）。新插件应当显式声明。
@@ -31,6 +31,7 @@
 | `mics.kernel` | main | full | 内核本身 |
 | `mics.shell` | main | full | `SHELL_EXECUTE` 的提供方，实现是活对象 |
 | `mics.download.manager` | main | full | `FILE_TRANSFER` 的提供方；要写实例目录 |
+| `mics.mods.store` | main | full | 在 `${userData}/mods` 与实例 `mods/` 之间建硬链接、扫描回收 |
 | `mics.launch` | main + renderer | full | 扫 JDK、起 java、读写游戏目录 |
 | `mics.account` | main + renderer | full（v1 数组） | `safeStorage` 加解密 |
 | `mics.logger` | main + renderer | **sandboxed** | 只写 `${userData}/logs`；日志经 `log/entry` 事件跨进程推过来 |

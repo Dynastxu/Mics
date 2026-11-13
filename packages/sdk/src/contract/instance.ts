@@ -99,6 +99,19 @@ export interface InstanceSaves {
   entries: InstanceSaveEntry[]
 }
 
+/**
+ * 一个被删除的 Mod 文件（`mods/removed` 的载荷）。
+ *
+ * 删除只移除实例目录里的那一条链接：如果实例里的 Mod 是指向内容库的硬链接，
+ * 实体仍然存在、也可能仍被其它实例引用。内容库插件据此回收没有任何引用的实体。
+ */
+export interface ModRemoval {
+  /** 实例目录名 */
+  instanceName: string
+  /** 被删除的文件名（启用或禁用状态都可能是 `.jar` / `.jar.disabled`） */
+  fileName: string
+}
+
 /** Windows 文件名/文件夹名中不允许出现的字符 */
 // eslint-disable-next-line no-control-regex
 export const INVALID_INSTANCE_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/g

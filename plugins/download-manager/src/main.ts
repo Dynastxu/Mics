@@ -24,7 +24,8 @@ import {
   parseDownloadCacheLimit,
   parseDownloadSegmentThresholdMb,
   parseDownloadSegments,
-  serialEvent
+  serialEvent,
+  waterfallEvent
 } from '@mics/sdk'
 import type {
   DownloadAddFilesRequest,
@@ -38,6 +39,8 @@ import type {
   DownloadJobRequest,
   DownloadJobResult,
   DownloadJobState,
+  DownloadPlacement,
+  DownloadPlacementResult,
   DownloadReportPatch,
   DownloadTaskState,
   DownloadTaskView,
@@ -1147,6 +1150,31 @@ export function apply(ctx: Context): void {
     }
   }
 
+  /**
+   * 文件已校验落位后的扩展点（`download/commit`）。
+   *
+   * 监听器可以把实体搬进内容库、只在原位置留一条硬链接，并返回最终落点；
+   * 默认实现原样返回。返回 `null` 表示监听器抛了异常，任务已经按失败收尾，
+   * 调用方直接结束本轮。
+   */
+  async function commitTaskFile(task: PipelineTask): Promise<DownloadPlacementResult | null> {
+    const placement: DownloadPlacement = {
+      label: task.label,
+      url: task.url,
+      savePath: task.savePath,
+      sha1: task.sha1,
+      size: task.size
+    }
+    try {
+      return await waterfallEvent(ctx, 'download/commit', placement, async () => ({
+        path: task.savePath
+      }))
+    } catch (cause) {
+      failTask(task, `无法写入目标文件：${toError(cause).message}`)
+      return null
+    }
+  }
+
   async function startDownload(task: PipelineTask): Promise<void> {
     if (cancelledTasks.has(task.id) || pausedJobs.has(task.jobId) || task.state !== 'pending')
       return
@@ -1182,7 +1210,10 @@ export function apply(ctx: Context): void {
       try {
         if (await tryCopyFromCache(task)) {
           if (!current()) return
-          if (await dropCancelled(task, task.savePath)) return
+          const placement = await commitTaskFile(task)
+          if (!placement) return
+          const created = placement.created ?? []
+          if (await dropCancelled(task, placement.path, ...created)) return
           if (pausedNow()) {
             task.state = 'paused'
             task.progress.speed = 0
@@ -1245,7 +1276,16 @@ export function apply(ctx: Context): void {
       return
     }
 
-    if (await dropCancelled(task, task.savePath)) return
+    const placement = await commitTaskFile(task)
+    if (!placement) return
+    if (placement.path !== task.savePath && !existsSync(placement.path)) {
+      // 监听器改写了落点却没有把文件放在那里：不能把缺失的文件当成「已下载」
+      failTask(task, `下载目标不存在：${placement.path}`)
+      return
+    }
+
+    const created = placement.created ?? []
+    if (await dropCancelled(task, placement.path, ...created)) return
 
     const cacheLimit = downloadCacheLimitBytes(loadCacheLimit())
     const cacheTarget =
@@ -1258,7 +1298,7 @@ export function apply(ctx: Context): void {
       const release = pinCacheFile(cacheTarget)
       try {
         ensureDir(path.dirname(cacheTarget))
-        await copyFile(task.savePath, cacheTarget)
+        await copyFile(placement.path, cacheTarget)
         await touchCacheFile(cacheTarget)
         scheduleCachePrune()
       } catch {
@@ -1269,7 +1309,7 @@ export function apply(ctx: Context): void {
     }
 
     if (!current()) return
-    if (await dropCancelled(task, task.savePath)) return
+    if (await dropCancelled(task, placement.path, ...created)) return
 
     if (task.size > 0) {
       task.progress.loaded = task.size
@@ -1290,6 +1330,37 @@ export function apply(ctx: Context): void {
   function nextJobId(): string {
     jobSeq += 1
     return `job_${jobSeq}`
+  }
+
+  /**
+   * 让插件在登记任务之前改写目标（`download/targets`）。
+   *
+   * 典型用途是给同名但内容不同的文件让路：Mod 内容库会把新文件改名为带摘要
+   * 后缀的名字，而不是覆盖实例里已有的另一个版本。监听器抛异常或返回长度
+   * 不符时回退原清单——一个坏插件不能让任何下载失败。
+   */
+  async function resolveTargets(files: DownloadFileRequest[]): Promise<DownloadFileRequest[]> {
+    if (files.length === 0) return files
+    const originals = files.map((file) => ({ ...file }))
+    try {
+      const resolved = await waterfallEvent(ctx, 'download/targets', originals, async () =>
+        originals.map((file) => ({ ...file }))
+      )
+      if (!Array.isArray(resolved) || resolved.length !== originals.length) {
+        log.warn('下载目标改写返回了无效结果，已回退原清单')
+        return originals
+      }
+      return resolved.map((file, index) => {
+        const base = originals[index] as DownloadFileRequest
+        const savePath = typeof file?.savePath === 'string' ? file.savePath.trim() : ''
+        // 只接受绝对路径：监听器不能把文件引到相对目录或空路径上
+        if (!savePath || !path.isAbsolute(savePath)) return base
+        return { ...base, ...file, savePath }
+      })
+    } catch (cause) {
+      log.warn('下载目标改写失败，已回退原清单：%s', toError(cause).message)
+      return originals
+    }
   }
 
   function enqueueTasks(job: PipelineJob, files: DownloadFileRequest[], paused: boolean): string[] {
@@ -1369,7 +1440,8 @@ export function apply(ctx: Context): void {
       }
       if (files.length === 0) return { taskIds: [] }
 
-      const taskIds = enqueueTasks(job, files, pausedJobs.has(job.id))
+      const resolved = await resolveTargets(files)
+      const taskIds = enqueueTasks(job, resolved, pausedJobs.has(job.id))
       job.sealed = false
       if (job.state === 'preparing') job.state = 'downloading'
       persistRecords()

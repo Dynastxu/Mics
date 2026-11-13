@@ -87,6 +87,21 @@ preparing ──addFiles──▶ downloading ──filesDone──▶ finalizin
   仍然最多试 3 次，谁先成功用谁。
 - 不再有「某个源失败几次就全局冷却 5 分钟」的机制；冷却只作用于当前文件。
 
+### 目标与落盘扩展点（`waterfall`）
+
+- `download/targets`：在 `download/addFiles` 内部、登记任务之前派发。此时还没有任何
+  字节落盘，监听器可以给同名文件让路（返回新的 `savePath`）；数组必须等长、下标对应，
+  抛出的异常由管线吞掉并回退原清单。
+- `download/commit`：`.part` 改名成目标文件、SHA1 校验通过后派发。监听器可以把实体
+  搬进内容库并在原位置留一条硬链接，返回最终落点；管线按返回的 `path` 继续写缓存
+  与取消清理。整合包合并覆盖文件时直接落盘、不经过管线，也派发同一事件，并且
+  **先写临时文件再改名**——目标是硬链接时直接覆盖会写穿共享实体。
+
+`mics.mods.store` 是这两个事件的消费者：Mod 实体集中存到 `<userData>/mods/<sha1>.jar`，
+实例里只留硬链接，同名不同摘要按后缀并存；删除 Mod 后按硬链接数回收无引用实体。
+细节见 [architecture.md](architecture.md) 的「Mod 内容库」。禁用该插件时两个事件没有
+监听器，下载行为与未安装时完全一致。
+
 ## 3. 原版与加载器（`game/*`、`loader/*`）
 
 - `game/prepareVersion`：取父版本 → 有加载器时派发 `loader/prepare` → 合并版本档案、改写 id、落盘。
