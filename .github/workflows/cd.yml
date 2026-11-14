@@ -14,3 +14,6 @@ jobs:
     with:
       tag: ${{ github.ref_name }}
       title: ${{ github.ref_name }}
+    # 未配置该 secret 时为空串：构建出的客户端不内置默认 Key。
+    secrets:
+      MICS_CURSEFORGE_API_KEY: ${{ secrets.MICS_CURSEFORGE_API_KEY }}

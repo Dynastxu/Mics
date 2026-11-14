@@ -25,7 +25,14 @@ import {
   normalizeModSources,
   parseDownloadCacheLimit
 } from '@mics/sdk'
-import type { DownloadCacheLimitMode, DownloadSource, LoaderSource, ModSource } from '@mics/sdk'
+import type {
+  DownloadCacheLimitMode,
+  DownloadSource,
+  LoaderSource,
+  ModSource,
+  ModSourceInfo,
+  ModSourceKind
+} from '@mics/sdk'
 import SourceEditorDialog from './SourceEditorDialog.vue'
 import LoaderSourceDialog from './LoaderSourceDialog.vue'
 import ModSourceDialog from './ModSourceDialog.vue'
@@ -49,6 +56,8 @@ const confirmClear = ref(false)
 const sources = ref<DownloadSource[]>(DEFAULT_DOWNLOAD_SOURCES.map((source) => ({ ...source })))
 const loaderSources = ref<LoaderSource[]>(DEFAULT_LOADER_SOURCES.map((source) => ({ ...source })))
 const modSources = ref<ModSource[]>(DEFAULT_MOD_SOURCES.map((source) => ({ ...source })))
+/** 带构建期默认 Key 的来源；设置列表据此把「缺少 API Key」标成「内置 Key」 */
+const builtinModKeys = ref<ReadonlySet<ModSourceKind>>(new Set())
 const saved = ref(true)
 const loaderSaved = ref(true)
 const modSaved = ref(true)
@@ -110,6 +119,8 @@ const modDisplayName = (index: number): string => {
   return source.label.trim() || `${MOD_SOURCE_LABELS[source.kind]} 源 ${index + 1}`
 }
 
+const modSourceHasBuiltinKey = (kind: ModSourceKind): boolean => builtinModKeys.value.has(kind)
+
 function markDirty(): void {
   saved.value = false
 }
@@ -124,7 +135,7 @@ function normalizeConcurrency(value: string): string {
 async function loadSettings(): Promise<void> {
   loading.value = true
   try {
-    const [pipeline, vanilla, loaders, mods] = await Promise.allSettled([
+    const [pipeline, vanilla, loaders, mods, modInfos] = await Promise.allSettled([
       ctx.ipc.invoke<{
         concurrency: string
         segments: string
@@ -133,7 +144,8 @@ async function loadSettings(): Promise<void> {
       }>('mics.download.manager', 'settings/get'),
       ctx.ipc.invoke<DownloadSource[]>('mics.download.game', 'sources/get'),
       ctx.ipc.invoke<LoaderSource[]>('mics.download.loaders', 'loaders/sources/get'),
-      ctx.ipc.invoke<ModSource[]>('mics.download.catalog', 'sources/get')
+      ctx.ipc.invoke<ModSource[]>('mics.download.catalog', 'sources/get'),
+      ctx.ipc.invoke<ModSourceInfo[]>('mics.download.catalog', 'mods/sources')
     ])
 
     if (pipeline.status === 'fulfilled') {
@@ -149,6 +161,11 @@ async function loadSettings(): Promise<void> {
       loaderSources.value = normalizeLoaderSources(loaders.value)
     }
     if (mods.status === 'fulfilled') modSources.value = normalizeModSources(mods.value)
+    if (modInfos.status === 'fulfilled') {
+      builtinModKeys.value = new Set(
+        modInfos.value.filter((info) => info.builtinKey).map((info) => info.kind)
+      )
+    }
 
     saved.value = true
     loaderSaved.value = true
@@ -778,7 +795,7 @@ onUnmounted(() => {
       </template>
       <template #after-name="{ item }">
         <span v-if="modSourceNeedsKey(item) && !item.key.trim()" class="settings-source__state">
-          缺少 API Key
+          {{ modSourceHasBuiltinKey(item.kind) ? '内置 Key' : '缺少 API Key' }}
         </span>
       </template>
     </SourceList>

@@ -32,6 +32,41 @@ pnpm start          # 预览构建结果
 pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
 ```
 
+### 构建期秘钥（CurseForge 默认 Key）
+
+客户端默认不带 CurseForge Key。需要「用户不填也能搜 CurseForge」时，在**构建期**
+注入，源码里不会出现真实值。推荐直接传环境变量，shell 里用**单引号**把整个值包住
+（否则 shell 会先展开 `$`）：
+
+```bash
+MICS_CURSEFORGE_API_KEY='<你的 Key>' pnpm dev    # 或 pnpm build
+```
+
+PowerShell：`$env:MICS_CURSEFORGE_API_KEY = '<你的 Key>'; pnpm dev`。
+
+也可以写进 `.env.local`（已被 git 忽略），但**只加引号没有用**：Vite 会按 dotenv
+规则展开值里的 `$VAR`，所以 Key 里的每个 `$` 都要写成 `\$`（示例里的 `<...>` 换成
+你的 Key）：
+
+```text
+MICS_CURSEFORGE_API_KEY=<Key，其中每个 $ 改成 \$>
+```
+
+密钥只在 `scripts/build-plugins.mjs` 里读取并注入到 `CurseForge 来源` 插件的产物；
+改了 Key 要重新 `pnpm build:plugins`，并重启应用才会加载新产物。
+
+CI 走仓库 Actions secret（Settings → Secrets → Actions），secret 的值不经过展开：
+
+```text
+MICS_CURSEFORGE_API_KEY
+```
+
+快照和正式版都从同一个 secret 注入（`release.yml` 通过 `workflow_call` 的
+`secrets:` 显式接收）。没配置 secret 时为空串，行为退回「需要用户自己填 Key」。
+
+注意：写进安装包的 Key 只能挡住普通用户，解包就能拿到；要真正保密请改用自建代理
+并让 Key 留空。
+
 ## 发布
 
 推送到 `main` 且 CI 通过后自动发一个快照；推 `v*` tag 发正式版本：
@@ -251,7 +286,7 @@ interface LaunchCredentials {
 - 进入 Mod 详情时会把搜索页选中的 MC 版本 / 加载器自动设为详情筛选的初始值；筛选选项仍来自该 Mod 的全部版本，用户随时可以改，不存在被搜索条件锁死的情况。
 - 实例 Mod 列表的每一行可点击。优先用 jar 的 SHA1 / CurseForge 指纹精确识别项目，带着 `sourceApi + projectId` 直接打开详情；指纹查不到时才按 mod id / 名称搜索回退。外部导入的 Mod 不依赖下载记录，同样可以识别。点击删除或开关不会触发跳转。
 - 指纹识别结果按 `hash` 缓存 6 小时；多个同类型来源时用 `sourceApi` 锁定实际命中的镜像，避免版本查询串源。
-- 来源在「设置 → 下载设置 → Mod 下载源」里增删、排序与启停。Modrinth 无需配置；CurseForge 官方接口要求 API Key（按其第三方 API 流程申请，按凭据保管，不要提交到仓库或随客户端分发），未填写时该来源自动跳过并在 Mod 页提示，不会影响 Modrinth。需要给所有用户开箱即用时，可以把来源接口地址改成自建代理、Key 留空；桌面客户端里内置 Key 只能防普通用户，无法真正保密。
+- 来源在「设置 → 下载设置 → Mod 下载源」里增删、排序与启停。Modrinth 无需配置；CurseForge 官方接口要求 API Key（按其第三方 API 流程申请，按凭据保管，不要提交到仓库或随客户端分发），留空时使用构建期注入的默认 Key（见[构建期秘钥](#构建期秘钥curseforge-默认-key)），只有构建时也没注入才跳过该来源并在 Mod 页提示，不会影响 Modrinth。设置列表会把这种条目标成「内置 Key」而不是「缺少 API Key」。需要给所有用户开箱即用时，也可以把来源接口地址改成自建代理、Key 留空；桌面客户端里内置 Key 只能防普通用户，无法真正保密。
 - 版本列表是单选列表：点击只选中版本，选中行右侧出现「安装」按钮，点击后才打开实例选择；选中的那一行会列出必装前置（Modrinth / CurseForge 的 required 依赖），点击前置按钮直接打开对应 Mod 的详情。返回时回到原来的 Mod，并恢复当时的筛选、版本搜索词、选中的版本与滚动位置；选中的版本若不在视野内会自动滚回来。
 - Mod 详情页左上角有「主页」，跳过前置返回栈直接回到 Mod 搜索；版本列表滚动后右下角出现悬浮的「返回顶部」。
 - 选择文件后可以一次把同一个 jar 安装到多个实例：实例列表按文件的游戏版本与加载器标记兼容性，原版实例、安装未完成的实例与不匹配的实例不可选；提交后关闭弹窗并在右下角提示，下载任务在「下载进度」里显示每个实例的进度，可暂停、取消或重试，已存在且 SHA1 一致的文件会直接跳过。

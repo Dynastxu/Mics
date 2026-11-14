@@ -111,6 +111,13 @@ export interface ModSourceInfo {
   ready: boolean
   /** 不可用原因；可用时为空 */
   hint?: string
+  /**
+   * 构建期是否注入了默认凭据（当前仅 CurseForge）。
+   *
+   * 只说明「这个构建自带 Key」，不暴露值；设置页用它区分「缺少 API Key」与
+   * 「留空也能用内置 Key」。
+   */
+  builtinKey?: boolean
 }
 
 /**

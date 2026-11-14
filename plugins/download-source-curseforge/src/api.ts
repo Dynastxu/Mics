@@ -11,13 +11,15 @@ import type {
 import { MOD_LOADER_LABELS, modSourceNeedsKey } from '@mics/sdk'
 import { curseforgeCategoriesOf, curseforgeCategoryLabel } from '@mics/sdk'
 import { modpackCategoryLabelOf } from '@mics/sdk'
+import { BUILD_CURSEFORGE_API_KEY } from './defaultKey'
 import { endpoint, requestJson, withParams } from './http'
 
 /**
  * CurseForge 官方 API。
  *
- * 搜索与文件接口都需要 `x-api-key`；没有 Key 时由聚合层跳过该来源，页面会
- * 提示去设置里填写。游戏固定为 Minecraft（432），类别固定为 Mod（6）。
+ * 搜索与文件接口都需要 `x-api-key`。Key 的优先级：用户在设置里填写的 >
+ * 构建期注入的默认值（见 defaultKey.ts）；两者都没有、且接口是官方地址时，
+ * 该来源不可用，由聚合层跳过并在页面提示。游戏固定为 Minecraft（432）。
  */
 
 const GAME_ID = 432
@@ -162,13 +164,25 @@ export interface CurseforgeIdentified {
   project: ModSummary
 }
 
+/**
+ * 实际用于请求的 Key。
+ *
+ * 用户填写了就用用户的（包括自建代理自己的 Key）；留空时只有官方地址才回退到
+ * 构建期默认 Key——代理地址换了 hostname，不能把官方 Key 发给它。
+ */
+export function curseforgeKeyOf(source: ModSource): string {
+  const key = source.key.trim()
+  if (key) return key
+  return modSourceNeedsKey(source) ? BUILD_CURSEFORGE_API_KEY : ''
+}
+
 export function curseforgeReady(source: ModSource): boolean {
-  return source.enabled && (!modSourceNeedsKey(source) || Boolean(source.key.trim()))
+  return source.enabled && (!modSourceNeedsKey(source) || Boolean(curseforgeKeyOf(source)))
 }
 
 /** 供整合包安装复用：CurseForge 的文件接口与本模块使用同一套鉴权头 */
 export function curseforgeHeaders(source: ModSource): Record<string, string> {
-  const key = source.key.trim()
+  const key = curseforgeKeyOf(source)
   if (!key) {
     if (modSourceNeedsKey(source)) {
       throw new Error('CurseForge 需要 API Key，请在「下载设置 → Mod 下载源」中填写')

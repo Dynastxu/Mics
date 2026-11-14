@@ -30,6 +30,12 @@ on:
         type: boolean
         required: false
         default: false
+    # 构建期注入的默认凭据。调用方用 `secrets:` 显式传入（cd.yml / ci.yml），
+    # 没配置 secret 时为空串，构建出的客户端不内置 Key。
+    secrets:
+      MICS_CURSEFORGE_API_KEY:
+        description: CurseForge 默认 API Key，构建时打进 CurseForge 来源插件
+        required: false
 
 jobs:
   build:
@@ -58,6 +64,8 @@ jobs:
     env:
       # 没有签名证书时必须关掉自动发现，否则 mac 打包会在查找签名身份时失败。
       CSC_IDENTITY_AUTO_DISCOVERY: false
+      # `pnpm build` → scripts/build-plugins.mjs 读取；只注入到 CurseForge 插件的产物。
+      MICS_CURSEFORGE_API_KEY: ${{ secrets.MICS_CURSEFORGE_API_KEY }}
 
     steps:
       - name: Checkout
