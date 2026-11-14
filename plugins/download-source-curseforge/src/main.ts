@@ -35,6 +35,7 @@ import {
   versionsCurseforge,
   type CurseforgeIdentified
 } from './api'
+import { BUILD_CURSEFORGE_API_KEY } from './defaultKey'
 import { setHttpAppVersion } from './http'
 import { resolveCurseforgeModpackFiles } from './resolveFiles'
 
@@ -110,6 +111,8 @@ class CurseforgeSource implements CatalogSource {
     if (!ready && source?.enabled && modSourceNeedsKey(source)) {
       info.hint = '缺少 API Key（下载设置 → Mod 下载源）'
     }
+    // 只在「用户没填 Key」时才有意义：设置页据此把「缺少 API Key」显示成「内置 Key」
+    if (BUILD_CURSEFORGE_API_KEY) info.builtinKey = true
     return info
   }
 

@@ -18,7 +18,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { build as viteBuild } from 'vite'
+import { build as viteBuild, loadEnv } from 'vite'
 import vuePlugin from '@vitejs/plugin-vue'
 import ts from 'typescript'
 
@@ -30,6 +30,20 @@ const loaderDir = path.join(root, 'packages', 'plugin-loader', 'src')
 const uiEntry = path.join(root, 'packages', 'ui', 'src', 'index.ts')
 const shimDir = path.join(root, 'node_modules', '.mics')
 const watch = process.argv.includes('--watch')
+
+/**
+ * 构建期秘钥：只从构建环境读取，源码与仓库里不出现真实值。
+ *
+ * `pnpm build` 与 `pnpm dev` 都走这个脚本，所以本地放在 `.env.local`（已被
+ * .gitignore 忽略）或临时给命令加环境变量；CI 由 release.yml 从仓库 secret
+ * 传入同名变量。留空表示这次构建不内置，客户端按「需要用户填 Key」处理。
+ *
+ * `loadEnv` 也会读取 `process.env`（前缀 MICS_ 的项），因此命令行 / CI 的
+ * 变量优先于 `.env.local`。
+ */
+const buildSecrets = {
+  curseforgeApiKey: (loadEnv('production', root, 'MICS_').MICS_CURSEFORGE_API_KEY ?? '').trim()
+}
 
 const SDK_ENTRIES = new Map([
   ['@mics/sdk', path.join(sdkDir, 'index.ts')],
@@ -60,6 +74,7 @@ function makeViteAliases({ renderer = false } = {}) {
   const alias = [
     { find: /^@mics\/plugin-loader$/, replacement: path.join(loaderDir, 'index.ts') },
     { find: /^@mics\/java$/, replacement: path.join(root, 'packages', 'java', 'src', 'index.ts') },
+    { find: /^@mics\/build-secrets$/, replacement: path.join(shimDir, 'build-secrets.js') },
     { find: /^vue$/, replacement: path.join(shimDir, 'vue-shim.js') },
     { find: /^cordis$/, replacement: path.join(shimDir, 'cordis-shim.js') }
   ]
@@ -141,6 +156,22 @@ async function writeShims() {
     path.join(shimDir, 'ui-shim.js'),
     generateShim('__MICS_UI__', '@mics/ui', uiPlaceholder)
   )
+}
+
+/**
+ * 生成构建期秘钥模块，`@mics/build-secrets` 由上面的别名指向这里。
+ *
+ * 每次构建都重写（没有配置时写空串），避免上一次构建的 Key 残留到这次产物里。
+ * 文件在 node_modules 下，不会进仓库；插件源码用 `import` 引用，打包后是字面量。
+ */
+async function writeBuildSecrets() {
+  await mkdir(shimDir, { recursive: true })
+  const lines = [
+    '// 由 scripts/build-plugins.mjs 生成：构建期秘钥，不要提交或单独分发',
+    `export const CURSEFORGE_API_KEY = ${JSON.stringify(buildSecrets.curseforgeApiKey)}`,
+    ''
+  ]
+  await writeFile(path.join(shimDir, 'build-secrets.js'), lines.join('\n'))
 }
 
 async function readManifest(dir) {
@@ -334,6 +365,10 @@ async function buildWorkerRuntime() {
 
 async function main() {
   await writeShims()
+  await writeBuildSecrets()
+  if (buildSecrets.curseforgeApiKey) {
+    console.log('[plugins] CurseForge 默认 Key：已按构建期配置注入（值不输出）')
+  }
 
   const plugins = await buildTree(pluginsDir, '内置插件')
   const examples = await buildTree(examplesDir, '示例插件')
