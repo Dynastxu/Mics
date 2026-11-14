@@ -35,22 +35,30 @@ pnpm typecheck      # 渲染进程 vue-tsc + 主进程 tsc + 插件 vue-tsc
 ### 构建期秘钥（CurseForge 默认 Key）
 
 客户端默认不带 CurseForge Key。需要「用户不填也能搜 CurseForge」时，在**构建期**
-注入，源码里不会出现真实值：
+注入，源码里不会出现真实值。推荐直接传环境变量，shell 里用**单引号**把整个值包住
+（否则 shell 会先展开 `$`）：
 
 ```bash
-cp .env.example .env.local   # 填 MICS_CURSEFORGE_API_KEY=...（.env.local 已被 git 忽略）
-pnpm build                   # 或 pnpm dev，构建插件时自动读取
+MICS_CURSEFORGE_API_KEY='<你的 Key>' pnpm dev    # 或 pnpm build
 ```
 
-也可以只对一次构建生效：`MICS_CURSEFORGE_API_KEY=... pnpm build`（PowerShell 用
-`$env:MICS_CURSEFORGE_API_KEY = '...'`）。密钥只在 `scripts/build-plugins.mjs`
-里读取并注入到 `CurseForge 来源` 插件的产物；改了 Key 要重新 `pnpm build:plugins`
-（`pnpm dev` 不会重建插件）。
+PowerShell：`$env:MICS_CURSEFORGE_API_KEY = '<你的 Key>'; pnpm dev`。
 
-CI 走仓库 Actions secret（Settings → Secrets → Actions）：
+也可以写进 `.env.local`（已被 git 忽略），但**只加引号没有用**：Vite 会按 dotenv
+规则展开值里的 `$VAR`，所以 Key 里的每个 `$` 都要写成 `\$`（示例里的 `<...>` 换成
+你的 Key）：
 
 ```text
-MICS_CURSEFORGE_API_KEY=...
+MICS_CURSEFORGE_API_KEY=<Key，其中每个 $ 改成 \$>
+```
+
+密钥只在 `scripts/build-plugins.mjs` 里读取并注入到 `CurseForge 来源` 插件的产物；
+改了 Key 要重新 `pnpm build:plugins`，并重启应用才会加载新产物。
+
+CI 走仓库 Actions secret（Settings → Secrets → Actions），secret 的值不经过展开：
+
+```text
+MICS_CURSEFORGE_API_KEY
 ```
 
 快照和正式版都从同一个 secret 注入（`release.yml` 通过 `workflow_call` 的

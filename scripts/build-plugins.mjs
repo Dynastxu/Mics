@@ -34,12 +34,12 @@ const watch = process.argv.includes('--watch')
 /**
  * 构建期秘钥：只从构建环境读取，源码与仓库里不出现真实值。
  *
- * `pnpm build` 与 `pnpm dev` 都走这个脚本，所以本地放在 `.env.local`（已被
- * .gitignore 忽略）或临时给命令加环境变量；CI 由 release.yml 从仓库 secret
- * 传入同名变量。留空表示这次构建不内置，客户端按「需要用户填 Key」处理。
+ * `pnpm build` 与 `pnpm dev` 都走这个脚本。推荐直接传环境变量（shell 里用单引号
+ * 包住值，否则 shell 会先展开 `$`）；CI 由 release.yml 从仓库 secret 传入同名
+ * 变量。留空表示这次构建不内置，客户端按「需要用户填 Key」处理。
  *
- * `loadEnv` 也会读取 `process.env`（前缀 MICS_ 的项），因此命令行 / CI 的
- * 变量优先于 `.env.local`。
+ * 也可以放在 `.env.local`（已被 .gitignore 忽略），但 `loadEnv` 会按 dotenv 规则
+ * 展开值里的 `$VAR`：Key 里的每个 `$` 都要写成 `\$`，只加引号并不能阻止展开。
  */
 const buildSecrets = {
   curseforgeApiKey: (loadEnv('production', root, 'MICS_').MICS_CURSEFORGE_API_KEY ?? '').trim()
