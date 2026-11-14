@@ -1,6 +1,6 @@
 {
   "name": "@mics/plugin-download-manager",
-  "version": "0.1.0-alpha",
+  "version": "0.2.0",
   "private": true,
   "description": "下载管线插件的构建依赖；库会被打进 dist，不进入应用运行时依赖。",
   "dependencies": {
