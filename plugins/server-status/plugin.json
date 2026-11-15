@@ -1,0 +1,44 @@
+{
+  "id": "mics.server-status",
+  "name": "服务器状态",
+  "description": "服务器状态页：默认内置 Hypixel 与 2b2t，可添加 / 删除任意 Java 或基岩版服务器，经 mcstatus.io 查询在线人数、版本与 MOTD。",
+  "author": "mics",
+  "main": "dist/main.mjs",
+  "renderer": "dist/renderer.mjs",
+  "styles": ["dist/style.css"],
+  "dependencies": ["mics.kernel"],
+  "permissions": {
+    "trust": "sandboxed"
+  },
+  "contributes": {
+    "nav": [
+      {
+        "id": "server-status",
+        "title": "服务器状态",
+        "icon": "server",
+        "order": 15
+      }
+    ],
+    "configuration": {
+      "title": "服务器状态",
+      "description": "查询走 mcstatus.io 的公开 API；自建实例或代理时改「API 根地址」。",
+      "properties": {
+        "apiBaseUrl": {
+          "type": "string",
+          "title": "API 根地址",
+          "description": "mcstatus.io API 的根地址；使用自建实例时改成自己的地址",
+          "default": "https://api.mcstatus.io/v2"
+        },
+        "refreshSeconds": {
+          "type": "integer",
+          "title": "自动刷新间隔",
+          "description": "页面可见时多久重新查询一次；只在打开服务器状态页时生效",
+          "default": 60,
+          "minimum": 15,
+          "maximum": 3600,
+          "unit": "秒"
+        }
+      }
+    }
+  }
+}

@@ -185,8 +185,21 @@ async function readManifest(dir) {
   }
 }
 
+/**
+ * 插件是否把整棵依赖树打进产物。
+ *
+ * `pnpm-workspace.yaml` 把带 `package.json` 的插件当作独立包：这些依赖只服务
+ * 该插件，也不会随应用一起分发。`ssr.noExternal` 按**包名**匹配，逐个列名会
+ * 漏掉传递依赖（例如 node-mcstatus → superagent → qs），因此这类插件直接关闭
+ * 外部化。没有 `package.json` 的插件只用 SDK / cordis / 别名与 shim，保持默认。
+ */
+function inlinesDependencies(dir) {
+  return existsSync(path.join(dir, 'package.json'))
+}
+
 /** 主进程侧入口（main / uninstall）共用一次 SSR 构建 */
 async function buildMainEntry(dir, entry, fileName, watchMode) {
+  const inline = inlinesDependencies(dir)
   await viteBuild({
     configFile: false,
     root: dir,
@@ -195,7 +208,7 @@ async function buildMainEntry(dir, entry, fileName, watchMode) {
     resolve: { alias: makeViteAliases() },
     // 插件产物要能脱离仓库 node_modules 运行（插件目录会被单独分发），
     // 因此把运行时依赖打进 dist，而不是留下裸模块导入
-    ssr: { noExternal: ['node-downloader-helper'] },
+    ...(inline ? { ssr: { noExternal: true } } : {}),
     build: {
       ssr: entry,
       outDir: path.join(dir, 'dist'),

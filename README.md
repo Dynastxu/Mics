@@ -105,6 +105,7 @@ tag 可以和提交分开推送：快照在开打前会先查该提交有没有 
 左侧导航
 ├─ 账户                    mics.account
 ├─ 启动                    mics.launch（依赖 mics.account）
+├─ 服务器状态              mics.server.status（mcstatus.io 查询）
 ├─ 下载                    mics.download（分组）
 │  ├─ 原版                 mics.download.vanilla
 │  ├─ Mod                  mics.download.mod
@@ -154,6 +155,7 @@ mics/
 │  ├─ account/              # 账户：Microsoft 设备码登录 / 离线账户，提供 auth.credentials 能力
 │  ├─ core-workbench/       # 默认导航宽度与主题（纯清单插件，没有代码）
 │  ├─ launch/               # 启动页 + 启动设置（依赖账户插件，按凭据启动）
+│  ├─ server-status/        # 服务器状态页：默认 Hypixel / 2b2t，mcstatus.io 查询
 │  ├─ download/             # 下载分组 + 下载进度 + 下载设置壳
 │  ├─ download-manager/     # 下载管线：队列、并发、分段、缓存、校验
 │  ├─ download-game/        # 原版分析 + 实例安装/补全编排 + 原版源
