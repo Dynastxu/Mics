@@ -183,5 +183,19 @@ export const BUILTIN_ICONS: Record<string, string> = {
     // 路径是从右端写起来的；反向画才是「进度从左往右推进」的观感
     dur: 0.65,
     reverse: true
-  })
+  }),
+  // 两台叠放的机箱：先画上面一台，再补下面一台，最后点亮各自的指示灯
+  server: drawn(
+    {
+      d: 'M4 3h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z',
+      dur: 0.45
+    },
+    {
+      d: 'M4 14h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1Z',
+      delay: 0.18,
+      dur: 0.45
+    },
+    { d: 'M7 6.5h.01', delay: 0.38, dur: 0.2 },
+    { d: 'M7 17.5h.01', delay: 0.5, dur: 0.2 }
+  )
 }
