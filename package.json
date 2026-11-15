@@ -2,7 +2,7 @@
   "name": "mics",
   "description": "Minecraft Integrated Control Software (MICS)",
   "version": "0.3.0",
-  "packageManager": "pnpm@12.18.0",
+  "packageManager": "pnpm@12.21.0",
   "engines": {
     "node": ">=22.12.0"
   },
