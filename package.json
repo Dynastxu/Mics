@@ -28,7 +28,8 @@
     "dist:win": "pnpm build && pnpm --filter @mics/desktop dist:win",
     "dist:mac": "pnpm build && pnpm --filter @mics/desktop dist:mac",
     "dist:linux": "pnpm build && pnpm --filter @mics/desktop dist:linux",
-    "workflow:ci": "pnpm version:check && pnpm typecheck && pnpm lint && pnpm build"
+    "workflow:ci": "pnpm version:check && pnpm typecheck && pnpm lint && pnpm build",
+    "gen:3rd-party-notices": "pnpm licenses list --prod --json -r | npx @quantco/pnpm-licenses generate-disclaimer --json-input --output-file=THIRD_PARTY_NOTICES.md"
   },
   "devDependencies": {
     "@cordisjs/plugin-timer": "^1.1.4",
