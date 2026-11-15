@@ -2054,7 +2054,7 @@ THE SOFTWARE.
 
 ---
 
-The following software may be included in this product: zod (3.25.76)
+The following software may be included in this product: zod (4.6.7)
 This software contains the following license and notice below:
 
 MIT License
