@@ -13,3 +13,8 @@ overrides:
   # 会因 **/.. 扩增 globParts 并二次方处理，造成 CPU / 内存耗尽。
   # 7.x+ 全部收敛到 11.x；3.x / 5.x 属于 glob@7、filelist 仍在使用的旧版本线，不受该公告影响。
   'minimatch@>=7.0.0 <11.0.1': '^11.0.1'
+  # GHSA-mrhx-c7xc-m3w5 / CVE-2023-54404：zod < 4.6.6 在数组、Set、Map 带 .max()/.length()/.size()
+  # 时先逐元素解析再检查上限，超大输入会先堆积每个元素的 issue，直到内存耗尽。
+  # 这里只有 node-mcstatus 声明了 zod（^3.20.6），但它从未 import；插件产物也不会包含 zod。
+  # 强制到 4.6.7 以满足公告；等 node-mcstatus 更新依赖范围后可以删掉这条。
+  'zod@<4.6.6': '^4.6.7'
