@@ -12,7 +12,7 @@ import { defineMainPlugin } from '@mics/sdk/main'
 import type {
   CatalogFileRef,
   CatalogRegistry,
-  CatalogResolvedFile,
+  CatalogResolvedModpack,
   CatalogSource,
   ModCategory,
   ModIdentifyRequest,
@@ -415,7 +415,7 @@ export function apply(ctx: Context): void {
     async (request: {
       refs: CatalogFileRef[]
       sourceApi?: string
-    }): Promise<CatalogResolvedFile[]> => {
+    }): Promise<CatalogResolvedModpack> => {
       const source = registry.get('curseforge')
       if (!source) throw new Error('未安装 CurseForge 来源插件')
       if (!source.ready()) {

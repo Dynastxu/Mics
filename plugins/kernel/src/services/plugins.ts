@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { app } from 'electron'
 import type { Context, Fiber, Plugin } from 'cordis'
 import { Service } from 'cordis'
 import {
@@ -1882,7 +1883,8 @@ export class PluginsService extends Service {
         userData: this.config.userDataDir,
         pluginDir: entry.record.dir,
         temp: os.tmpdir(),
-        home: os.homedir()
+        home: os.homedir(),
+        downloads: app.getPath('downloads')
       },
       app: { version: this.config.app.version, isDev: this.config.app.isDev },
       enforce,

@@ -28,6 +28,7 @@ import {
   waterfallEvent
 } from '@mics/sdk'
 import type {
+  DownloadAction,
   DownloadAddFilesRequest,
   DownloadAddFilesResult,
   DownloadAwaitRequest,
@@ -112,6 +113,8 @@ interface PipelineJob {
   /** 上一轮失败文件数；新一轮没有减少就停止重试 */
   failedBeforeRound?: number
   note?: string
+  /** 需要用户介入才能继续的动作；由编排方通过 `download/action` 设置 */
+  action?: DownloadAction
   preparePercent?: number
   prepareLoaded?: number
   prepareTotal?: number
@@ -695,6 +698,7 @@ export function apply(ctx: Context): void {
       state,
       error: job.error,
       note: job.note,
+      ...(job.action ? { action: job.action } : {}),
       preparePercent: job.preparePercent,
       prepareLoaded: job.prepareLoaded,
       prepareTotal: job.prepareTotal,
@@ -1491,6 +1495,7 @@ export function apply(ctx: Context): void {
 
     job.state = 'done'
     delete job.error
+    delete job.action
     job.note = undefined
     job.preparePercent = undefined
     job.prepareLoaded = undefined
@@ -1505,6 +1510,14 @@ export function apply(ctx: Context): void {
     const job = jobs.get(request.jobId)
     if (!job || isFinished(job)) return
     job.data = request.data
+    persistRecords()
+  })
+
+  ctx.on('download/action', (jobId: string, action: DownloadAction | null) => {
+    const job = jobs.get(jobId)
+    if (!job || isFinished(job)) return
+    if (action) job.action = action
+    else delete job.action
     persistRecords()
   })
 
@@ -1622,6 +1635,7 @@ export function apply(ctx: Context): void {
           ...(job.display ? { display: job.display } : {}),
           state: job.state,
           ...(job.note ? { note: job.note } : {}),
+          ...(job.action ? { action: job.action } : {}),
           ...(job.error ? { error: job.error } : {}),
           taskIds: [...job.taskIds],
           createdAt: job.createdAt

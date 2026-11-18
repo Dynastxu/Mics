@@ -205,6 +205,8 @@ export interface PluginHostPaths {
   pluginDir: string
   temp: string
   home: string
+  /** 系统下载目录；需要用户手动下载文件时用它当监视目录 */
+  downloads: string
 }
 
 export interface PluginHostApp {

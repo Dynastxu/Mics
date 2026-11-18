@@ -12,6 +12,7 @@ export interface PluginPaths {
   pluginDir: string
   temp: string
   home: string
+  downloads: string
 }
 
 export interface PluginAppInfo {

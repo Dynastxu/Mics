@@ -1,5 +1,5 @@
 import os from 'node:os'
-import { shell } from 'electron'
+import { app, shell } from 'electron'
 import type { Context } from 'cordis'
 import { Service } from 'cordis'
 import type {
@@ -42,7 +42,8 @@ export class HostService extends Service {
       userData: this.config.userDataDir,
       pluginDir: (id ? this.pluginDirs.get(id) : undefined) ?? this.config.userDataDir,
       temp: os.tmpdir(),
-      home: os.homedir()
+      home: os.homedir(),
+      downloads: app.getPath('downloads')
     }
   }
 

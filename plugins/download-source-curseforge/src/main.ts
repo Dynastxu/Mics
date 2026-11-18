@@ -10,7 +10,7 @@ import {
 import { defineMainPlugin } from '@mics/sdk/main'
 import type {
   CatalogFileRef,
-  CatalogResolvedFile,
+  CatalogResolvedModpack,
   CatalogSource,
   ModCategory,
   ModIdentifyFile,
@@ -178,11 +178,11 @@ class CurseforgeSource implements CatalogSource {
 
   async versions(
     request: ModVersionRequest,
-    _kind: ModProjectKind,
+    kind: ModProjectKind,
     signal: AbortSignal
   ): Promise<ModVersion[]> {
     const source = pickSource(this.sources(), request.sourceApi)
-    return versionsCurseforge(source, request, signal)
+    return versionsCurseforge(source, request, signal, kind)
   }
 
   async project(
@@ -234,7 +234,7 @@ class CurseforgeSource implements CatalogSource {
     refs: CatalogFileRef[],
     signal: AbortSignal,
     onProgress?: (done: number, total: number) => void
-  ): Promise<CatalogResolvedFile[]> {
+  ): Promise<CatalogResolvedModpack> {
     const source = pickSource(this.sources())
     return resolveCurseforgeModpackFiles(source, refs, signal, onProgress)
   }

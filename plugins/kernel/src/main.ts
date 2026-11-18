@@ -1,4 +1,6 @@
-import { shell } from 'electron'
+import os from 'node:os'
+import path from 'node:path'
+import { app, shell } from 'electron'
 import type { Context } from 'cordis'
 import type {
   KernelConfig,
@@ -143,6 +145,18 @@ export function apply(ctx: Context, config: KernelConfig): void {
         throw new Error('只允许打开 http(s) 链接')
       }
       await shell.openExternal(url)
+    })
+    // 下载页「打开文件夹」：只允许用户目录内的路径，避免渲染进程借它探测任意位置
+    ctx.ipc.handle<{ path: string }>('host/openPath', async ({ path: target }) => {
+      const resolved = path.resolve(typeof target === 'string' ? target : '')
+      const allowedRoots = [os.homedir(), app.getPath('downloads'), config.userDataDir]
+      const allowed = allowedRoots.some((root) => {
+        const relative = path.relative(path.resolve(root), resolved)
+        return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+      })
+      if (!allowed) throw new Error('只允许打开用户目录内的路径')
+      const error = await shell.openPath(resolved)
+      if (error) throw new Error(error)
     })
 
     // 权限校验挂在派发前的拦截链上：内核只注册这一条，其它策略由插件自己挂。
