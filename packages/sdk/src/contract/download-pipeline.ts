@@ -58,6 +58,35 @@ export interface DownloadPlacement {
   size: number
 }
 
+/**
+ * 需要用户介入才能继续的任务动作。
+ *
+ * 管线只负责搬运与展示，不解释动作内容。整合包安装遇到「作者关闭第三方分发」
+ * 的文件时，把清单与重新检查的 RPC 挂在这里；下载页据此弹出待办对话框。
+ */
+export interface DownloadManualFile {
+  fileName: string
+  size: number
+  /** 期望摘要；空串表示来源没有提供，只按文件名匹配并记录实际摘要 */
+  sha1: string
+  /** 文件页；用户从这里手动下载 */
+  pageUrl: string
+  /** 清单里的可选文件：缺失不阻塞安装 */
+  optional?: boolean
+  state: 'missing' | 'verified'
+}
+
+export interface DownloadManualAction {
+  kind: 'manual-download'
+  /** 文件应放到的目录；下载页提供「打开文件夹」 */
+  folder: string
+  /** 重新检查的 RPC：下载页用 `{ jobId }` 调用它 */
+  check: { target: string; method: string }
+  files: DownloadManualFile[]
+}
+
+export type DownloadAction = DownloadManualAction
+
 /** `download/commit` 的返回值；默认是 `{ path: savePath }` */
 export interface DownloadPlacementResult {
   /** 管线最终认为的落点；通常等于 `savePath` */
@@ -165,6 +194,8 @@ export interface DownloadJobSnapshot {
   }
   state: DownloadJobState
   note?: string
+  /** 需要用户介入才能继续的动作；为空表示不需要 */
+  action?: DownloadAction
   preparePercent?: number
   prepareLoaded?: number
   prepareTotal?: number

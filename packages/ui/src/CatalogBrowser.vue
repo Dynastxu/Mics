@@ -374,7 +374,13 @@ const versionRows = computed<ListRow[]>(() =>
     label: version.name,
     badge: channelLabel(version.channel),
     badgeAccent: version.channel === 'release',
-    meta: [version.published.slice(0, 10), version.fileName].filter(Boolean).join(' · '),
+    meta: [
+      version.published.slice(0, 10),
+      version.fileName,
+      version.fileUrl === null ? '需手动下载' : ''
+    ]
+      .filter(Boolean)
+      .join(' · '),
     keywords: [
       version.versionNumber,
       version.fileName,
@@ -677,7 +683,32 @@ function selectVersion(id: string): void {
 
 function openInstall(): void {
   const version = selectedVersion.value
-  if (version) emit('install', version)
+  // 没有直链的版本不能进入安装：页面只给「打开文件页」手动下载入口
+  if (version?.fileUrl) emit('install', version)
+}
+
+/**
+ * 手动下载入口。
+ *
+ * 优先文件页；来源拿不到文件页时退回项目主页，让用户自己进入 Files 标签，
+ * 这比一个不可点的按钮更有用。两者都没有时返回空串。
+ */
+function versionPageOf(version: CatalogVersion | undefined): string {
+  if (!version) return ''
+  return version.pageUrl || activeItem.value?.url || ''
+}
+
+/** 作者关闭第三方分发：用系统浏览器打开文件页，由用户手动下载 */
+async function openVersionPage(version: CatalogVersion): Promise<void> {
+  const url = versionPageOf(version)
+  if (!url) return
+  actionError.value = ''
+  try {
+    if (props.openExternal) await props.openExternal(url)
+    else window.open(url, '_blank', 'noopener,noreferrer')
+  } catch (cause) {
+    actionError.value = `打开链接失败：${cause instanceof Error ? cause.message : String(cause)}`
+  }
 }
 
 function backToTop(): void {
@@ -992,17 +1023,36 @@ defineExpose({
             :version="versionOfRow(item.id)"
             :selected="item.id === selectedVersionId"
           >
-            <button
-              v-if="item.id === selectedVersionId"
-              class="mics-button mics-button--primary mics-button--small catalog-version-install"
-              type="button"
-              :title="`安装 ${item.label}`"
-              @click.stop="openInstall"
-              @keydown.enter.stop
-              @keydown.space.stop
-            >
-              安装
-            </button>
+            <template v-if="item.id === selectedVersionId && versionOfRow(item.id)">
+              <button
+                v-if="versionOfRow(item.id)?.fileUrl"
+                class="mics-button mics-button--primary mics-button--small catalog-version-install"
+                type="button"
+                :title="`安装 ${item.label}`"
+                @click.stop="openInstall"
+                @keydown.enter.stop
+                @keydown.space.stop
+              >
+                安装
+              </button>
+              <!-- 作者关闭第三方分发：不提供安装，只给文件页，避免下载到网页或拼直链 -->
+              <button
+                v-else
+                class="mics-button mics-button--ghost mics-button--small catalog-version-install"
+                type="button"
+                :disabled="!versionPageOf(versionOfRow(item.id))"
+                :title="
+                  versionOfRow(item.id)?.pageUrl
+                    ? '作者关闭了第三方分发，到文件页手动下载'
+                    : '作者关闭了第三方分发，到项目页手动下载'
+                "
+                @click.stop="openVersionPage(versionOfRow(item.id)!)"
+                @keydown.enter.stop
+                @keydown.space.stop
+              >
+                打开文件页
+              </button>
+            </template>
           </slot>
         </template>
       </DataBrowser>

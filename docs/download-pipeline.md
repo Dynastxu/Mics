@@ -56,6 +56,8 @@ interface DownloadEndpoint {
 - `download/awaitFiles`：等待指定文件进入终态（阶段依赖，例如安装器）。
 - `download/seal`：声明「文件清单已提交完」；封口前即使当前批次全部完成也不结算。
 - `download/data`：更新编排方私有状态（版本 id、overrides 暂存目录），管线原样持久化。
+- `download/action`：设置 / 清除需要用户介入的动作（传 `null` 清除）。管线只持久化并随
+  任务快照下发，不解释动作内容；下载页按 `kind` 渲染，并调用动作自带的检查 RPC。
 - `download/finish`：编排方收尾完成 / 失败。
 - `download/retry`：管线先重排失败任务并返回 `true`；没有可重排任务时返回 `false`，
   由编排方重新分析。
@@ -77,6 +79,20 @@ preparing ──addFiles──▶ downloading ──filesDone──▶ finalizin
 ```
 
 失败任务会保留逐文件明细，供 `install/retry` 重排；`done` / `cancelled` 才归档明细。
+
+### 需要用户介入：作者关闭第三方分发
+
+CurseForge 的 `downloadUrl: null` 表示作者不允许第三方分发。来源插件把这类文件单独
+返回（`CatalogResolvedModpack.blocked`），整合包编排方在自动文件下载完成后**不调用
+`download/finish`**，而是：
+
+- 用 `download/action` 发布 `manual-download` 动作（文件名、大小、SHA1、文件页、
+  系统下载目录、检查 RPC），下载页据此显示「手动下载」入口；
+- 监视下载目录并按 SHA1 校验，通过后把文件放进实例（走 `download/commit`）；
+- 必需文件齐全后清除动作并继续收尾。动作与清单通过 `download/data` 持久化，
+  重启后 `download/jobResumed` 恢复等待状态。
+
+管线本身仍只看到「任务在 `finalizing`，编排方还没收尾」，不感知 CurseForge。
 
 ### 源尝试与自动重试
 

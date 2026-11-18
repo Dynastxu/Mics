@@ -36,6 +36,29 @@ export interface CatalogResolvedFile {
   file: ModFileRef
 }
 
+/**
+ * 作者关闭了第三方分发、只能手动下载的文件。
+ *
+ * 来源插件仍然能给出文件名、摘要与文件页：安装方据此列出待办清单，
+ * 用户从文件页下载后由安装方按摘要校验并继续。
+ */
+export interface CatalogBlockedFile {
+  entry: CatalogFileRef
+  fileName: string
+  sha1: string
+  size: number
+  /** 文件页；来源拿不到页面时为空串 */
+  pageUrl: string
+  /** 项目展示名，便于清单里辨认；解析不到时为空串 */
+  projectName: string
+}
+
+/** 一次整合包文件解析的结果：能自动下载的与只能手动下载的分开返回 */
+export interface CatalogResolvedModpack {
+  files: CatalogResolvedFile[]
+  blocked: CatalogBlockedFile[]
+}
+
 export interface CatalogSource {
   readonly kind: ModSourceKind
   /** 该来源自己的镜像 / 接口条目（可多条，按顺序） */
@@ -61,12 +84,12 @@ export interface CatalogSource {
     signal: AbortSignal
   ): Promise<ModSummary>
   identify(files: ModIdentifyFile[], signal: AbortSignal): Promise<ModIdentity[]>
-  /** 把 CurseForge 整合包清单的数字 id 解析成可下载文件 */
+  /** 把 CurseForge 整合包清单的数字 id 解析成可下载文件与待手动下载文件 */
   resolveModpackFiles(
     refs: CatalogFileRef[],
     signal: AbortSignal,
     onProgress?: (done: number, total: number) => void
-  ): Promise<CatalogResolvedFile[]>
+  ): Promise<CatalogResolvedModpack>
 }
 
 /** `mics.download.catalog` 提供的注册表 */

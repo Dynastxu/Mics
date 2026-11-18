@@ -7,6 +7,7 @@
 
 import type { ModSource, PackKind } from './mod'
 import type { ModpackInstallMeta } from './modpack'
+import type { DownloadAction } from './download-pipeline'
 
 /** 下载源提供的游戏版本摘要 */
 export interface GameVersion {
@@ -262,6 +263,8 @@ export interface InstallJobSummary {
   error?: string
   /** 准备阶段的当前步骤；与 InstallJob.note 同源 */
   note?: string
+  /** 需要用户介入才能继续的动作（例如手动下载被作者关闭分发的文件） */
+  action?: DownloadAction
   /**
    * 准备阶段的当前步骤进度（0–100）；与 InstallJob.preparePercent 同源。
    *

@@ -9,7 +9,7 @@ import {
 import { defineMainPlugin } from '@mics/sdk/main'
 import type {
   CatalogFileRef,
-  CatalogResolvedFile,
+  CatalogResolvedModpack,
   CatalogSource,
   ModCategory,
   ModIdentifyFile,
@@ -212,7 +212,7 @@ class ModrinthSource implements CatalogSource {
   async resolveModpackFiles(
     _refs: CatalogFileRef[],
     _signal: AbortSignal
-  ): Promise<CatalogResolvedFile[]> {
+  ): Promise<CatalogResolvedModpack> {
     throw new Error('Modrinth 整合包不需要按文件 id 解析')
   }
 }

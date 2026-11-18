@@ -171,6 +171,8 @@ async function fetchProject(item: CatalogItem): Promise<CatalogItem> {
 }
 
 function openInstall(version: CatalogVersion): void {
+  // 没有直链的版本只能手动下载，目录页给的是「打开文件页」
+  if (!version.fileUrl) return
   installVersion.value = version
   installOpen.value = true
 }

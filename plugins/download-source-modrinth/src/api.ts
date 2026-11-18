@@ -329,6 +329,8 @@ function versionOf(
     published: version.date_published ?? '',
     fileName: file.filename,
     fileUrl: file.url,
+    // Modrinth 的文件始终有直链，不需要手动下载入口
+    pageUrl: '',
     sha1: file.hashes?.sha1 ?? '',
     size: file.size ?? 0,
     downloads: version.downloads ?? 0,

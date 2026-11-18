@@ -125,7 +125,8 @@ function notify(version: CatalogVersion, instanceCount: number): void {
 
 async function install(payload: { instanceNames: string[] }): Promise<void> {
   const version = installVersion.value
-  if (!version || installing.value) return
+  // 没有直链的版本由目录页拦在「打开文件页」，这里再守一次防止旧入口
+  if (!version || !version.fileUrl || installing.value) return
   installing.value = true
   installError.value = ''
   try {

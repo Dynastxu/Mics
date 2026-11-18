@@ -2,7 +2,13 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { usePluginContext } from '@mics/sdk/renderer'
 import { LOADER_LABELS, PACK_KIND_LABELS } from '@mics/sdk'
-import type { DownloadTaskView, InstallJobStats, InstallJobSummary } from '@mics/sdk'
+import type {
+  DownloadManualAction,
+  DownloadTaskView,
+  InstallJobStats,
+  InstallJobSummary
+} from '@mics/sdk'
+import ManualDownloadDialog from './ManualDownloadDialog.vue'
 
 interface JobRow {
   job: InstallJobSummary
@@ -40,6 +46,9 @@ const expanded = ref<string[]>([])
 const details = ref<Record<string, DownloadTaskView[]>>({})
 const detailsLoading = ref<Record<string, boolean>>({})
 
+/** 正在查看手动下载清单的任务 id */
+const manualOpenJob = ref('')
+
 const blocking = new Set<string>()
 const speedSamples = new Map<string, SpeedSample>()
 
@@ -71,6 +80,12 @@ const activeRows = computed<JobRow[]>(() =>
         Date.now() - job.prepareTransferAt < PREPARE_TRANSFER_WINDOW_MS
     }))
 )
+
+/** 当前打开手动下载对话框的任务与动作；任务结束或动作消失时自动收起 */
+const manualAction = computed(() => {
+  const job = jobs.value.find((entry) => entry.id === manualOpenJob.value)
+  return job ? manualActionOf(job) : null
+})
 
 const historyRows = computed(() =>
   [...historyJobs.value]
@@ -195,6 +210,23 @@ function jobTitle(job: InstallJobSummary): string {
   return job.title || job.instanceName
 }
 
+/** 任务的手动下载动作；管线只搬运，这里按 kind 解释 */
+function manualActionOf(job: InstallJobSummary): DownloadManualAction | null {
+  return job.action && job.action.kind === 'manual-download' ? job.action : null
+}
+
+function manualCount(job: InstallJobSummary): number {
+  return manualActionOf(job)?.files.filter((file) => file.state === 'missing').length ?? 0
+}
+
+function openManual(job: InstallJobSummary): void {
+  manualOpenJob.value = job.id
+}
+
+function closeManual(): void {
+  manualOpenJob.value = ''
+}
+
 /**
  * 进度条下方的一行阶段说明。
  *
@@ -285,6 +317,7 @@ async function poll(): Promise<void> {
     sampleSpeeds()
     const activeIds = new Set(list.filter((job) => !job.finished).map((job) => job.id))
     expanded.value = expanded.value.filter((id) => activeIds.has(id))
+    if (manualOpenJob.value && !activeIds.has(manualOpenJob.value)) manualOpenJob.value = ''
     for (const id of expanded.value) {
       if (!detailsLoading.value[id]) void loadDetails(id)
     }
@@ -347,10 +380,18 @@ onUnmounted(() => {
                 <span v-if="row.job.mode === 'repair'" class="mics-badge">补全</span>
                 <span v-if="row.preparing" class="mics-badge mics-badge--accent">准备中</span>
               </template>
+              <span v-if="row.job.action" class="mics-badge mics-badge--accent">待手动下载</span>
               <span v-if="isSuperseded(row.job)" class="mics-badge">旧记录</span>
             </div>
 
             <div class="progress-job__controls">
+              <button
+                v-if="row.job.action"
+                class="mics-button mics-button--primary mics-button--small"
+                @click="openManual(row.job)"
+              >
+                手动下载 ({{ manualCount(row.job) }})
+              </button>
               <button
                 class="mics-button mics-button--ghost mics-button--small"
                 @click="toggleDetails(row.job.id)"
@@ -358,7 +399,7 @@ onUnmounted(() => {
                 {{ isExpanded(row.job.id) ? '收起' : '详情' }}
               </button>
               <button
-                v-if="!row.preparing && !isSuperseded(row.job)"
+                v-if="!row.preparing && !row.job.action && !isSuperseded(row.job)"
                 class="mics-button mics-button--ghost mics-button--small"
                 @click="invoke(row.paused ? 'install/resume' : 'install/pause', row.job.id)"
               >
@@ -544,6 +585,14 @@ onUnmounted(() => {
         </div>
       </div>
     </section>
+
+    <ManualDownloadDialog
+      :open="Boolean(manualAction)"
+      :action="manualAction"
+      :job-id="manualOpenJob"
+      @close="closeManual"
+      @checked="poll"
+    />
   </div>
 </template>
 

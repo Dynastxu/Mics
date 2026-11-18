@@ -5,6 +5,7 @@
   "author": "mics",
   "renderer": "dist/renderer.mjs",
   "styles": ["dist/style.css"],
+  "permissions": ["shell:openExternal"],
   "dependencies": [
     "mics.download.manager",
     "mics.download.game",

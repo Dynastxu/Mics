@@ -9,7 +9,8 @@ import { Dialog } from '@mics/ui'
 interface InstallableVersion {
   name: string
   fileName: string
-  fileUrl: string
+  /** null 表示只能手动下载；目录页不会把这类型号带进安装对话框 */
+  fileUrl: string | null
   sha1: string
   size: number
   loaders: string[]
@@ -115,7 +116,7 @@ async function loadInstances(seq: number): Promise<void> {
 
 async function install(): Promise<void> {
   const version = props.version
-  if (!version || installing.value || selected.value.length === 0) return
+  if (!version?.fileUrl || installing.value || selected.value.length === 0) return
   installing.value = true
   error.value = ''
   try {

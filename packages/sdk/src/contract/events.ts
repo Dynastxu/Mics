@@ -1,6 +1,6 @@
 import type { Context } from 'cordis'
 import type { CapabilityProviderInfo } from './capability'
-import type { CatalogFileRef, CatalogResolvedFile } from './catalog'
+import type { CatalogFileRef, CatalogResolvedModpack } from './catalog'
 import type {
   GameVersion,
   InstallRepairRequest,
@@ -9,6 +9,7 @@ import type {
   LoaderVersion
 } from './download'
 import type {
+  DownloadAction,
   DownloadAddFilesRequest,
   DownloadAddFilesResult,
   DownloadAwaitRequest,
@@ -209,6 +210,14 @@ export interface MicsEvents {
   'download/data'(request: DownloadDataRequest): Promise<void> | void
 
   /**
+   * 设置 / 清除任务上需要用户介入的动作（`serial`）。
+   *
+   * 管线只负责持久化与随任务快照下发，不解释动作内容；传 `null` 清除。
+   * 下载页据此展示「等待手动下载」入口，并调用动作自带的检查 RPC。
+   */
+  'download/action'(jobId: string, action: DownloadAction | null): Promise<void> | void
+
+  /**
    * 封口（`serial`）：编排方已经提交完全部文件。
    *
    * 分阶段安装会先提交「安装器」、等它完成后再提交游戏文件；封口之前即使
@@ -319,14 +328,14 @@ export interface MicsEvents {
   // -------------------------------------------------------------------------
 
   /**
-   * 把 CurseForge 整合包清单的数字 id 解析成可下载文件（`serial`）。
+   * 把 CurseForge 整合包清单的数字 id 解析成可下载文件与待手动下载文件（`serial`）。
    *
    * 只有 CurseForge 来源插件知道自己的 API；整合包插件不直接调来源接口。
    */
   'catalog/resolveModpackFiles'(request: {
     refs: CatalogFileRef[]
     sourceApi?: string
-  }): Promise<CatalogResolvedFile[]> | void
+  }): Promise<CatalogResolvedModpack> | void
 }
 
 /**
@@ -354,6 +363,7 @@ export const EVENT_MODES = {
   'download/awaitFiles': 'serial',
   'download/finish': 'serial',
   'download/data': 'serial',
+  'download/action': 'serial',
   'download/seal': 'serial',
   'download/retry': 'serial',
   'download/report': 'emit',

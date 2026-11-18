@@ -66,7 +66,10 @@ export interface CatalogVersion {
   loaders: string[]
   published: string
   fileName: string
-  fileUrl: string
+  /** 直链；null 表示只能到 pageUrl 手动下载（作者关闭了第三方分发） */
+  fileUrl: string | null
+  /** 文件页面；没有手动下载入口时为空串 */
+  pageUrl: string
   sha1: string
   size: number
   downloads: number

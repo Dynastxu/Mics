@@ -12,6 +12,7 @@ import { MOD_LOADER_LABELS, modSourceNeedsKey } from '@mics/sdk'
 import { curseforgeCategoriesOf, curseforgeCategoryLabel } from '@mics/sdk'
 import { modpackCategoryLabelOf } from '@mics/sdk'
 import { BUILD_CURSEFORGE_API_KEY } from './defaultKey'
+import { directDownloadUrl } from './downloadUrl'
 import { endpoint, requestJson, withParams } from './http'
 
 /**
@@ -396,15 +397,28 @@ async function dependencyProjects(
   }
 }
 
+/** 项目页地址；`slug` 为空时返回空串，调用方不要拼一个猜出来的路径 */
+function projectPageUrl(kind: ModProjectKind, slug: string): string {
+  const label = slug.trim()
+  if (!label) return ''
+  return `https://www.curseforge.com/minecraft/${projectPathOf(kind)}/${encodeURIComponent(label)}`
+}
+
 function versionOf(
   source: ModSource,
   projectId: string,
+  kind: ModProjectKind,
+  slug: string,
   file: CurseforgeFile,
   projects: Map<number, ModSummary>
 ): ModVersion | null {
-  if (typeof file.id !== 'number' || !file.downloadUrl || !file.fileName) return null
-  const downloadUrl = file.downloadUrl
+  if (typeof file.id !== 'number' || !file.fileName) return null
+  // 作者关闭第三方分发时 CurseForge 返回 downloadUrl: null（镜像也可能给页面地址）；
+  // 版本仍然保留，页面用文件页地址引导用户手动下载，不能按「没有直链」直接丢弃。
+  const downloadUrl = directDownloadUrl(file.downloadUrl)
   const fileName = file.fileName
+  const pageUrl = projectPageUrl(kind, slug)
+  const filePageUrl = pageUrl ? `${pageUrl}/files/${file.id}` : ''
 
   const loaders: string[] = []
   const gameVersions: string[] = []
@@ -434,6 +448,7 @@ function versionOf(
     published: file.fileDate ?? '',
     fileName,
     fileUrl: downloadUrl,
+    pageUrl: filePageUrl,
     sha1,
     size: file.fileLength ?? 0,
     downloads: file.downloadCount ?? 0,
@@ -519,7 +534,8 @@ export async function identifyCurseforge(
 export async function versionsCurseforge(
   source: ModSource,
   request: ModVersionRequest,
-  signal: AbortSignal
+  signal: AbortSignal,
+  kind: ModProjectKind = 'mod'
 ): Promise<ModVersion[]> {
   const headers = curseforgeHeaders(source)
   const params: Record<string, string> = { gameVersion: request.gameVersion }
@@ -553,9 +569,22 @@ export async function versionsCurseforge(
     offset += data.length
   }
 
+  // 文件页地址需要项目 slug；只有存在「无直链」文件时才多查一次项目，
+  // 正常可下载的版本不需要这个额外请求。
+  let slug = ''
+  if (files.some((file) => !directDownloadUrl(file.downloadUrl))) {
+    try {
+      const summary = await projectCurseforge(source, request.projectId, signal, kind)
+      slug = summary.slug
+    } catch (cause) {
+      if (signal.aborted) throw cause
+      // 项目详情失败不应让整个版本列表不可用：手动下载入口会显示为不可用
+    }
+  }
+
   const projects = await dependencyProjects(source, files, signal)
   const versions = files
-    .map((file) => versionOf(source, request.projectId, file, projects))
+    .map((file) => versionOf(source, request.projectId, kind, slug, file, projects))
     .filter((version): version is ModVersion => version !== null)
 
   versions.sort((a, b) => b.published.localeCompare(a.published))

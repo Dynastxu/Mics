@@ -16,6 +16,7 @@ export interface WorkerRuntimePaths {
   pluginDir: string
   temp: string
   home: string
+  downloads: string
 }
 
 export interface WorkerHostOptions {

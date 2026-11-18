@@ -183,7 +183,8 @@ function notify(message: string): void {
 
 async function install(name: string): Promise<void> {
   const version = installVersion.value
-  if (!version || installing.value || blockedReason.value) return
+  // 没有直链的整合包只能去文件页手动下载，不能进入归档下载
+  if (!version || !version.fileUrl || installing.value || blockedReason.value) return
   installing.value = true
   installError.value = ''
   try {

@@ -381,7 +381,20 @@ export interface ModVersion {
   /** 发布日期，ISO 8601 */
   published: string
   fileName: string
-  fileUrl: string
+  /**
+   * 文件直链。
+   *
+   * `null` 表示来源拿不到直链：CurseForge 的作者关闭了第三方分发时，
+   * 官方 API 只返回项目 / 文件页面。这类版本仍然展示，但不能自动下载，
+   * 页面要给用户 `pageUrl` 作为手动下载入口。
+   */
+  fileUrl: string | null
+  /**
+   * 文件页面；无法自动下载时供用户手动下载。
+   *
+   * 来源没有页面概念（例如镜像只给直链）时为空串。
+   */
+  pageUrl: string
   /** SHA1；来源没有提供时为空串 */
   sha1: string
   size: number
